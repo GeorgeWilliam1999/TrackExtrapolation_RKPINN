@@ -1,0 +1,44 @@
+{
+    "RK8 (5mm)": {
+        "mean_radial_mm": 0.0,
+        "std_radial_mm": 0.0,
+        "max_radial_mm": 0.0,
+        "p95_radial_mm": 0.0,
+        "time_per_track_us": 174622.50113793695
+    },
+    "RK4 (10mm)": {
+        "mean_radial_mm": 1.399707289391645e-07,
+        "std_radial_mm": 2.6631656775202553e-06,
+        "max_radial_mm": 8.728243924075135e-05,
+        "p95_radial_mm": 3.679110595379879e-09,
+        "time_per_track_us": 27718.197226830805
+    },
+    "RK4 (50mm)": {
+        "mean_radial_mm": 7.329430189881467e-05,
+        "std_radial_mm": 0.001339191255666478,
+        "max_radial_mm": 0.04329934878267917,
+        "p95_radial_mm": 2.2886725474420155e-06,
+        "time_per_track_us": 5547.651594892565
+    },
+    "RK4 (100mm)": {
+        "mean_radial_mm": 0.0009208919605297878,
+        "std_radial_mm": 0.015821050019714684,
+        "max_radial_mm": 0.5014829212296249,
+        "p95_radial_mm": 3.6350122884762834e-05,
+        "time_per_track_us": 2798.5180558153165
+    },
+    "MLP": {
+        "mean_radial_mm": 1.4760457208123456,
+        "std_radial_mm": 21.127332303704947,
+        "max_radial_mm": 927.0824518052328,
+        "p95_radial_mm": 2.4066814066268067,
+        "time_per_track_us": 5.811823670845718
+    },
+    "PINN": {
+        "mean_radial_mm": 1.2772096899917862,
+        "std_radial_mm": 6.610704380414874,
+        "max_radial_mm": 266.6699586396365,
+        "p95_radial_mm": 2.7333739997605466,
+        "time_per_track_us": 1.4703745707141709
+    }
+}

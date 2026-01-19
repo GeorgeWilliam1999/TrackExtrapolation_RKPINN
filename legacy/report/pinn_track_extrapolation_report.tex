@@ -1,0 +1,654 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{bm}
+
+\geometry{margin=2.5cm}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2
+}
+\lstset{style=mystyle}
+
+\title{Neural Network-Based Fast Track Extrapolation\\
+       \large Machine Learning for LHCb Track Reconstruction}
+\author{G. Scriven}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report documents the development and evaluation of a neural network-based approach for accelerating track extrapolation in the LHCb detector. We present a \textbf{data-driven Multi-Layer Perceptron (MLP)} trained on output from the traditional 4th-order Runge-Kutta integrator to learn the mapping from initial to final track states through the LHCb magnetic field. Our implementation achieves a $\sim$155$\times$ speedup compared to the reference RK4 method, with a mean radial position error of 6.97~mm. We discuss the theoretical foundations, clarify the distinction between our current data-driven approach and true Physics-Informed Neural Networks (PINNs), and propose extensions to incorporate physics constraints for improved accuracy.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%==============================================================================
+\section{Introduction}
+%==============================================================================
+
+\subsection{Motivation}
+Track extrapolation is a computationally intensive component of particle physics reconstruction at the LHCb experiment. The standard method uses Runge-Kutta numerical integration to solve the equations of motion for charged particles in the magnetic field. While highly accurate, this approach requires multiple field evaluations and iterations, making it a bottleneck in real-time trigger applications where millions of tracks must be processed per second.
+
+Machine learning approaches offer the potential to dramatically accelerate track extrapolation by learning the transformation from initial to final track states. This work explores using neural networks to achieve this acceleration while maintaining sufficient accuracy for physics applications.
+
+\subsection{LHCb Detector and Magnetic Field}
+The LHCb detector features a large warm dipole magnet that provides bending power for momentum measurement. Key characteristics include:
+\begin{itemize}
+    \item Integrated field: $\int B_y \, dz \approx 4$~T$\cdot$m
+    \item Peak field strength: $|B_y|_{\text{max}} \approx 1.1$~T
+    \item Effective length: $\sim$4~m (from $z \approx 3000$~mm to $z \approx 7000$~mm)
+    \item Field orientation: Primarily vertical ($B_y$), causing horizontal ($x$) bending
+    \item Polarity: Reversible (MagUp/MagDown) for systematic studies
+\end{itemize}
+
+%==============================================================================
+\section{Theoretical Foundations}
+%==============================================================================
+
+\subsection{Equations of Motion in a Magnetic Field}
+
+A charged particle moving through a magnetic field experiences the Lorentz force:
+\begin{equation}
+    \bm{F} = q(\bm{v} \times \bm{B})
+    \label{eq:lorentz}
+\end{equation}
+where $q$ is the particle charge, $\bm{v}$ is the velocity vector, and $\bm{B}$ is the magnetic field vector.
+
+For relativistic particles, the equation of motion is:
+\begin{equation}
+    \frac{d\bm{p}}{dt} = q(\bm{v} \times \bm{B})
+    \label{eq:motion}
+\end{equation}
+where the relativistic momentum is $\bm{p} = \gamma m \bm{v}$ with Lorentz factor $\gamma = 1/\sqrt{1 - v^2/c^2}$.
+
+\subsection{Track State Parameterization}
+
+In LHCb, tracks are parameterized at fixed $z$-planes using the state vector:
+\begin{equation}
+    \bm{s} = (x, y, t_x, t_y, q/p)^T
+    \label{eq:state}
+\end{equation}
+where:
+\begin{itemize}
+    \item $x$, $y$: Transverse position coordinates (mm)
+    \item $t_x \equiv dx/dz$, $t_y \equiv dy/dz$: Track direction tangents
+    \item $q/p$: Signed inverse momentum (MeV$^{-1}$), encodes both charge and momentum
+\end{itemize}
+
+The unit direction vector is:
+\begin{equation}
+    \hat{\bm{n}} = \frac{1}{\sqrt{1 + t_x^2 + t_y^2}} \begin{pmatrix} t_x \\ t_y \\ 1 \end{pmatrix}
+\end{equation}
+
+\subsection{Equations of Motion in Track Parameters}
+
+Converting the Lorentz equation to track parameters with $z$ as the independent variable:
+\begin{align}
+    \frac{dx}{dz} &= t_x \label{eq:dxdz}\\
+    \frac{dy}{dz} &= t_y \label{eq:dydz}\\
+    \frac{dt_x}{dz} &= \kappa \sqrt{1 + t_x^2 + t_y^2} \left[ t_x t_y B_x - (1 + t_x^2) B_y + t_y B_z \right] \label{eq:dtxdz}\\
+    \frac{dt_y}{dz} &= \kappa \sqrt{1 + t_x^2 + t_y^2} \left[ (1 + t_y^2) B_x - t_x t_y B_y - t_x B_z \right] \label{eq:dtydz}\\
+    \frac{d(q/p)}{dz} &= 0 \quad \text{(no energy loss in vacuum)} \label{eq:dqopdz}
+\end{align}
+where $\kappa = c \cdot (q/p)$ with $c = 299.792458$~mm/ns is the speed of light.
+
+For the LHCb dipole with dominant $B_y$ component and small $B_x$, $B_z$, the bending is primarily in the $x$-direction:
+\begin{equation}
+    \frac{dt_x}{dz} \approx -\kappa \sqrt{1 + t_x^2 + t_y^2} \cdot B_y
+    \label{eq:bending_approx}
+\end{equation}
+
+\subsection{Bending Angle and Momentum Measurement}
+
+The total bending angle in the $x$-$z$ plane is:
+\begin{equation}
+    \Delta t_x = t_x^{\text{final}} - t_x^{\text{initial}} \approx -c \cdot \frac{q}{p} \int_{z_i}^{z_f} B_y(z) \, dz
+    \label{eq:bending}
+\end{equation}
+
+For the LHCb magnet with $\int B_y \, dz \approx -4$~T$\cdot$m (for MagDown):
+\begin{equation}
+    \Delta t_x \approx \frac{1.2 \text{ GeV/c}}{p} \cdot \text{sign}(q)
+    \label{eq:pt_kick}
+\end{equation}
+
+This ``$p_T$ kick'' is the basis for momentum measurement in LHCb.
+
+\subsection{Runge-Kutta Integration}
+
+The standard numerical approach solves the system of ODEs~(\ref{eq:dxdz})--(\ref{eq:dqopdz}) using Runge-Kutta methods. The classical 4th-order RK4 method for a single step:
+\begin{align}
+    \bm{k}_1 &= h \cdot f(z_n, \bm{s}_n) \\
+    \bm{k}_2 &= h \cdot f(z_n + h/2, \bm{s}_n + \bm{k}_1/2) \\
+    \bm{k}_3 &= h \cdot f(z_n + h/2, \bm{s}_n + \bm{k}_2/2) \\
+    \bm{k}_4 &= h \cdot f(z_n + h, \bm{s}_n + \bm{k}_3) \\
+    \bm{s}_{n+1} &= \bm{s}_n + \frac{1}{6}(\bm{k}_1 + 2\bm{k}_2 + 2\bm{k}_3 + \bm{k}_4) + O(h^5)
+\end{align}
+
+Each step requires 4 magnetic field evaluations. With adaptive step sizing, a typical extrapolation through the LHCb magnet requires $\sim$50--200 steps.
+
+%==============================================================================
+\section{Neural Network Approaches}
+%==============================================================================
+
+\subsection{Data-Driven Neural Networks (Current Implementation)}
+
+Our \textbf{current implementation} uses a purely data-driven approach:
+
+\textbf{Model}: Multi-Layer Perceptron (MLP)
+\begin{equation}
+    \hat{\bm{s}}_{\text{final}} = f_\theta(\bm{s}_{\text{initial}}, \Delta z)
+\end{equation}
+where $f_\theta$ is a neural network with parameters $\theta$.
+
+\textbf{Loss Function}: Pure supervised learning with Mean Squared Error
+\begin{equation}
+    \mathcal{L}_{\text{data}} = \frac{1}{N} \sum_{i=1}^{N} \left\| \hat{\bm{s}}_i - \bm{s}_i^{\text{RK4}} \right\|^2
+    \label{eq:mse_loss}
+\end{equation}
+
+This approach learns to mimic the RK4 integrator output without explicit knowledge of the underlying physics equations.
+
+\subsection{Physics-Informed Neural Networks (PINNs)}
+
+A \textbf{true PINN} incorporates the governing physics equations directly into the loss function. For track extrapolation, this would be:
+
+\textbf{Total Loss}:
+\begin{equation}
+    \mathcal{L}_{\text{PINN}} = \mathcal{L}_{\text{data}} + \lambda_{\text{phys}} \mathcal{L}_{\text{physics}}
+    \label{eq:pinn_loss}
+\end{equation}
+
+\textbf{Physics Loss} (Lorentz Force Residual):
+\begin{equation}
+    \mathcal{L}_{\text{physics}} = \frac{1}{N_c} \sum_{j=1}^{N_c} \left\| \mathcal{R}(\bm{s}(z_j)) \right\|^2
+    \label{eq:physics_loss}
+\end{equation}
+where the residual $\mathcal{R}$ enforces the equations of motion at collocation points:
+\begin{equation}
+    \mathcal{R} = \begin{pmatrix}
+        \frac{\partial x}{\partial z} - t_x \\
+        \frac{\partial y}{\partial z} - t_y \\
+        \frac{\partial t_x}{\partial z} - \kappa\sqrt{1+t_x^2+t_y^2}[t_x t_y B_x - (1+t_x^2)B_y + t_y B_z] \\
+        \frac{\partial t_y}{\partial z} - \kappa\sqrt{1+t_x^2+t_y^2}[(1+t_y^2)B_x - t_x t_y B_y - t_x B_z]
+    \end{pmatrix}
+    \label{eq:residual}
+\end{equation}
+
+The physics loss requires computing gradients of the network output with respect to $z$, typically using automatic differentiation.
+
+\subsection{Comparison: Data-Driven vs PINN}
+
+\begin{table}[H]
+\centering
+\caption{Comparison of neural network approaches}
+\begin{tabular}{lcc}
+\toprule
+Aspect & Data-Driven MLP & True PINN \\
+\midrule
+Training data required & Large amount & Can be smaller \\
+Physics knowledge & Implicit (in data) & Explicit (in loss) \\
+Generalization & Limited to training distribution & Better extrapolation \\
+Training complexity & Simple (standard backprop) & Complex (autodiff for physics) \\
+Interpretability & Black box & Physics-constrained \\
+\textbf{Our implementation} & \checkmark & Future work \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Important Clarification}: Our current model is a \textbf{data-driven MLP}, not a true PINN. We use the term ``physics-informed'' loosely to indicate that the training data comes from physics simulations, but the network itself does not explicitly enforce physics constraints during training.
+
+%==============================================================================
+\section{Implementation}
+%==============================================================================
+
+\subsection{Network Architecture}
+
+We use a fully-connected feedforward network:
+\begin{equation}
+    \text{Input}: (x, y, t_x, t_y, q/p, \Delta z) \in \mathbb{R}^6 \rightarrow \text{Output}: (x', y', t_x', t_y') \in \mathbb{R}^4
+\end{equation}
+
+Architecture:
+\begin{itemize}
+    \item Input layer: 6 neurons
+    \item Hidden layer 1: 128 neurons + $\tanh$ activation
+    \item Hidden layer 2: 128 neurons + $\tanh$ activation
+    \item Hidden layer 3: 64 neurons + $\tanh$ activation
+    \item Output layer: 4 neurons (linear)
+\end{itemize}
+
+Total trainable parameters:
+\begin{equation}
+    N_{\text{params}} = 6 \times 128 + 128 + 128 \times 128 + 128 + 128 \times 64 + 64 + 64 \times 4 + 4 = 26,180
+\end{equation}
+
+\subsection{Input/Output Normalization}
+
+All inputs and outputs are standardized:
+\begin{equation}
+    \tilde{x} = \frac{x - \mu_x}{\sigma_x}
+\end{equation}
+where $\mu_x$ and $\sigma_x$ are computed from training data. This ensures all features have similar scales for stable training.
+
+\subsection{Training Data}
+
+Training data generated from C++ RK4 reference extrapolator:
+
+\begin{table}[H]
+\centering
+\caption{Training data parameter grid}
+\begin{tabular}{lccc}
+\toprule
+Parameter & Range & Grid Points & Physical Meaning \\
+\midrule
+$x$ (mm) & $[-900, 900]$ & 6 & Horizontal position \\
+$y$ (mm) & $[-750, 750]$ & 6 & Vertical position \\
+$t_x$ & $[-0.3, 0.3]$ & 6 & Horizontal slope \\
+$t_y$ & $[-0.25, 0.25]$ & 6 & Vertical slope \\
+$q/p$ (MeV$^{-1}$) & $\pm 4 \times 10^{-4}$ & 2 & Corresponds to $p = 2.5$~GeV/c \\
+$\Delta z$ (mm) & 4000 & 1 & Fixed extrapolation distance \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Total samples: $6^4 \times 2 = 2592$ grid points, reduced to 1,210 after filtering invalid tracks.
+
+\subsection{Training Procedure}
+
+\begin{itemize}
+    \item Loss: Mean Squared Error (Eq.~\ref{eq:mse_loss})
+    \item Optimizer: Adam ($\beta_1=0.9$, $\beta_2=0.999$, $\epsilon=10^{-8}$)
+    \item Initial learning rate: $10^{-3}$
+    \item Scheduler: ReduceLROnPlateau (factor=0.5, patience=50)
+    \item Batch size: 64
+    \item Epochs: 2000
+    \item Train/validation split: 80\%/20\%
+\end{itemize}
+
+%==============================================================================
+\section{Results}
+%==============================================================================
+
+\subsection{Accuracy Metrics}
+
+\begin{table}[H]
+\centering
+\caption{Neural network extrapolation accuracy}
+\begin{tabular}{lccc}
+\toprule
+Metric & Mean & Std Dev & 95th Percentile \\
+\midrule
+Radial error $\sqrt{\Delta x^2 + \Delta y^2}$ (mm) & 6.97 & 8.86 & 23.64 \\
+$x$ position error (mm) & 1.14 & 8.19 & -- \\
+$y$ position error (mm) & -0.41 & 4.95 & -- \\
+$t_x$ slope error & 0.0009 & 0.058 & -- \\
+$t_y$ slope error & 0.0006 & 0.007 & -- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Error Distribution}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{../plots/error_distributions.png}
+    \caption{Distribution of extrapolation errors comparing neural network predictions to C++ RK4 reference.}
+    \label{fig:error_dist}
+\end{figure}
+
+\subsection{Phase Space Analysis}
+
+Error correlations with input parameters:
+\begin{itemize}
+    \item Correlation with $y$: $r = 0.21$ (strongest)
+    \item Correlation with $t_y$: $r = 0.21$
+    \item Correlation with $q/p$: $r = -0.10$
+    \item Correlation with $x$, $t_x$: $r \approx -0.03$ (weak)
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{../plots/error_phase_space.png}
+    \caption{Phase space analysis showing error correlations and 2D error heatmaps.}
+    \label{fig:phase_space}
+\end{figure}
+
+\subsection{Timing Performance}
+
+\begin{table}[H]
+\centering
+\caption{Computational performance comparison}
+\begin{tabular}{lcc}
+\toprule
+Method & Time per track & Speedup \\
+\midrule
+C++ RK4 (Reference) & 189.0~$\mu$s & $1\times$ \\
+Neural Network (PyTorch, batched) & 1.2~$\mu$s & $155\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{../plots/timing_comparison.png}
+    \caption{Timing comparison between C++ RK4 and neural network extrapolation.}
+    \label{fig:timing}
+\end{figure}
+
+%==============================================================================
+\section{Physics Analysis}
+%==============================================================================
+
+\subsection{Magnetic Field Profile}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{../plots/physics_analysis.png}
+    \caption{LHCb magnetic field profile, bending vs momentum, and expected errors by particle type.}
+    \label{fig:physics}
+\end{figure}
+
+\subsection{Momentum Dependence}
+
+The bending angle scales inversely with momentum (Eq.~\ref{eq:bending}):
+\begin{equation}
+    |\Delta t_x| \propto \frac{1}{p}
+\end{equation}
+
+Our model was trained at $p = 2.5$~GeV/c. Expected behavior at other momenta:
+\begin{itemize}
+    \item $p = 1$~GeV/c: $2.5\times$ larger bending, likely \textbf{worse} accuracy
+    \item $p = 10$~GeV/c: $4\times$ smaller bending, possibly \textbf{better} accuracy
+    \item $p = 100$~GeV/c: Nearly straight tracks, should be \textbf{very good}
+\end{itemize}
+
+\subsection{Particle Types at LHCb}
+
+\begin{table}[H]
+\centering
+\caption{Typical particle momenta at LHCb}
+\begin{tabular}{lccc}
+\toprule
+Particle & Mass (MeV/$c^2$) & Typical $p$ (GeV/$c$) & Bending (mrad) \\
+\midrule
+$e^\pm$ & 0.511 & 1--5 & 240--1200 \\
+$\mu^\pm$ & 105.7 & 2--100 & 12--600 \\
+$\pi^\pm$ & 139.6 & 1--50 & 24--1200 \\
+$K^\pm$ & 493.7 & 2--100 & 12--600 \\
+$p$ & 938.3 & 5--200 & 6--240 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%==============================================================================
+\section{True Physics-Informed Neural Networks}
+%==============================================================================
+
+\subsection{Fundamentals of PINNs}
+
+Physics-Informed Neural Networks (PINNs), introduced by Raissi et al.~(2019), embed governing physical laws directly into the neural network training process. Unlike standard data-driven networks that only minimize prediction error, PINNs add physics residual terms to the loss function.
+
+\textbf{Key Insight}: Rather than viewing the neural network as a black-box function approximator, PINNs treat it as a \emph{mesh-free solution} to the underlying differential equation.
+
+\subsubsection{General PINN Framework}
+
+For a system governed by:
+\begin{equation}
+    \mathcal{N}[\bm{u}](\bm{x}, t) = 0, \quad \bm{x} \in \Omega, \quad t \in [0, T]
+\end{equation}
+where $\mathcal{N}$ is a (possibly nonlinear) differential operator, a PINN approximates the solution $\bm{u}(\bm{x}, t)$ via a neural network $\hat{\bm{u}}_\theta(\bm{x}, t)$.
+
+The total loss combines:
+\begin{equation}
+    \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{data}} + \lambda_{\text{IC}} \mathcal{L}_{\text{IC}} + \lambda_{\text{BC}} \mathcal{L}_{\text{BC}} + \lambda_{\text{PDE}} \mathcal{L}_{\text{PDE}}
+    \label{eq:pinn_total_loss}
+\end{equation}
+
+\begin{itemize}
+    \item $\mathcal{L}_{\text{data}}$: Supervised loss at observation points
+    \item $\mathcal{L}_{\text{IC}}$: Initial condition enforcement
+    \item $\mathcal{L}_{\text{BC}}$: Boundary condition enforcement
+    \item $\mathcal{L}_{\text{PDE}}$: Physics residual at collocation points
+\end{itemize}
+
+\subsection{Track Extrapolation as a PINN Problem}
+
+For track propagation through a magnetic field, the governing equations are:
+\begin{equation}
+    \frac{d\bm{s}}{dz} = \bm{f}(\bm{s}, z, \bm{B}(x, y, z))
+    \label{eq:track_ode}
+\end{equation}
+where $\bm{s} = (x, y, t_x, t_y, q/p)^T$ and $\bm{f}$ encodes the Lorentz force (Eqs.~\ref{eq:dtxdz}--\ref{eq:dtydz}).
+
+\subsubsection{Network Architecture}
+
+The PINN network takes:
+\begin{equation}
+    \text{Input}: \bm{\xi} = (\underbrace{x_0, y_0, t_{x,0}, t_{y,0}, q/p}_{\text{initial conditions}}, \underbrace{z}_{\text{query position}}) \in \mathbb{R}^6
+\end{equation}
+\begin{equation}
+    \text{Output}: \hat{\bm{s}}(\bm{\xi}) = (\hat{x}(z), \hat{y}(z), \hat{t}_x(z), \hat{t}_y(z)) \in \mathbb{R}^4
+\end{equation}
+
+The network learns the \emph{trajectory} $\bm{s}(z)$ given initial conditions, not just the endpoint.
+
+\subsubsection{Loss Components for Track PINN}
+
+\textbf{1. Initial Condition Loss} (at $z = z_0$):
+\begin{equation}
+    \mathcal{L}_{\text{IC}} = \frac{1}{N} \sum_{i=1}^{N} \left\| \hat{\bm{s}}(\bm{\xi}_i^{z=z_0}) - \bm{s}_{0,i} \right\|^2
+\end{equation}
+This enforces that the network output matches the initial state at $z=z_0$.
+
+\textbf{2. Data Loss} (at $z = z_{\text{final}}$):
+\begin{equation}
+    \mathcal{L}_{\text{data}} = \frac{1}{N} \sum_{i=1}^{N} \left\| \hat{\bm{s}}(\bm{\xi}_i^{z=z_f}) - \bm{s}_{\text{RK},i} \right\|^2
+\end{equation}
+This matches RK4 reference outputs at the final $z$ plane.
+
+\textbf{3. Physics Residual Loss} (Lorentz force equations):
+
+At \emph{collocation points} $\{z_j\}$ sampled throughout the propagation domain:
+\begin{equation}
+    \mathcal{L}_{\text{physics}} = \frac{1}{N_c} \sum_{j=1}^{N_c} \left\| \mathcal{R}(\hat{\bm{s}}(z_j)) \right\|^2
+\end{equation}
+
+where the residual vector is:
+\begin{equation}
+\mathcal{R} = \begin{pmatrix}
+    \frac{\partial \hat{x}}{\partial z} - \hat{t}_x \\[6pt]
+    \frac{\partial \hat{y}}{\partial z} - \hat{t}_y \\[6pt]
+    \frac{\partial \hat{t}_x}{\partial z} - \kappa\sqrt{1+\hat{t}_x^2+\hat{t}_y^2}\left[\hat{t}_x \hat{t}_y B_x - (1+\hat{t}_x^2)B_y + \hat{t}_y B_z\right] \\[6pt]
+    \frac{\partial \hat{t}_y}{\partial z} - \kappa\sqrt{1+\hat{t}_y^2+\hat{t}_y^2}\left[(1+\hat{t}_y^2)B_x - \hat{t}_x \hat{t}_y B_y - \hat{t}_x B_z\right]
+\end{pmatrix}
+\label{eq:residual_detailed}
+\end{equation}
+
+The derivatives $\partial \hat{\bm{s}}/\partial z$ are computed via \textbf{automatic differentiation} through the neural network.
+
+\subsection{Computing Physics Gradients}
+
+A key technical requirement for PINNs is computing $\partial \hat{\bm{s}}/\partial z$. Since $z$ is an input to the network, we use the chain rule:
+
+\begin{equation}
+    \frac{\partial \hat{x}}{\partial z} = \frac{\partial \hat{x}}{\partial \tilde{z}} \cdot \frac{\partial \tilde{z}}{\partial z} = \frac{\partial \hat{x}}{\partial \tilde{z}} \cdot \frac{1}{\sigma_z}
+\end{equation}
+
+where $\tilde{z} = (z - \mu_z)/\sigma_z$ is the normalized input.
+
+In PyTorch, this is implemented as:
+\begin{lstlisting}[language=Python]
+# Forward pass with gradient tracking
+x_input.requires_grad_(True)
+output = model(x_input)
+
+# Compute d(output)/d(z) via autograd
+for i in range(output_dim):
+    grad = torch.autograd.grad(
+        outputs=output[:, i].sum(),
+        inputs=x_input,
+        create_graph=True  # For second-order gradients
+    )[0]
+    doutput_dz[:, i] = grad[:, 5]  # z is input index 5
+\end{lstlisting}
+
+\subsection{Total PINN Loss for Track Extrapolation}
+
+Combining all components:
+\begin{equation}
+    \boxed{
+    \mathcal{L}_{\text{PINN}} = \underbrace{\mathcal{L}_{\text{IC}}}_{\text{initial conditions}} + \underbrace{\mathcal{L}_{\text{data}}}_{\text{final state}} + \lambda_{\text{phys}} \underbrace{\mathcal{L}_{\text{physics}}}_{\text{Lorentz force}}
+    }
+    \label{eq:total_pinn_loss}
+\end{equation}
+
+Typical values: $\lambda_{\text{phys}} \in [0.01, 1.0]$, tuned based on relative magnitudes.
+
+\subsection{Advantages of True PINNs}
+
+\begin{enumerate}
+    \item \textbf{Data Efficiency}: Can train with fewer labeled examples since physics provides regularization
+    \item \textbf{Generalization}: Physics constraints help extrapolate to unseen parameter regions
+    \item \textbf{Interpretability}: Residuals indicate where physics is violated
+    \item \textbf{Conservation Laws}: Can explicitly enforce energy conservation, symplectic structure
+\end{enumerate}
+
+\subsection{Implementation Status}
+
+We have implemented the true PINN training infrastructure in \texttt{train\_true\_pinn.py}:
+\begin{itemize}
+    \item Differentiable magnetic field model (Gaussian approximation to LHCb dipole)
+    \item Physics loss computation with automatic differentiation
+    \item Collocation point sampling throughout propagation domain
+    \item Configurable $\lambda_{\text{phys}}$ weighting
+\end{itemize}
+
+\textbf{Comparison with MLP}: See \texttt{compare\_models.py} for side-by-side evaluation of data-driven MLP vs.~true PINN.
+
+%==============================================================================
+\section{Future Work}
+%==============================================================================
+
+\subsection{Additional Physics Constraints}
+
+\begin{enumerate}
+    \item \textbf{Energy conservation}: $|\bm{p}|$ constant (no material)
+    \begin{equation}
+        \mathcal{L}_{\text{energy}} = \left| \frac{1}{q/p_{\text{final}}} - \frac{1}{q/p_{\text{initial}}} \right|^2
+    \end{equation}
+    
+    \item \textbf{Symplectic structure}: Preserve phase space volume (Liouville's theorem)
+    
+    \item \textbf{Boundary conditions}: Continuity at material interfaces
+\end{enumerate}
+
+\subsection{Architecture Improvements}
+
+\begin{enumerate}
+    \item \textbf{Residual connections}: $\bm{s}_{\text{out}} = \bm{s}_{\text{in}} + \Delta\bm{s}_{\text{NN}}$
+    \item \textbf{Multi-step prediction}: Learn $z \to z + \delta z$ for small $\delta z$, iterate
+    \item \textbf{Neural ODE}: $d\bm{s}/dz = f_\theta(\bm{s}, z)$, integrate with ODE solver
+    \item \textbf{Fourier features}: Better learning of high-frequency field variations
+\end{enumerate}
+
+\subsection{Quantitative Targets}
+
+\begin{table}[H]
+\centering
+\caption{Performance targets for production use}
+\begin{tabular}{lccc}
+\toprule
+Metric & Current & Target & Improvement \\
+\midrule
+Radial error & 6.97~mm & $<$1~mm & $7\times$ \\
+$t_x$ error & 0.058 & $<$0.001 & $58\times$ \\
+Momentum range & 2.5~GeV & 0.5--200~GeV & Full coverage \\
+Speedup & $155\times$ & $>100\times$ & Maintain \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%==============================================================================
+\section{Conclusions}
+%==============================================================================
+
+We have developed and evaluated a \textbf{data-driven neural network} for accelerating track extrapolation in the LHCb detector. Key findings:
+
+\begin{enumerate}
+    \item \textbf{Speedup}: The neural network achieves $155\times$ speedup over RK4
+    \item \textbf{Accuracy}: Current mean radial error of 6.97~mm requires improvement for physics applications
+    \item \textbf{Nomenclature}: Our current model is a data-driven MLP, not a true PINN---it does not explicitly enforce physics constraints in the loss function
+    \item \textbf{Path forward}: Converting to a true PINN with Lorentz force residual loss could improve generalization and accuracy
+\end{enumerate}
+
+The approach demonstrates the potential for ML-accelerated track extrapolation. Future work will focus on incorporating physics constraints, expanding momentum coverage, and validating on full Monte Carlo simulation.
+
+%==============================================================================
+\section*{Acknowledgments}
+%==============================================================================
+This work uses the LHCb software framework (Gaudi/Rec) and detector simulation infrastructure.
+
+%==============================================================================
+\appendix
+\section{Derivation of Track Equations of Motion}
+%==============================================================================
+
+Starting from the Lorentz force:
+\begin{equation}
+    \frac{d\bm{p}}{dt} = q\bm{v} \times \bm{B}
+\end{equation}
+
+With $\bm{p} = p\hat{\bm{n}}$ where $\hat{\bm{n}}$ is the unit direction vector:
+\begin{equation}
+    \hat{\bm{n}} = \frac{1}{\sqrt{1 + t_x^2 + t_y^2}} \begin{pmatrix} t_x \\ t_y \\ 1 \end{pmatrix}
+\end{equation}
+
+The velocity is $\bm{v} = v\hat{\bm{n}}$ where $v = |\bm{v}|$. Converting to $z$ as the independent variable using $dt = dz/(v \cdot n_z)$:
+\begin{equation}
+    \frac{d\bm{p}}{dz} = \frac{q}{n_z}(\hat{\bm{n}} \times \bm{B})
+\end{equation}
+
+Expanding the cross product and using $n_z = 1/\sqrt{1 + t_x^2 + t_y^2}$:
+\begin{align}
+    \frac{dt_x}{dz} &= \frac{c \cdot q/p}{\sqrt{1 + t_x^2 + t_y^2}} \left[ (t_x t_y B_x - (1+t_x^2)B_y + t_y B_z) \sqrt{1 + t_x^2 + t_y^2} \right] \\
+    &= c \cdot (q/p) \sqrt{1 + t_x^2 + t_y^2} \left[ t_x t_y B_x - (1+t_x^2)B_y + t_y B_z \right]
+\end{align}
+
+Similarly for $dt_y/dz$. The factor $c = 299.792458$~mm/ns converts units when $B$ is in Tesla, $(q/p)$ in MeV$^{-1}$, and $z$ in mm.
+
+\end{document}

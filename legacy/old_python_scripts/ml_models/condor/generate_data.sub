@@ -1,0 +1,41 @@
+#!/usr/bin/env condor_submit
+#
+# HTCondor submit file for parallel training data generation
+# 
+# Usage:
+#   condor_submit generate_data.sub
+#
+# Author: G. Scriven
+# Date: 2026-01-12
+
+# Job configuration
+universe                = vanilla
+executable              = /bin/bash
+arguments               = generate_data.sh $(Process)
+
+# Resource requirements
+request_cpus            = 8
+request_memory          = 8GB
+request_disk            = 2GB
+
+# Environment
+getenv                  = True
+environment             = "CONDA_PREFIX=/data/bfys/gscriven/conda/envs/TE"
+
+# File I/O
+initialdir              = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/ml_models/condor
+output                  = logs/data_gen_$(Process).out
+error                   = logs/data_gen_$(Process).err
+log                     = logs/data_gen_$(Process).log
+
+# Transfer files if needed (uncomment for remote execution)
+# should_transfer_files   = YES
+# when_to_transfer_output = ON_EXIT
+# transfer_input_files    = ../python/generate_training_data.py
+
+# Email notification (optional)
+# notification            = Complete
+# notify_user             = your.email@institution.nl
+
+# Number of jobs (generate multiple datasets in parallel)
+queue 1

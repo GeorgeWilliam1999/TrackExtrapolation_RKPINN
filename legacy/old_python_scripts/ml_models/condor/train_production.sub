@@ -1,0 +1,49 @@
+#!/usr/bin/env condor_submit
+#
+# HTCondor submit file for training large production models
+#
+# Trains a comprehensive range of model architectures for thorough evaluation
+#
+# Usage:
+#   condor_submit train_production.sub
+#
+
+universe                = vanilla
+executable              = /bin/bash
+arguments               = train_production_job.sh $(ModelName) $(HiddenLayers)
+
+# GPU requirements - NVIDIA L40S with 45GB VRAM available
+request_gpus            = 1
+request_cpus            = 4
+request_memory          = 16GB
+request_disk            = 5GB
+
+# Match GPU nodes
+requirements            = (GPUs >= 1)
++JobCategory            = "short"
++UseOS                  = "el9"
+
+getenv                  = True
+environment             = "CONDA_PREFIX=/data/bfys/gscriven/conda/envs/TE"
+
+initialdir              = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/ml_models/condor
+output                  = logs/prod_$(ModelName)_$(ClusterId).$(ProcId).out
+error                   = logs/prod_$(ModelName)_$(ClusterId).$(ProcId).err
+log                     = logs/prod_$(ClusterId).log
+
+# Comprehensive architecture sweep
+# Format: ModelName, HiddenLayers
+queue ModelName,HiddenLayers from (
+    tiny,32-32
+    small,64-64-32
+    medium,128-128-64
+    large,256-256-128-64
+    xlarge,512-512-256-128
+    xxlarge,1024-512-256-128
+    deep4,256-256-256-256
+    deep5,256-256-256-256-128
+    deep6,128-128-128-128-128-128
+    wide,512-512-512
+    wider,1024-1024-512
+    ultra,2048-1024-512-256
+)

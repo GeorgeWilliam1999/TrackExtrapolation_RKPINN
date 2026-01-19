@@ -1,0 +1,143 @@
+#===============================================================================
+# HTCondor Training Submission File
+#
+# Submits model training jobs to the NIKHEF stoomboot cluster
+#
+# Usage:
+#   condor_submit submit_training.sub
+#
+# Author: G. Scriven
+# Date: January 2026
+#===============================================================================
+
+# Universe
+universe = vanilla
+
+# Executable
+executable = run_training.sh
+
+# Job requirements
++UseOS = "el9"
++JobCategory = "medium"
+Requirements = (Machine != "stbc-pc.nikhef.nl")
+
+# Resources - Request GPU for faster training
+request_cpus = 4
+request_memory = 16GB
+request_disk = 10GB
+request_gpus = 1
+
+# Working directory (NFS - no file transfer needed)
+should_transfer_files = NO
+initialdir = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/cluster
+
+# Logs
+log = logs/training_$(Cluster)_$(Process).log
+output = logs/training_$(Cluster)_$(Process).out
+error = logs/training_$(Cluster)_$(Process).err
+
+# Notification
+notification = Complete
+notify_user = gscriven@nikhef.nl
+
+#===============================================================================
+# EXPERIMENT MATRIX
+#===============================================================================
+# Each job trains one model configuration
+# Arguments: MODEL_TYPE PRESET EXPERIMENT_NAME [EXTRA_ARGS...]
+#
+# Model Types: mlp, pinn, rk_pinn
+# Presets: tiny, small, medium, large, xlarge, wide, deep
+
+#-------------------------------------------------------------------------------
+# MLP Models (Data Loss Only)
+#-------------------------------------------------------------------------------
+# Architecture sweep
+arguments = mlp tiny mlp_tiny_v1 --epochs 100
+queue 1
+
+arguments = mlp small mlp_small_v1 --epochs 100
+queue 1
+
+arguments = mlp medium mlp_medium_v1 --epochs 100
+queue 1
+
+arguments = mlp large mlp_large_v1 --epochs 100
+queue 1
+
+arguments = mlp xlarge mlp_xlarge_v1 --epochs 100
+queue 1
+
+arguments = mlp wide mlp_wide_v1 --epochs 100
+queue 1
+
+arguments = mlp deep mlp_deep_v1 --epochs 100
+queue 1
+
+#-------------------------------------------------------------------------------
+# PINN Models (Data + Physics Loss with Autodiff PDE Residual)
+#-------------------------------------------------------------------------------
+# Sweep over physics loss weight (lambda_pde)
+arguments = pinn small pinn_small_lam1e-4 --epochs 100 --lambda_pde 1e-4
+queue 1
+
+arguments = pinn small pinn_small_lam1e-3 --epochs 100 --lambda_pde 1e-3
+queue 1
+
+arguments = pinn small pinn_small_lam1e-2 --epochs 100 --lambda_pde 1e-2
+queue 1
+
+arguments = pinn medium pinn_medium_lam1e-4 --epochs 100 --lambda_pde 1e-4
+queue 1
+
+arguments = pinn medium pinn_medium_lam1e-3 --epochs 100 --lambda_pde 1e-3
+queue 1
+
+arguments = pinn medium pinn_medium_lam1e-2 --epochs 100 --lambda_pde 1e-2
+queue 1
+
+arguments = pinn large pinn_large_lam1e-3 --epochs 100 --lambda_pde 1e-3
+queue 1
+
+arguments = pinn wide pinn_wide_lam1e-3 --epochs 100 --lambda_pde 1e-3
+queue 1
+
+#-------------------------------------------------------------------------------
+# RK-PINN Models (Multi-Stage with Collocation Points)
+#-------------------------------------------------------------------------------
+# Architecture sweep with standard physics weight
+arguments = rk_pinn small rkpinn_small_v1 --epochs 100 --lambda_pde 1e-3 --n_collocation 5
+queue 1
+
+arguments = rk_pinn medium rkpinn_medium_v1 --epochs 100 --lambda_pde 1e-3 --n_collocation 5
+queue 1
+
+arguments = rk_pinn large rkpinn_large_v1 --epochs 100 --lambda_pde 1e-3 --n_collocation 5
+queue 1
+
+arguments = rk_pinn wide rkpinn_wide_v1 --epochs 100 --lambda_pde 1e-3 --n_collocation 5
+queue 1
+
+# Collocation point sweep
+arguments = rk_pinn medium rkpinn_medium_col3 --epochs 100 --lambda_pde 1e-3 --n_collocation 3
+queue 1
+
+arguments = rk_pinn medium rkpinn_medium_col10 --epochs 100 --lambda_pde 1e-3 --n_collocation 10
+queue 1
+
+arguments = rk_pinn medium rkpinn_medium_col20 --epochs 100 --lambda_pde 1e-3 --n_collocation 20
+queue 1
+
+#-------------------------------------------------------------------------------
+# Activation Function Study (MLP baseline)
+#-------------------------------------------------------------------------------
+arguments = mlp medium mlp_medium_relu --epochs 100 --activation relu
+queue 1
+
+arguments = mlp medium mlp_medium_tanh --epochs 100 --activation tanh
+queue 1
+
+arguments = mlp medium mlp_medium_gelu --epochs 100 --activation gelu
+queue 1
+
+# Total: 24 jobs

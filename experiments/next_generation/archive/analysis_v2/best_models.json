@@ -1,0 +1,9 @@
+{
+  "best_position": "rkpinn_wide_v1",
+  "best_95th": "rkpinn_wide_v1",
+  "best_slope": "rkpinn_large_v1",
+  "best_per_type": {
+    "mlp": "test_mlp_tiny",
+    "rk_pinn": "rkpinn_wide_v1"
+  }
+}

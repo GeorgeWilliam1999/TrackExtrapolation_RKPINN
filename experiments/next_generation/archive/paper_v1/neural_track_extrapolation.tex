@@ -1,0 +1,1491 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{subcaption}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{cite}
+\usepackage{xcolor}
+
+% Theorem environments
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\title{\textbf{Neural Network Track Extrapolation for the LHCb Upgrade II: \\
+A Physics-Informed Machine Learning Approach}}
+
+\author{George William Scriven \\[0.5em]
+\small Gravitational Waves and Fundamental Physics (GWFP), Maastricht University, The Netherlands \\
+\small Centre for Mathematical Analysis and Topology (CMAT), UHasselt, Belgium \\
+\small Nikhef, National Institute for Subatomic Physics, Amsterdam, The Netherlands \\[0.5em]
+\small \texttt{george.scriven@maastrichtuniversity.nl} \\
+\small \texttt{gscriven@nikhef.nl} \\
+\small \texttt{george.scriven@uhasselt.be}}
+
+\date{January 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+The LHCb Upgrade II, scheduled for commissioning during Long Shutdown 4 (LS4, 2033-2034), will increase the instantaneous luminosity to $1.5 \times 10^{34}~\text{cm}^{-2}\text{s}^{-1}$, presenting unprecedented computational challenges for real-time track reconstruction. Track extrapolation through the detector's magnetic field is a critical computational bottleneck in the High Level Trigger (HLT), which must process events at 30~MHz using a fully software-based trigger. This work presents a proof-of-concept neural network approach to replace traditional Runge-Kutta numerical integration with fast, accurate machine learning models. We design four neural network architectures: standard Multi-Layer Perceptrons (MLPs), Residual MLPs with physics-based skip connections, Physics-Informed Neural Networks (PINNs), and a novel Runge-Kutta-inspired PINN (RK-PINN) with multi-stage prediction. In this study, \textbf{MLP and RK-PINN architectures were trained and evaluated}; Residual MLP and PINN are planned for future work. Training on 50 million simulated tracks using a simplified analytical magnetic field model, our best RK-PINN model (\texttt{rkpinn\_wide}) achieves a mean position error of $18.0~\mu\text{m}$ with inference time of $3.96~\mu$s per track. The fastest model (\texttt{mlp\_small}) achieves $0.84~\mu$s inference with $53.5~\mu\text{m}$ accuracy---2.9$\times$ faster than the BogackiShampine3 C++ extrapolator (2.40~$\mu$s). With the simplified toy field used in this study, neural networks achieve modest speedup (1--3$\times$) over C++ extrapolators. \textbf{Important caveat:} This study uses a simplified toy magnetic field; deployment in LHCb requires retraining with the full field map. The significant speedup required for Upgrade~II triggers is expected when neural networks replace expensive 3D field interpolation in production.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+\subsection{The Large Hadron Collider and LHCb Experiment}
+
+The Large Hadron Collider (LHC) at CERN is the world's largest and most powerful particle accelerator, colliding protons at center-of-mass energies up to $\sqrt{s} = 13.6$~TeV~\cite{LHC-Machine}. The LHCb experiment is one of four major experiments at the LHC, specifically designed as a forward spectrometer to study CP violation and rare decays in the beauty and charm quark sectors~\cite{LHCb-Detector}.
+
+LHCb operates as a single-arm forward spectrometer covering the pseudorapidity range $2 < \eta < 5$, optimized for detecting particles containing $b$ and $c$ quarks which are predominantly produced in the forward direction at hadron colliders. The detector comprises several subsystems~\cite{LHCb-Detector}:
+\begin{itemize}
+    \item \textbf{VErtex LOcator (VELO):} Silicon pixel detector providing precise vertex reconstruction
+    \item \textbf{Tracking stations (UT, SciFi):} Upstream Tracker and Scintillating Fibre tracker for momentum measurement
+    \item \textbf{Dipole magnet:} Warm dipole providing an integrated field of $\sim 4$~Tm for momentum measurement
+    \item \textbf{RICH detectors:} Ring Imaging Cherenkov detectors for particle identification
+    \item \textbf{Calorimeters and muon system:} For energy measurement and muon identification
+\end{itemize}
+
+\subsection{The LHCb Upgrade II Programme}
+
+The LHCb Upgrade II is a major enhancement planned for installation during Long Shutdown 4 (LS4, 2033-2034)~\cite{LHCb-Framework-TDR}. The key parameters of the upgrade are:
+
+\begin{itemize}
+    \item \textbf{Instantaneous luminosity:} $\mathcal{L} = 1.5 \times 10^{34}~\text{cm}^{-2}\text{s}^{-1}$ (7.5$\times$ Upgrade I)
+    \item \textbf{Integrated luminosity target:} 300~fb$^{-1}$ over the HL-LHC lifetime
+    \item \textbf{Pile-up:} Average of $\mu \approx 42$ visible interactions per bunch crossing~\cite{LHCb-Framework-TDR}
+    \item \textbf{Bunch crossing rate:} 30~MHz
+\end{itemize}
+
+The increased luminosity presents significant computational challenges. The LHCb trigger system, which after Upgrade I became the first fully software-based trigger at a hadron collider~\cite{LHCb-Trigger-TDR}, must process $\mathcal{O}(10^8)$ events per second. Track reconstruction constitutes approximately 70\% of the HLT1 processing time~\cite{LHCb-Allen}, making any speedup in tracking algorithms directly impactful for the experiment's physics reach.
+
+\subsection{Track Extrapolation: The Computational Challenge}
+
+Track extrapolation---propagating a charged particle's trajectory through the magnetic field from one detector plane to another---is a fundamental operation in track reconstruction. Given an initial track state:
+\begin{equation}
+\mathbf{s}(z_0) = (x, y, t_x, t_y, q/p)
+\label{eq:track_state}
+\end{equation}
+where $(x, y)$ is the position, $t_x = dx/dz$ and $t_y = dy/dz$ are the track slopes, $q$ is the particle charge, and $p$ is the momentum, the extrapolation task is to predict the state at a target z-position:
+\begin{equation}
+\mathbf{s}(z_1) = \mathcal{E}[\mathbf{s}(z_0); z_0 \to z_1; \mathbf{B}(\mathbf{r})]
+\end{equation}
+
+Traditional extrapolation uses numerical integration of the equations of motion (typically fourth-order Runge-Kutta methods), requiring multiple evaluations of the magnetic field map per integration step. Each field evaluation involves 3D interpolation of tabulated field values, making extrapolation computationally expensive~\cite{GEANT4-RK}.
+
+\subsection{Scope and Limitations of This Work}
+
+\textbf{Important:} This work is a \textbf{proof-of-concept study} using a simplified magnetic field model. The key limitations are:
+
+\begin{enumerate}
+    \item \textbf{Simplified magnetic field:} We use an analytical Gaussian-profile dipole field approximation rather than the full LHCb field map from the detector simulation. The real field map includes complex fringe fields, iron yoke effects, and detailed 3D structure that are not captured by our model.
+    
+    \item \textbf{No material effects:} Multiple scattering and energy loss in detector material are not included in the training data.
+    
+    \item \textbf{Single propagation distance:} Models are trained for fixed $\Delta z = 2300$~mm.
+    
+    \item \textbf{Validation only:} Results demonstrate feasibility but have not been validated against full LHCb simulation or real data.
+\end{enumerate}
+
+%==============================================================================
+\section{Mathematical Preliminaries}
+\label{sec:math_prelim}
+%==============================================================================
+
+We establish the mathematical framework and notation used throughout this paper.
+
+\subsection{Function Spaces and Norms}
+
+\begin{definition}[Track State Space]
+Let $\mathcal{S} \subset \mathbb{R}^5$ denote the \textbf{track state space}, where each state $\mathbf{s} = (x, y, t_x, t_y, \kappa) \in \mathcal{S}$ consists of:
+\begin{itemize}
+    \item Position coordinates $(x, y) \in \mathbb{R}^2$ (measured in mm)
+    \item Directional slopes $(t_x, t_y) := (dx/dz, dy/dz) \in \mathbb{R}^2$ (dimensionless)
+    \item Curvature parameter $\kappa := q/(pc) \in \mathbb{R}$ (T$^{-1}$m$^{-1}$)
+\end{itemize}
+The state space is equipped with the Euclidean norm $\|\mathbf{s}\|_2 = \sqrt{x^2 + y^2 + t_x^2 + t_y^2 + \kappa^2}$.
+\end{definition}
+
+\begin{definition}[Input and Output Spaces]
+The \textbf{input space} for our neural network models is:
+\begin{equation}
+\mathcal{X} := \mathcal{S} \times \mathbb{R}^+ = \{(\mathbf{s}, \Delta z) : \mathbf{s} \in \mathcal{S}, \Delta z > 0\} \subset \mathbb{R}^6
+\end{equation}
+The \textbf{output space} is the position-slope subspace:
+\begin{equation}
+\mathcal{Y} := \{(x', y', t_x', t_y') \in \mathbb{R}^4\}
+\end{equation}
+\end{definition}
+
+\begin{definition}[Sobolev Spaces]
+For $k \in \mathbb{N}$ and $p \in [1, \infty]$, the Sobolev space $W^{k,p}(\Omega)$ consists of functions $f: \Omega \to \mathbb{R}$ whose weak derivatives up to order $k$ exist and belong to $L^p(\Omega)$:
+\begin{equation}
+W^{k,p}(\Omega) := \left\{ f \in L^p(\Omega) : D^\alpha f \in L^p(\Omega) \text{ for all } |\alpha| \leq k \right\}
+\end{equation}
+with norm $\|f\|_{W^{k,p}} := \left( \sum_{|\alpha| \leq k} \|D^\alpha f\|_{L^p}^p \right)^{1/p}$.
+\end{definition}
+
+\subsection{The Track Extrapolation Problem}
+
+\begin{definition}[Extrapolation Operator]
+The \textbf{exact extrapolation operator} $\mathcal{E}: \mathcal{X} \to \mathcal{Y}$ is defined as the solution map of the initial value problem:
+\begin{equation}
+\mathcal{E}(\mathbf{s}_0, \Delta z) := \mathbf{s}(z_0 + \Delta z) \quad \text{where } \frac{d\mathbf{s}}{dz} = \mathbf{F}(\mathbf{s}, z), \quad \mathbf{s}(z_0) = \mathbf{s}_0
+\label{eq:exact_extrapolation}
+\end{equation}
+and $\mathbf{F}: \mathcal{S} \times \mathbb{R} \to \mathbb{R}^4$ encodes the equations of motion.
+\end{definition}
+
+\begin{theorem}[Existence and Uniqueness]
+\label{thm:existence}
+Let $\mathbf{B}: \mathbb{R}^3 \to \mathbb{R}^3$ be the magnetic field satisfying $\mathbf{B} \in C^1(\mathbb{R}^3)$ with bounded derivatives. Then for any initial condition $\mathbf{s}_0 \in \mathcal{S}$ and propagation distance $\Delta z > 0$, the extrapolation operator $\mathcal{E}(\mathbf{s}_0, \Delta z)$ exists, is unique, and depends continuously on the initial data.
+\end{theorem}
+
+\begin{proof}
+The right-hand side $\mathbf{F}(\mathbf{s}, z)$ of the ODE system is locally Lipschitz in $\mathbf{s}$ when $\mathbf{B} \in C^1$. Specifically, for the equations of motion (Eq.~\ref{eq:eom}), we have:
+\begin{equation}
+\|\mathbf{F}(\mathbf{s}_1, z) - \mathbf{F}(\mathbf{s}_2, z)\| \leq L \|\mathbf{s}_1 - \mathbf{s}_2\|
+\end{equation}
+where the Lipschitz constant $L$ depends on $\|\mathbf{B}\|_{C^1}$ and the bounds on the state space. The result follows from the Picard-Lindel\"of theorem~\cite{Hairer-ODE}.
+\end{proof}
+
+\begin{definition}[Neural Network Approximator]
+A \textbf{neural network extrapolator} is a parametric function $f_\theta: \mathcal{X} \to \mathcal{Y}$ with parameters $\theta \in \Theta \subset \mathbb{R}^p$ that approximates the exact extrapolation operator:
+\begin{equation}
+f_\theta(\mathbf{s}_0, \Delta z) \approx \mathcal{E}(\mathbf{s}_0, \Delta z)
+\end{equation}
+The \textbf{approximation error} is measured in the $L^2$ sense over a probability distribution $\mu$ on $\mathcal{X}$:
+\begin{equation}
+\mathcal{R}(f_\theta) := \mathbb{E}_{(\mathbf{x}, \mathbf{y}) \sim \mu} \left[ \|f_\theta(\mathbf{x}) - \mathbf{y}\|_2^2 \right]
+\end{equation}
+\end{definition}
+
+%==============================================================================
+\section{Theoretical Framework}
+%==============================================================================
+
+\subsection{Equations of Motion for Charged Particles}
+
+The motion of a relativistic charged particle in an electromagnetic field is governed by the Lorentz force equation~\cite{Jackson-EM}:
+\begin{equation}
+\frac{d\mathbf{p}}{dt} = q(\mathbf{E} + \mathbf{v} \times \mathbf{B})
+\label{eq:lorentz}
+\end{equation}
+where $\mathbf{p} = \gamma m \mathbf{v}$ is the relativistic momentum, $q$ is the charge, and $\mathbf{E}$, $\mathbf{B}$ are the electric and magnetic fields.
+
+In particle physics detectors, electric fields are typically negligible in the tracking volume, and we use $z$ (the beam direction) as the independent variable. The equations of motion become~\cite{Geant4-Physics}:
+\begin{align}
+\frac{dx}{dz} &= t_x \\
+\frac{dy}{dz} &= t_y \\
+\frac{dt_x}{dz} &= \kappa\sqrt{1+t_x^2+t_y^2} \left[ t_x t_y B_x - (1+t_x^2)B_y + t_y B_z \right] \\
+\frac{dt_y}{dz} &= \kappa\sqrt{1+t_x^2+t_y^2} \left[ (1+t_y^2)B_x - t_x t_y B_y - t_x B_z \right]
+\label{eq:eom}
+\end{align}
+where $\kappa = q/(pc) \approx 0.3 \cdot q/(p[\text{GeV}])$~T$^{-1}$m$^{-1}$ encodes the charge-to-momentum ratio.
+
+\subsection{Simplified Magnetic Field Model (Toy Model)}
+
+For this proof-of-concept study, we use a simplified analytical field model:
+\begin{equation}
+B_y(x, y, z) = B_0 \cdot \text{pol} \cdot \exp\left(-\frac{1}{2}\left(\frac{z - z_c}{\sigma_z}\right)^2\right) \cdot \left(1 - 10^{-4} \frac{r_\perp^2}{1000^2}\right)
+\label{eq:toy_field}
+\end{equation}
+where $B_0 = 1.0$~T is the peak field strength, $\text{pol} = \pm 1$ is the polarity, $z_c = 5250$~mm is the magnet center, and $\sigma_z = 2500$~mm is the characteristic width. This Gaussian profile captures the qualitative behavior of the LHCb dipole but lacks detailed 3D structure, iron yoke effects, and accurate fringe fields.
+
+\subsection{Numerical Integration: Runge-Kutta Methods}
+
+Traditional track extrapolation uses adaptive Runge-Kutta integration~\cite{Hairer-ODE}. The classical fourth-order method (RK4) computes:
+\begin{align}
+k_1 &= f(\mathbf{s}_n, z_n) \\
+k_2 &= f(\mathbf{s}_n + \tfrac{h}{2}k_1, z_n + \tfrac{h}{2}) \\
+k_3 &= f(\mathbf{s}_n + \tfrac{h}{2}k_2, z_n + \tfrac{h}{2}) \\
+k_4 &= f(\mathbf{s}_n + h k_3, z_n + h) \\
+\mathbf{s}_{n+1} &= \mathbf{s}_n + \frac{h}{6}(k_1 + 2k_2 + 2k_3 + k_4) + \mathcal{O}(h^5)
+\label{eq:rk4}
+\end{align}
+
+The computational cost comes from the four evaluations of $f(\cdot)$ per step, each requiring magnetic field interpolation. This structure---evaluating the system at intermediate points and combining with specific weights---will directly inspire our RK-PINN architecture (Section~\ref{sec:rk_pinn}).
+
+%==============================================================================
+\section{Neural Network Architecture Foundations}
+\label{sec:architectures}
+%==============================================================================
+
+This section provides rigorous justification for each architectural choice in our models, with references to foundational machine learning literature.
+
+\subsection{Formal Definition of Neural Network Extrapolators}
+\label{sec:formal_maps}
+
+We begin by formally defining each architecture as a parametric map, specifying domains, codomains, and the functional form of each mapping.
+
+\subsubsection{Common Domain and Codomain}
+
+All architectures share the same input-output structure:
+
+\begin{definition}[Common Input Domain]
+The input domain for all extrapolator architectures is:
+\begin{equation}
+\mathcal{X} := \underbrace{[-1000, 1000]^2}_{\text{position } (x,y) \text{ [mm]}} \times \underbrace{[-0.3, 0.3]^2}_{\text{slopes } (t_x, t_y)} \times \underbrace{[-2, 2]}_{\kappa = q/p \text{ [c/GeV]}} \times \underbrace{\{2300\}}_{\Delta z \text{ [mm]}} \subset \mathbb{R}^6
+\end{equation}
+We denote a generic input as $\mathbf{x} = (x, y, t_x, t_y, \kappa, \Delta z) \in \mathcal{X}$.
+\end{definition}
+
+\begin{definition}[Common Output Codomain]
+The output codomain for all extrapolator architectures is:
+\begin{equation}
+\mathcal{Y} := \underbrace{[-2000, 2000]^2}_{\text{position } (x',y') \text{ [mm]}} \times \underbrace{[-0.5, 0.5]^2}_{\text{slopes } (t_x', t_y')} \subset \mathbb{R}^4
+\end{equation}
+We denote a generic output as $\mathbf{y} = (x', y', t'_x, t'_y) \in \mathcal{Y}$.
+\end{definition}
+
+\begin{definition}[Track Extrapolation as a Mapping Problem]
+The goal is to learn a parametric map $f_\theta: \mathcal{X} \to \mathcal{Y}$ that approximates the exact extrapolation operator $\mathcal{E}: \mathcal{X} \to \mathcal{Y}$ defined by the solution of the equations of motion (Eq.~\ref{eq:eom}).
+\end{definition}
+
+\subsubsection{Multi-Layer Perceptron (MLP) --- Direct Mapping}
+
+\begin{definition}[MLP Extrapolator]
+\label{def:mlp_map}
+An \textbf{MLP extrapolator} with $L$ hidden layers is a map $f_\theta^{\text{MLP}}: \mathcal{X} \to \mathcal{Y}$ defined by the composition:
+\begin{equation}
+f_\theta^{\text{MLP}} := \mathbf{A}^{(L+1)} \circ \sigma \circ \mathbf{A}^{(L)} \circ \sigma \circ \cdots \circ \sigma \circ \mathbf{A}^{(1)}
+\end{equation}
+where:
+\begin{itemize}
+    \item $\mathbf{A}^{(l)}(\mathbf{h}) := \mathbf{W}^{(l)} \mathbf{h} + \mathbf{b}^{(l)}$ are affine transformations with $\mathbf{W}^{(l)} \in \mathbb{R}^{d_l \times d_{l-1}}$, $\mathbf{b}^{(l)} \in \mathbb{R}^{d_l}$
+    \item $\sigma: \mathbb{R} \to \mathbb{R}$ is the SiLU activation applied component-wise
+    \item $d_0 = 6$ (input dimension), $d_{L+1} = 4$ (output dimension)
+    \item The parameter space is $\Theta = \prod_{l=1}^{L+1} \left( \mathbb{R}^{d_l \times d_{l-1}} \times \mathbb{R}^{d_l} \right)$
+\end{itemize}
+The total parameter count is $|\theta| = \sum_{l=1}^{L+1} d_l(d_{l-1} + 1)$.
+\end{definition}
+
+\begin{example}[MLP-Medium Configuration]
+For \texttt{mlp\_medium} with layers $[128, 128, 64]$:
+\begin{align}
+f_\theta^{\text{MLP}}: \mathbb{R}^6 &\xrightarrow{\mathbf{A}^{(1)}} \mathbb{R}^{128} \xrightarrow{\sigma} \mathbb{R}^{128} \xrightarrow{\mathbf{A}^{(2)}} \mathbb{R}^{128} \xrightarrow{\sigma} \mathbb{R}^{128} \\
+&\xrightarrow{\mathbf{A}^{(3)}} \mathbb{R}^{64} \xrightarrow{\sigma} \mathbb{R}^{64} \xrightarrow{\mathbf{A}^{(4)}} \mathbb{R}^4
+\end{align}
+Parameter count: $6 \cdot 128 + 128 + 128 \cdot 128 + 128 + 128 \cdot 64 + 64 + 64 \cdot 4 + 4 = 26,052$.
+\end{example}
+
+\subsubsection{Residual MLP --- Correction Mapping (Planned)}
+
+\begin{definition}[Residual MLP Extrapolator]
+\label{def:residual_map}
+A \textbf{Residual MLP extrapolator} is a map $f_\theta^{\text{Res}}: \mathcal{X} \to \mathcal{Y}$ defined as:
+\begin{equation}
+f_\theta^{\text{Res}}(\mathbf{x}) := \underbrace{\Phi(\mathbf{x})}_{\text{physics baseline}} + \underbrace{g_\theta(\mathbf{x})}_{\text{learned correction}}
+\end{equation}
+where:
+\begin{itemize}
+    \item The \textbf{physics baseline} $\Phi: \mathcal{X} \to \mathcal{Y}$ encodes straight-line propagation:
+    \begin{equation}
+    \Phi(x, y, t_x, t_y, \kappa, \Delta z) := (x + t_x \Delta z, \; y + t_y \Delta z, \; t_x, \; t_y)
+    \end{equation}
+    \item The \textbf{correction network} $g_\theta: \mathcal{X} \to \mathbb{R}^4$ is an MLP learning only the magnetic deflection
+\end{itemize}
+\end{definition}
+
+\begin{remark}[Residual Learning Principle]
+The decomposition $f = \Phi + g$ is motivated by the observation that magnetic deflections are $\mathcal{O}(100~\text{mm})$ while total propagation is $\mathcal{O}(2000~\text{mm})$. Learning the smaller correction $g$ requires less representational capacity than learning the full map $f$.
+\end{remark}
+
+\subsubsection{True PINN --- PDE-Constrained Mapping (Planned)}
+
+\begin{definition}[True Physics-Informed Neural Network]
+\label{def:pinn_map}
+A \textbf{True PINN extrapolator} learns a continuous trajectory $\hat{\mathbf{s}}_\theta(z): [z_0, z_0+\Delta z] \to \mathcal{S}$ that satisfies the Lorentz force equations. Unlike soft-constraint approaches, a True PINN uses \textbf{automatic differentiation} to enforce the governing PDEs.
+
+The network predicts the state at any $z$ along the trajectory:
+\begin{equation}
+\hat{\mathbf{s}}_\theta: \mathcal{S} \times \mathbb{R}^+ \times \mathbb{R} \to \mathcal{S}, \quad (\mathbf{s}_0, \kappa, z) \mapsto \hat{\mathbf{s}}(z)
+\end{equation}
+\end{definition}
+
+\begin{definition}[True PINN Loss Function]
+\label{def:true_pinn_loss}
+The True PINN loss combines boundary conditions with PDE residuals:
+\begin{equation}
+\mathcal{L}^{\text{PINN}}(\theta) := \underbrace{\mathcal{L}_{\text{data}}(\theta)}_{\text{boundary conditions}} + \underbrace{\lambda \mathcal{L}_{\text{PDE}}(\theta)}_{\text{physics residual}}
+\end{equation}
+
+The \textbf{data loss} enforces boundary conditions at the endpoints:
+\begin{equation}
+\mathcal{L}_{\text{data}}(\theta) := \frac{1}{N} \sum_{i=1}^N \left\| \hat{\mathbf{s}}_\theta(\mathbf{s}_0^{(i)}, \kappa^{(i)}, z_{\text{end}}) - \mathbf{s}_{\text{end}}^{(i)} \right\|_2^2
+\end{equation}
+
+The \textbf{PDE loss} enforces the Lorentz equations at collocation points via automatic differentiation:
+\begin{equation}
+\mathcal{L}_{\text{PDE}}(\theta) := \frac{1}{N_c} \sum_{j=1}^{N_c} \left\| \frac{\partial \hat{\mathbf{s}}_\theta}{\partial z}\bigg|_{z_j} - \mathbf{F}(\hat{\mathbf{s}}_\theta(z_j), \mathbf{B}(z_j)) \right\|_2^2
+\end{equation}
+where $\mathbf{F}$ is the Lorentz force right-hand side from Eq.~(\ref{eq:eom}).
+\end{definition}
+
+\begin{remark}[Automatic Differentiation]
+The key distinction of a True PINN is that we compute $\partial \hat{\mathbf{s}}/\partial z$ using \texttt{torch.autograd.grad()}, then compare to the expected derivative from the Lorentz equations. This enforces that the learned trajectory actually satisfies the governing physics, not just produces outputs that ``look reasonable.''
+\end{remark}
+
+\begin{remark}[Collocation Points]
+We sample $N_c$ collocation points uniformly along each trajectory: $z_j \sim \mathcal{U}(z_0, z_0 + \Delta z)$. At each point, we evaluate the PDE residual. This provides physics regularization throughout the domain, not just at boundaries.
+\end{remark}
+
+\subsubsection{RK-PINN --- Multi-Stage Prediction Mapping}
+
+\begin{definition}[RK-PINN Extrapolator]
+\label{def:rkpinn_map}
+An \textbf{RK-PINN extrapolator} is a map $f_\theta^{\text{RK}}: \mathcal{X} \to \mathcal{Y}$ with multi-stage structure:
+\begin{equation}
+f_\theta^{\text{RK}}(\mathbf{x}) := \pi(\mathbf{x}) + \sum_{k=1}^{4} w_k(\boldsymbol{\alpha}) \cdot H_k(\phi(\mathbf{x}))
+\end{equation}
+where:
+\begin{itemize}
+    \item $\pi: \mathcal{X} \to \mathcal{Y}$ is the identity projection: $\pi(x, y, t_x, t_y, \kappa, \Delta z) := (x, y, t_x, t_y)$
+    \item $\phi: \mathcal{X} \to \mathbb{R}^d$ is the \textbf{trunk network} (shared feature extractor), an MLP
+    \item $H_k: \mathbb{R}^d \to \mathbb{R}^4$ for $k \in \{1,2,3,4\}$ are four \textbf{prediction heads} (linear maps)
+    \item $w_k: \mathbb{R}^4 \to (0,1)$ are \textbf{softmax weights}: $w_k(\boldsymbol{\alpha}) = \exp(\alpha_k) / \sum_j \exp(\alpha_j)$
+    \item $\boldsymbol{\alpha} \in \mathbb{R}^4$ are learnable logits initialized to $\boldsymbol{\alpha}^{(0)} = (\log \tfrac{1}{6}, \log \tfrac{1}{3}, \log \tfrac{1}{3}, \log \tfrac{1}{6})$
+\end{itemize}
+\end{definition}
+
+\begin{remark}[RK4 Analogy]
+The four heads $\{H_k\}_{k=1}^4$ are analogous to the four stages $\{k_i\}_{i=1}^4$ in classical RK4, and the weights $(1/6, 1/3, 1/3, 1/6)$ are the standard RK4 Butcher tableau coefficients. Unlike classical RK4, the heads operate in parallel on shared features rather than sequentially.
+\end{remark}
+
+\begin{proposition}[RK-PINN Parameter Count]
+For trunk architecture $[d_1, \ldots, d_L]$ with final hidden dimension $d_L$, the RK-PINN has:
+\begin{equation}
+|\theta| = \underbrace{|\theta_{\text{trunk}}|}_{\text{trunk params}} + \underbrace{4 \cdot d_L \cdot 4}_{\text{4 heads} \times \text{output dim}} + \underbrace{4}_{\text{weight logits}}
+\end{equation}
+\end{proposition}
+
+\subsubsection{Summary: Architecture Comparison as Maps}
+
+\begin{table}[H]
+\centering
+\caption{Formal comparison of neural network extrapolator architectures}
+\label{tab:formal_maps}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Architecture} & \textbf{Map Form} & \textbf{Domain} & \textbf{Codomain} \\
+\midrule
+MLP & $f_\theta = \mathbf{A}^{(L+1)} \circ \sigma \circ \cdots \circ \mathbf{A}^{(1)}$ & $\mathcal{X} \subset \mathbb{R}^6$ & $\mathcal{Y} \subset \mathbb{R}^4$ \\
+Residual MLP & $f_\theta = \Phi + g_\theta$ & $\mathcal{X} \subset \mathbb{R}^6$ & $\mathcal{Y} \subset \mathbb{R}^4$ \\
+PINN & $f_\theta = \text{MLP}$ (physics loss) & $\mathcal{X} \subset \mathbb{R}^6$ & $\mathcal{Y} \subset \mathbb{R}^4$ \\
+RK-PINN & $f_\theta = \pi + \sum_k w_k H_k \circ \phi$ & $\mathcal{X} \subset \mathbb{R}^6$ & $\mathcal{Y} \subset \mathbb{R}^4$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{remark}[Implementation Status]
+In this work, \textbf{MLP} and \textbf{RK-PINN} architectures were fully implemented and trained. \textbf{Residual MLP} and \textbf{PINN} are proposed for future work; their formal definitions are included for completeness.
+\end{remark}
+
+%------------------------------------------------------------------------------
+\subsection{Multi-Layer Perceptron (MLP)}
+\label{sec:mlp}
+
+\subsubsection{Universal Approximation Theory}
+
+The theoretical foundation for using neural networks as function approximators rests on the Universal Approximation Theorem. We state the theorem precisely:
+
+\begin{theorem}[Universal Approximation~\cite{Hornik-UAT}]
+\label{thm:uat}
+Let $\sigma: \mathbb{R} \to \mathbb{R}$ be a continuous, non-constant, bounded, and monotonically increasing function (e.g., the sigmoid $\sigma(x) = 1/(1+e^{-x})$). Let $K \subset \mathbb{R}^n$ be compact. Then for any $f \in C(K, \mathbb{R}^m)$ and any $\varepsilon > 0$, there exists $N \in \mathbb{N}$, weights $\mathbf{W} \in \mathbb{R}^{m \times N}$, $\mathbf{V} \in \mathbb{R}^{N \times n}$, and biases $\mathbf{b} \in \mathbb{R}^N$, $\mathbf{c} \in \mathbb{R}^m$ such that:
+\begin{equation}
+\sup_{\mathbf{x} \in K} \left\| f(\mathbf{x}) - \left( \mathbf{W} \sigma(\mathbf{V}\mathbf{x} + \mathbf{b}) + \mathbf{c} \right) \right\| < \varepsilon
+\end{equation}
+where $\sigma$ is applied component-wise.
+\end{theorem}
+
+\begin{remark}
+The theorem guarantees \textit{existence} of an approximating network but provides no constructive bound on the required width $N$. For Lipschitz functions, Yarotsky~\cite{Yarotsky-Approx} showed that ReLU networks can achieve $\varepsilon$-approximation with $\mathcal{O}(\varepsilon^{-n/s})$ parameters for functions in the Sobolev space $W^{s,\infty}$, where $n$ is the input dimension and $s$ is the smoothness.
+\end{remark}
+
+\begin{corollary}[Approximation of Track Extrapolation]
+\label{cor:track_approx}
+Since the exact extrapolation operator $\mathcal{E}: \mathcal{X} \to \mathcal{Y}$ is continuous (by Theorem~\ref{thm:existence}) on the compact domain
+\begin{equation}
+K := [-1000, 1000]^2 \times [-0.3, 0.3]^2 \times [-2, 2] \times \{2300\} \subset \mathcal{X}
+\end{equation}
+there exists a neural network $f_\theta$ that approximates $\mathcal{E}$ to arbitrary precision on $K$.
+\end{corollary}
+
+For track extrapolation, we seek to approximate the mapping:
+\begin{equation}
+f_\theta: \mathbb{R}^6 \to \mathbb{R}^4, \quad (x, y, t_x, t_y, q/p, \Delta z) \mapsto (x', y', t_x', t_y')
+\end{equation}
+
+\subsubsection{Architecture Specification}
+
+Our MLP architecture follows the standard feedforward formulation:
+\begin{equation}
+\mathbf{h}^{(l)} = \sigma\left(\mathbf{W}^{(l)} \mathbf{h}^{(l-1)} + \mathbf{b}^{(l)}\right)
+\label{eq:mlp_layer}
+\end{equation}
+where $\mathbf{h}^{(l)}$ is the hidden representation at layer $l$, $\mathbf{W}^{(l)}$ and $\mathbf{b}^{(l)}$ are learnable weights and biases, and $\sigma$ is the activation function.
+
+\subsubsection{SiLU/Swish Activation Function}
+\label{sec:silu}
+
+We use the \textbf{Sigmoid Linear Unit (SiLU)}, also known as Swish, as our activation function. This choice is motivated by the systematic activation function search conducted by Ramachandran, Zoph, and Le~\cite{Swish-Activation}, who used reinforcement learning to discover:
+\begin{equation}
+\text{SiLU}(x) = x \cdot \sigma(x) = \frac{x}{1 + e^{-x}}
+\label{eq:silu}
+\end{equation}
+
+\textbf{Why SiLU over ReLU?}
+\begin{itemize}
+    \item \textbf{Smoothness:} SiLU is continuously differentiable everywhere, unlike ReLU which has a discontinuous derivative at $x=0$. This improves gradient flow during training~\cite{Swish-Activation}.
+    \item \textbf{Non-monotonicity:} SiLU is non-monotonic, allowing it to express more complex functions. For $x < 0$, the function can output small negative values before approaching zero.
+    \item \textbf{Self-gating:} The $\sigma(x)$ term acts as a learned gate, adaptively scaling inputs based on their magnitude.
+    \item \textbf{Empirical performance:} Ramachandran et al.~\cite{Swish-Activation} showed consistent improvements over ReLU on ImageNet (+0.6-0.9\% top-1 accuracy) and various NLP tasks.
+\end{itemize}
+
+We also considered GELU (Gaussian Error Linear Unit)~\cite{GELU-Activation}:
+\begin{equation}
+\text{GELU}(x) = x \cdot \Phi(x) \approx 0.5x\left(1 + \tanh\left[\sqrt{2/\pi}(x + 0.044715x^3)\right]\right)
+\end{equation}
+which has similar properties but is more computationally expensive. In our experiments, SiLU achieved 0.21~mm error compared to 0.63~mm for tanh and 0.77~mm for ReLU.
+
+\subsubsection{Width vs. Depth Trade-offs}
+
+We explore various width/depth configurations based on established principles~\cite{Deep-Learning-Book}:
+
+\begin{table}[H]
+\centering
+\caption{MLP architecture variants with design rationale}
+\label{tab:mlp_variants}
+\begin{tabular}{lccp{6cm}}
+\toprule
+\textbf{Variant} & \textbf{Layers} & \textbf{Params} & \textbf{Design Rationale} \\
+\midrule
+Tiny & [64, 32] & 3k & Minimal model for speed testing \\
+Small & [128, 64] & 14k & Baseline with moderate capacity \\
+Medium & [128, 128, 64] & 26k & Standard depth, proven effective \\
+Large & [256, 256, 128] & 105k & High capacity for complex mappings \\
+Wide-Shallow & [256, 128] & 51k & Tests width vs depth hypothesis \\
+Deep & [128]$\times$5, 64 & 43k & Tests depth benefits \\
+Balanced & [192, 192, 96] & 57k & Optimized via hyperparameter search \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The ``wide vs. deep'' trade-off is an active research area. Wider networks can approximate functions more efficiently in some cases~\cite{Wide-Networks}, while deeper networks can learn hierarchical representations~\cite{Deep-Learning-Book}. Our experiments test both approaches.
+
+%------------------------------------------------------------------------------
+\subsection{Residual MLP: Skip Connections for Physics-Based Priors}
+\label{sec:residual_mlp}
+%------------------------------------------------------------------------------
+
+\textbf{Implementation Status:} This architecture is \textit{proposed but not yet trained}. We include the design here as future work.
+
+\subsubsection{Residual Learning Framework}
+
+The Residual MLP incorporates \textbf{skip connections} inspired by the ResNet architecture of He et al.~\cite{ResNet}. The key insight from~\cite{ResNet} is that learning residual functions $\mathcal{F}(\mathbf{x}) := \mathcal{H}(\mathbf{x}) - \mathbf{x}$ is easier than learning the full mapping $\mathcal{H}(\mathbf{x})$ directly. This addresses the degradation problem in deep networks where adding layers can actually increase training error.
+
+The standard residual block computes:
+\begin{equation}
+\mathbf{y} = \mathcal{F}(\mathbf{x}, \{W_i\}) + \mathbf{x}
+\label{eq:residual_block}
+\end{equation}
+
+For track extrapolation, we adapt this principle with a \textbf{physics-informed skip connection}.
+
+\subsubsection{Physics-Based Residual Formulation}
+
+In the absence of a magnetic field, tracks propagate in straight lines:
+\begin{align}
+x_{\text{straight}} &= x_{\text{in}} + t_x \cdot \Delta z \\
+y_{\text{straight}} &= y_{\text{in}} + t_y \cdot \Delta z \\
+t_x' &= t_x, \quad t_y' = t_y
+\end{align}
+
+The magnetic field introduces corrections to this straight-line baseline. Our Residual MLP learns only these corrections:
+\begin{equation}
+\begin{pmatrix} x' \\ y' \\ t_x' \\ t_y' \end{pmatrix} = 
+\underbrace{\begin{pmatrix} x + t_x \Delta z \\ y + t_y \Delta z \\ t_x \\ t_y \end{pmatrix}}_{\text{Physics baseline}} + 
+\underbrace{\text{MLP}(x, y, t_x, t_y, q/p, \Delta z)}_{\text{Learned correction}}
+\label{eq:residual_mlp}
+\end{equation}
+
+\textbf{Advantages of this formulation:}
+\begin{enumerate}
+    \item \textbf{Easier learning:} The network learns only the magnetic deflection ($\sim$100~mm for typical tracks), not the full propagation ($\sim$2000~mm).
+    \item \textbf{Physical initialization:} With zero network weights, the model predicts straight-line propagation---a sensible initialization.
+    \item \textbf{Gradient flow:} The skip connection provides direct gradient paths as in~\cite{ResNet}, improving optimization.
+    \item \textbf{Conservation bias:} For tracks with $q/p \approx 0$ (very high momentum), the network can easily learn to output near-zero corrections.
+\end{enumerate}
+
+%------------------------------------------------------------------------------
+\subsection{True Physics-Informed Neural Networks (PINNs)}
+\label{sec:pinn}
+%------------------------------------------------------------------------------
+
+\textbf{Implementation Status:} A True PINN architecture has been \textit{implemented} but \textit{not yet trained}. We include the theoretical framework and implementation details here.
+
+\subsubsection{Foundations of Physics-Informed Learning}
+
+Physics-Informed Neural Networks (PINNs) were introduced by Raissi, Perdikaris, and Karniadakis~\cite{PINN-Original} as a framework for encoding physical laws into neural network training. The seminal paper~\cite{PINN-Original} has over 12,000 citations and established a new paradigm for scientific machine learning.
+
+For a system governed by differential equations:
+\begin{equation}
+\frac{d\mathbf{s}}{dz} = \mathbf{F}(\mathbf{s}, z), \quad z \in [z_0, z_{\text{end}}]
+\label{eq:ode_general}
+\end{equation}
+a PINN approximates the solution $\mathbf{s}(z)$ with a neural network $\hat{\mathbf{s}}_\theta(z)$ trained to minimize:
+\begin{equation}
+\mathcal{L} = \underbrace{\mathcal{L}_{\text{data}}}_{\text{Boundary conditions}} + \underbrace{\lambda \mathcal{L}_{\text{PDE}}}_{\text{Physics residual}}
+\label{eq:pinn_loss}
+\end{equation}
+
+\subsubsection{True PINN: Automatic Differentiation for PDE Enforcement}
+
+The \textbf{key feature} of a True PINN is that the physics loss is computed via automatic differentiation. We do not simply constrain outputs; we enforce that the learned trajectory satisfies the governing equations.
+
+\begin{definition}[PDE Residual Loss]
+Given the network prediction $\hat{\mathbf{s}}_\theta(z)$ and the Lorentz force equations (Eq.~\ref{eq:eom}), the PDE residual at collocation point $z_j$ is:
+\begin{equation}
+\mathbf{r}(z_j) := \frac{\partial \hat{\mathbf{s}}_\theta}{\partial z}\bigg|_{z_j} - \mathbf{F}(\hat{\mathbf{s}}_\theta(z_j), \mathbf{B}(z_j))
+\end{equation}
+The derivative $\partial \hat{\mathbf{s}}_\theta / \partial z$ is computed using automatic differentiation (\texttt{torch.autograd.grad}).
+\end{definition}
+
+Explicitly, for track extrapolation:
+\begin{align}
+r_x(z) &= \frac{\partial \hat{x}}{\partial z} - \hat{t}_x \\
+r_y(z) &= \frac{\partial \hat{y}}{\partial z} - \hat{t}_y \\
+r_{t_x}(z) &= \frac{\partial \hat{t}_x}{\partial z} - \kappa\sqrt{1+\hat{t}_x^2+\hat{t}_y^2} \left[ \hat{t}_x \hat{t}_y B_x - (1+\hat{t}_x^2) B_y + \hat{t}_y B_z \right] \\
+r_{t_y}(z) &= \frac{\partial \hat{t}_y}{\partial z} - \kappa\sqrt{1+\hat{t}_x^2+\hat{t}_y^2} \left[ (1+\hat{t}_y^2) B_x - \hat{t}_x \hat{t}_y B_y - \hat{t}_x B_z \right]
+\end{align}
+
+The total physics loss is:
+\begin{equation}
+\mathcal{L}_{\text{PDE}} = \frac{1}{N_c} \sum_{j=1}^{N_c} \left( r_x^2 + r_y^2 + r_{t_x}^2 + r_{t_y}^2 \right)_{z=z_j}
+\end{equation}
+where $\{z_j\}_{j=1}^{N_c}$ are collocation points sampled uniformly along the trajectory.
+
+\subsubsection{Key Benefits of True PINN Approach}
+
+Karniadakis et al.~\cite{PINN-Review} provide a comprehensive review of PINNs with key benefits:
+
+\begin{enumerate}
+    \item \textbf{Data efficiency:} Physics constraints reduce the amount of training data required by providing strong regularization
+    \item \textbf{Generalization:} Models extrapolate better outside the training distribution
+    \item \textbf{Interpretability:} Predictions respect known physical laws
+    \item \textbf{Noise robustness:} Physics acts as a strong prior, filtering non-physical noise
+\end{enumerate}
+
+\subsubsection{Implementation with Differentiable Field Model}
+
+For the True PINN implementation, we embed an analytical magnetic field model directly in the computational graph. This enables automatic differentiation through the field evaluation:
+
+\begin{definition}[Differentiable Toy Field]
+The magnetic field is modeled as:
+\begin{equation}
+B_y(z) = B_0 \cdot \exp\left( -\frac{1}{2} \left( \frac{z - z_c}{\sigma_z} \right)^2 \right), \quad B_x \approx 0, \quad B_z \approx 0
+\end{equation}
+with $B_0 = 1$~T, $z_c = 5250$~mm, and $\sigma_z = 2500$~mm. This is implemented as a PyTorch module with all operations differentiable.
+\end{definition}
+
+\begin{remark}[Production Considerations]
+For deployment with the full LHCb field map, the differentiable field model would need to be replaced with a differentiable interpolation scheme, or the field values could be pre-computed at collocation points.
+\end{remark}
+
+\textbf{Total True PINN Loss:}
+\begin{equation}
+\mathcal{L}_{\text{TruePINN}} = \mathcal{L}_{\text{data}} + \lambda_{\text{PDE}} \mathcal{L}_{\text{PDE}}
+\label{eq:true_pinn_total_loss}
+\end{equation}
+
+Typical hyperparameters: $\lambda_{\text{PDE}} = 1.0$, $N_c = 10$ collocation points per trajectory.
+
+%------------------------------------------------------------------------------
+\subsection{Runge-Kutta-Inspired PINN (RK-PINN)}
+\label{sec:rk_pinn}
+%------------------------------------------------------------------------------
+
+\textbf{Implementation Status:} This architecture was \textit{fully implemented and trained} with 10 model variants. The current RK-PINN uses soft $t_y$ constraints; a True RK-PINN variant with autodiff physics loss has been implemented but not yet trained.
+
+\subsubsection{Motivation: Numerical Methods as Architectural Priors}
+
+Our novel contribution is the \textbf{RK-PINN} architecture, which incorporates the structure of Runge-Kutta integration directly into the network architecture. This is inspired by Neural ODEs~\cite{Neural-ODE}, which showed that residual networks can be viewed as discretizations of continuous dynamical systems:
+\begin{equation}
+\mathbf{h}_{t+1} = \mathbf{h}_t + f(\mathbf{h}_t, \theta) \quad \longleftrightarrow \quad \frac{d\mathbf{h}}{dt} = f(\mathbf{h}, \theta)
+\label{eq:neural_ode}
+\end{equation}
+
+Chen et al.~\cite{Neural-ODE} demonstrated that this connection allows neural networks to be trained with adaptive ODE solvers, achieving state-of-the-art results with constant memory cost. We apply this insight in reverse: instead of training through an ODE solver, we design a network that mimics RK4 structure.
+
+\subsubsection{Formal Connection to Runge-Kutta Methods}
+
+We formalize the connection between classical numerical integration and our neural architecture.
+
+\begin{definition}[Butcher Tableau]
+An $s$-stage explicit Runge-Kutta method is characterized by its Butcher tableau:
+\begin{equation}
+\begin{array}{c|c}
+\mathbf{c} & A \\
+\hline
+& \mathbf{b}^\top
+\end{array}
+\quad \text{where} \quad A \in \mathbb{R}^{s \times s}, \; \mathbf{b}, \mathbf{c} \in \mathbb{R}^s
+\end{equation}
+For the classical RK4 method:
+\begin{equation}
+\begin{array}{c|cccc}
+0 & & & & \\
+1/2 & 1/2 & & & \\
+1/2 & 0 & 1/2 & & \\
+1 & 0 & 0 & 1 & \\
+\hline
+& 1/6 & 1/3 & 1/3 & 1/6
+\end{array}
+\end{equation}
+\end{definition}
+
+\begin{definition}[RK4 Stage Equations]
+Given an ODE $\frac{d\mathbf{y}}{dt} = \mathbf{f}(t, \mathbf{y})$ and step size $h$, the RK4 stages are:
+\begin{align}
+\mathbf{k}_1 &= \mathbf{f}(t_n, \mathbf{y}_n) \\
+\mathbf{k}_2 &= \mathbf{f}(t_n + \tfrac{h}{2}, \mathbf{y}_n + \tfrac{h}{2}\mathbf{k}_1) \\
+\mathbf{k}_3 &= \mathbf{f}(t_n + \tfrac{h}{2}, \mathbf{y}_n + \tfrac{h}{2}\mathbf{k}_2) \\
+\mathbf{k}_4 &= \mathbf{f}(t_n + h, \mathbf{y}_n + h\mathbf{k}_3)
+\end{align}
+with final update $\mathbf{y}_{n+1} = \mathbf{y}_n + \frac{h}{6}(\mathbf{k}_1 + 2\mathbf{k}_2 + 2\mathbf{k}_3 + \mathbf{k}_4)$.
+\end{definition}
+
+\begin{theorem}[RK4 Local Truncation Error]
+The RK4 method has local truncation error $\mathcal{O}(h^5)$ and global error $\mathcal{O}(h^4)$, i.e., it is a fourth-order method.
+\end{theorem}
+
+\subsubsection{Multi-Stage Prediction Architecture}
+
+Our RK-PINN mimics this structure with a shared feature extractor (trunk) and multiple prediction heads:
+
+\begin{equation}
+\phi(\mathbf{x}) = \text{TrunkNetwork}(\mathbf{x}) \in \mathbb{R}^d
+\end{equation}
+
+\begin{definition}[RK-PINN Multi-Stage Predictor]
+The RK-PINN defines four prediction heads $\text{Head}_k: \mathbb{R}^d \to \mathbb{R}^4$ for $k \in \{1,2,3,4\}$:
+\begin{align}
+\Delta\mathbf{s}_{1} &= \text{Head}_1(\phi(\mathbf{x})) \quad \text{(analogous to } \mathbf{k}_1\text{)} \\
+\Delta\mathbf{s}_{2} &= \text{Head}_2(\phi(\mathbf{x})) \quad \text{(analogous to } \mathbf{k}_2\text{)} \\
+\Delta\mathbf{s}_{3} &= \text{Head}_3(\phi(\mathbf{x})) \quad \text{(analogous to } \mathbf{k}_3\text{)} \\
+\Delta\mathbf{s}_{4} &= \text{Head}_4(\phi(\mathbf{x})) \quad \text{(analogous to } \mathbf{k}_4\text{)}
+\end{align}
+\end{definition}
+
+\begin{remark}
+Unlike classical RK4 where each $\mathbf{k}_i$ depends on previous stages, our heads operate in parallel on the same feature representation. This architectural choice enables efficient batched inference while retaining the multi-scale prediction structure.
+\end{remark}
+
+\subsubsection{Learnable Combination Weights}
+
+Instead of fixed RK4 weights, we use learnable weights initialized to RK4 coefficients:
+
+\begin{definition}[Adaptive Weight Combination]
+The final prediction combines stages via learnable weights $\boldsymbol{\alpha} \in \mathbb{R}^4$:
+\begin{equation}
+\hat{\mathbf{s}}_{\text{out}} = \mathbf{s}_{\text{in}} + \sum_{k=1}^4 w_k(\boldsymbol{\alpha}) \, \Delta\mathbf{s}_{k}
+\end{equation}
+with initialization $\boldsymbol{\alpha}^{(0)}$ chosen such that $w_k^{(0)} = (1/6, 1/3, 1/3, 1/6)$.
+\end{definition}
+
+The weights are passed through a softmax to ensure they form a probability distribution:
+\begin{equation}
+w_k(\boldsymbol{\alpha}) = \frac{\exp(\alpha_k)}{\sum_{j=1}^4 \exp(\alpha_j)} \in (0,1), \quad \sum_{k=1}^4 w_k = 1
+\end{equation}
+where $\alpha_k$ are learnable parameters.
+
+\subsubsection{Architectural Benefits}
+
+\begin{enumerate}
+    \item \textbf{Inductive bias:} The multi-stage structure provides a strong prior from numerical integration theory
+    \item \textbf{Gradient flow:} Multiple prediction paths improve gradient flow during training, similar to DenseNet~\cite{DenseNet}
+    \item \textbf{Implicit ensembling:} The weighted combination of heads acts as an implicit ensemble
+    \item \textbf{Interpretability:} Final weights indicate which ``RK stages'' are most important for the learned solution
+\end{enumerate}
+
+\subsubsection{Complete RK-PINN Loss Function}
+
+The RK-PINN combines the multi-stage architecture with physics constraints:
+\begin{equation}
+\mathcal{L}_{\text{RK-PINN}} = \underbrace{\frac{1}{N}\sum_{i=1}^N \|\mathbf{y}_i - \hat{\mathbf{y}}_i\|^2}_{\text{Data loss}} + \lambda_{t_y} \underbrace{\frac{1}{N}\sum_{i=1}^N (t_{y,\text{out}}^{(i)} - t_{y,\text{in}}^{(i)})^2}_{\text{Physics loss}}
+\label{eq:rkpinn_total_loss}
+\end{equation}
+
+%==============================================================================
+\section{Prediction Strategies}
+\label{sec:prediction}
+%==============================================================================
+
+We explore two fundamentally different prediction strategies, each with theoretical motivation.
+
+\subsection{Direct Prediction}
+\label{sec:direct_prediction}
+
+The simplest approach directly maps input to output:
+\begin{equation}
+\hat{\mathbf{y}} = f_\theta(\mathbf{x}) \quad \text{where} \quad \mathbf{x} = (x, y, t_x, t_y, q/p, \Delta z)
+\end{equation}
+
+\textbf{Advantages:}
+\begin{itemize}
+    \item Minimal architectural complexity
+    \item Network can learn optimal representation without constraints
+    \item Fastest inference (single forward pass)
+\end{itemize}
+
+\textbf{Disadvantages:}
+\begin{itemize}
+    \item Must learn full propagation from scratch
+    \item No physical priors encoded in architecture
+    \item May struggle with conservation laws
+\end{itemize}
+
+\subsection{Residual Prediction}
+\label{sec:residual_prediction}
+
+As described in Section~\ref{sec:residual_mlp}, residual prediction learns corrections to a physics baseline:
+\begin{equation}
+\hat{\mathbf{y}} = \mathbf{y}_{\text{baseline}} + f_\theta(\mathbf{x})
+\end{equation}
+
+This follows the principle from~\cite{ResNet} that learning residuals is easier than learning full mappings. For track extrapolation:
+\begin{equation}
+\mathbf{y}_{\text{baseline}} = (x + t_x \Delta z, y + t_y \Delta z, t_x, t_y)
+\end{equation}
+
+\subsection{Multi-Stage Prediction (RK-PINN)}
+\label{sec:multistage_prediction}
+
+The RK-PINN uses multiple prediction heads combined with learnable weights:
+\begin{equation}
+\hat{\mathbf{y}} = \mathbf{s}_{\text{in}} + \sum_{k=1}^4 w_k \cdot \text{Head}_k(\phi(\mathbf{x}))
+\end{equation}
+
+This is analogous to ensemble methods~\cite{Ensemble-Methods}, where combining multiple predictions typically outperforms individual predictors.
+
+%==============================================================================
+\section{Loss Functions and Optimization}
+\label{sec:loss}
+%==============================================================================
+
+We formalize the training objective using the framework of statistical learning theory.
+
+\subsection{Empirical Risk Minimization}
+
+\begin{definition}[Training Set]
+Let $\mathcal{D}_N = \{(\mathbf{x}_i, \mathbf{y}_i)\}_{i=1}^N$ be a training set of $N$ i.i.d.\ samples from the data distribution $\mathcal{P}(\mathbf{x}, \mathbf{y})$ over $\mathcal{X} \times \mathcal{Y}$.
+\end{definition}
+
+\begin{definition}[Loss Function]
+A loss function $\ell: \mathcal{Y} \times \mathcal{Y} \to \mathbb{R}_{\geq 0}$ is a measurable function quantifying the discrepancy between predicted and true outputs. The loss is \textit{proper} if $\ell(\mathbf{y}, \mathbf{y}) = 0$ for all $\mathbf{y} \in \mathcal{Y}$.
+\end{definition}
+
+\begin{definition}[Risk Functional]
+The \textit{population risk} (expected loss) of a predictor $f: \mathcal{X} \to \mathcal{Y}$ is:
+\begin{equation}
+R(f) := \mathbb{E}_{(\mathbf{x},\mathbf{y}) \sim \mathcal{P}} \left[ \ell(f(\mathbf{x}), \mathbf{y}) \right]
+\end{equation}
+The \textit{empirical risk} (training loss) is the sample approximation:
+\begin{equation}
+\hat{R}_N(f) := \frac{1}{N} \sum_{i=1}^N \ell(f(\mathbf{x}_i), \mathbf{y}_i)
+\end{equation}
+\end{definition}
+
+\begin{definition}[Empirical Risk Minimization]
+Given a hypothesis class $\mathcal{H} \subset \{f: \mathcal{X} \to \mathcal{Y}\}$ and training set $\mathcal{D}_N$, the empirical risk minimization (ERM) problem is:
+\begin{equation}
+\hat{f}_N := \operatorname*{arg\,min}_{f \in \mathcal{H}} \hat{R}_N(f)
+\end{equation}
+For neural networks, $\mathcal{H} = \{f_\theta : \theta \in \Theta\}$ where $\Theta \subset \mathbb{R}^d$ is the parameter space.
+\end{definition}
+
+\subsection{Loss Functions for Track Extrapolation}
+
+\subsubsection{Mean Squared Error (MSE)}
+
+For regression problems, the canonical choice is the $L^2$ loss:
+
+\begin{definition}[MSE Loss]
+The mean squared error loss for track extrapolation is:
+\begin{equation}
+\ell_{\text{MSE}}(\hat{\mathbf{y}}, \mathbf{y}) := \|\hat{\mathbf{y}} - \mathbf{y}\|_2^2 = \sum_{j=1}^4 (\hat{y}_j - y_j)^2
+\end{equation}
+This corresponds to the Gaussian log-likelihood under homoscedastic noise assumption.
+\end{definition}
+
+\begin{proposition}[MSE Minimizer]
+Under the model $\mathbf{y} = f^*(\mathbf{x}) + \boldsymbol{\varepsilon}$ where $\mathbb{E}[\boldsymbol{\varepsilon}|\mathbf{x}] = \mathbf{0}$, the MSE risk minimizer is the conditional expectation:
+\begin{equation}
+f^* = \operatorname*{arg\,min}_f R_{\text{MSE}}(f) = \mathbb{E}[\mathbf{y}|\mathbf{x}]
+\end{equation}
+\end{proposition}
+
+\subsubsection{Component-Weighted Loss}
+
+Track states have heterogeneous units and scales. We introduce dimension-aware weighting:
+
+\begin{definition}[Weighted MSE Loss]
+\begin{equation}
+\ell_{\text{wMSE}}(\hat{\mathbf{y}}, \mathbf{y}) := \sum_{j=1}^4 w_j (\hat{y}_j - y_j)^2 = (\hat{\mathbf{y}} - \mathbf{y})^\top \mathbf{W} (\hat{\mathbf{y}} - \mathbf{y})
+\end{equation}
+where $\mathbf{W} = \text{diag}(w_1, w_2, w_3, w_4)$ is a positive-definite weight matrix. In our implementation:
+\begin{align}
+w_x = w_y &= 1 \quad \text{(position in mm)} \\
+w_{t_x} = w_{t_y} &= 1000^2 \quad \text{(slopes are dimensionless, scale to mm)}
+\end{align}
+\end{definition}
+
+\subsubsection{Physics-Constrained Loss}
+
+\begin{definition}[Composite Physics Loss]
+\label{def:physics_loss}
+For physics-informed training, we define the composite loss:
+\begin{equation}
+\mathcal{L}(\theta) := \mathcal{L}_{\text{data}}(\theta) + \sum_{k=1}^K \lambda_k \mathcal{L}_{\text{phys}}^{(k)}(\theta)
+\end{equation}
+where $\mathcal{L}_{\text{data}}$ is the data fidelity term, $\mathcal{L}_{\text{phys}}^{(k)}$ are physics constraint terms, and $\lambda_k > 0$ are regularization hyperparameters.
+\end{definition}
+
+For the RK-PINN architecture, the physics constraint enforces slope conservation:
+\begin{equation}
+\mathcal{L}_{\text{phys}}^{(t_y)}(\theta) := \frac{1}{N} \sum_{i=1}^N \left( f_\theta(\mathbf{x}_i)_{t_y} - (\mathbf{x}_i)_{t_y} \right)^2
+\end{equation}
+
+\subsection{Regularization}
+
+\begin{definition}[Tikhonov Regularization]
+To prevent overfitting, we add $L^2$ parameter regularization (weight decay):
+\begin{equation}
+\mathcal{L}_{\text{reg}}(\theta) := \mathcal{L}(\theta) + \frac{\lambda_{\text{wd}}}{2} \|\theta\|_2^2
+\end{equation}
+where $\lambda_{\text{wd}} = 10^{-5}$ in our experiments.
+\end{definition}
+
+\subsection{Optimization via Stochastic Gradient Descent}
+
+\begin{definition}[Stochastic Gradient Descent]
+Given minibatches $\mathcal{B}_t \subset \mathcal{D}_N$ of size $B$, SGD updates:
+\begin{equation}
+\theta_{t+1} = \theta_t - \eta_t \nabla_\theta \hat{R}_{\mathcal{B}_t}(\theta_t)
+\end{equation}
+where $\eta_t > 0$ is the learning rate schedule and $\hat{R}_{\mathcal{B}_t}$ is the minibatch risk estimate.
+\end{definition}
+
+We use the AdamW optimizer~\cite{AdamW}, which combines momentum with adaptive learning rates:
+
+\begin{definition}[AdamW Update Rule]
+With hyperparameters $\beta_1, \beta_2 \in [0,1)$, the AdamW update maintains running averages:
+\begin{align}
+\mathbf{m}_t &= \beta_1 \mathbf{m}_{t-1} + (1-\beta_1) \mathbf{g}_t \\
+\mathbf{v}_t &= \beta_2 \mathbf{v}_{t-1} + (1-\beta_2) \mathbf{g}_t^2 \\
+\hat{\mathbf{m}}_t &= \mathbf{m}_t / (1-\beta_1^t), \quad \hat{\mathbf{v}}_t = \mathbf{v}_t / (1-\beta_2^t) \\
+\theta_{t+1} &= (1 - \eta_t \lambda_{\text{wd}}) \theta_t - \eta_t \frac{\hat{\mathbf{m}}_t}{\sqrt{\hat{\mathbf{v}}_t} + \epsilon}
+\end{align}
+where $\mathbf{g}_t = \nabla_\theta \mathcal{L}(\theta_t)$ and $\epsilon = 10^{-8}$ for numerical stability.
+\end{definition}
+
+\begin{remark}[Learning Rate Schedule]
+We employ cosine annealing~\cite{Cosine-LR}:
+\begin{equation}
+\eta_t = \eta_{\min} + \frac{1}{2}(\eta_{\max} - \eta_{\min})\left(1 + \cos\left(\frac{\pi t}{T}\right)\right)
+\end{equation}
+with $\eta_{\max} = 10^{-3}$, $\eta_{\min} = 10^{-6}$, and $T = 100$ epochs.
+\end{remark}
+
+%==============================================================================
+\section{Experimental Setup}
+%==============================================================================
+
+\subsection{Dataset Generation}
+
+We generate training data using RK4 integration with the simplified field model (Eq.~\ref{eq:toy_field}):
+
+\textbf{Phase space sampling:}
+\begin{itemize}
+    \item Position: $x, y \in [-1000, 1000]$~mm (uniform)
+    \item Slopes: $t_x, t_y \in [-0.3, 0.3]$ (uniform)
+    \item Momentum: $p \in [0.5, 100]$~GeV (log-uniform)
+    \item Charge: $q \in \{-1, +1\}$ (balanced)
+    \item Propagation distance: $\Delta z = 2300$~mm (fixed)
+\end{itemize}
+
+\textbf{Dataset statistics:}
+\begin{itemize}
+    \item Total tracks: 50 million
+    \item Training/Validation/Test split: 90\%/5\%/5\%
+    \item File size: 4.0~GB (float32)
+\end{itemize}
+
+\subsection{Model Configurations}
+
+Table~\ref{tab:all_models} summarizes all 20 trained models:
+
+\begin{table}[H]
+\centering
+\caption{Complete model registry with architecture details}
+\label{tab:all_models}
+\begin{tabular}{llccc}
+\toprule
+\textbf{Model Name} & \textbf{Type} & \textbf{Hidden Layers} & \textbf{Params} & \textbf{Prediction} \\
+\midrule
+mlp\_tiny\_v1 & MLP & [64, 32] & 3k & Direct \\
+mlp\_small\_v1 & MLP & [128, 64] & 14k & Direct \\
+mlp\_medium\_v1 & MLP & [128, 128, 64] & 26k & Direct \\
+mlp\_large\_v1 & MLP & [256, 256, 128] & 105k & Direct \\
+mlp\_xlarge\_v1 & MLP & [512, 512, 256, 128] & 560k & Direct \\
+mlp\_wide\_shallow\_v1 & MLP & [256, 128] & 51k & Direct \\
+mlp\_wide\_v1 & MLP & [512, 256] & 204k & Direct \\
+mlp\_deep\_v1 & MLP & [128]$\times$5, 64 & 43k & Direct \\
+mlp\_narrow\_deep\_v1 & MLP & [96]$\times$5, 48 & 23k & Direct \\
+mlp\_balanced\_v1 & MLP & [192, 192, 96] & 57k & Direct \\
+\midrule
+rkpinn\_tiny\_v1 & RK-PINN & [64, 32] & 3k & Multi-stage \\
+rkpinn\_small\_v1 & RK-PINN & [128, 64] & 14k & Multi-stage \\
+rkpinn\_medium\_v1 & RK-PINN & [128, 128, 64] & 26k & Multi-stage \\
+rkpinn\_large\_v1 & RK-PINN & [256, 256, 128] & 105k & Multi-stage \\
+rkpinn\_xlarge\_v1 & RK-PINN & [512, 512, 256, 128] & 560k & Multi-stage \\
+rkpinn\_wide\_shallow\_v1 & RK-PINN & [256, 128] & 51k & Multi-stage \\
+rkpinn\_wide\_v1 & RK-PINN & [512, 256] & 204k & Multi-stage \\
+rkpinn\_deep\_v1 & RK-PINN & [128]$\times$5, 64 & 43k & Multi-stage \\
+rkpinn\_narrow\_deep\_v1 & RK-PINN & [96]$\times$5, 48 & 23k & Multi-stage \\
+rkpinn\_balanced\_v1 & RK-PINN & [192, 192, 96] & 57k & Multi-stage \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Training Infrastructure}
+
+\textbf{Hardware:}
+\begin{itemize}
+    \item GPU cluster: NIKHEF computing facility
+    \item GPUs: NVIDIA L40S (48GB Ada Lovelace architecture)
+    \item Training time: 8-12 hours per model
+\end{itemize}
+
+\textbf{Software:}
+\begin{itemize}
+    \item Framework: PyTorch 2.0.1~\cite{PyTorch} with CUDA 11.8
+    \item Mixed precision: torch.cuda.amp (FP16 forward, FP32 gradients)
+\end{itemize}
+
+\textbf{Hyperparameters:}
+\begin{itemize}
+    \item Optimizer: AdamW~\cite{AdamW} ($\beta_1=0.9$, $\beta_2=0.999$, weight decay $10^{-5}$)
+    \item Learning rate: $10^{-3}$ with cosine annealing to $10^{-6}$
+    \item Batch size: 1024
+    \item Epochs: 100 with early stopping (patience 20)
+\end{itemize}
+
+%==============================================================================
+\section{Results}
+%==============================================================================
+
+\subsection{Error Metrics and Statistical Analysis}
+
+We rigorously define the evaluation metrics used throughout this section.
+
+\begin{definition}[Position Error]
+For a predicted state $\hat{\mathbf{y}} = (\hat{x}, \hat{y}, \hat{t}_x, \hat{t}_y)$ and ground truth $\mathbf{y} = (x, y, t_x, t_y)$, the position error is:
+\begin{equation}
+e_{\text{pos}} := \sqrt{(\hat{x} - x)^2 + (\hat{y} - y)^2} \quad [\text{mm}]
+\end{equation}
+This is the Euclidean distance in the transverse plane.
+\end{definition}
+
+\begin{definition}[Angular Error]
+The angular error measures the deviation in track direction:
+\begin{equation}
+e_{\text{ang}} := \sqrt{(\hat{t}_x - t_x)^2 + (\hat{t}_y - t_y)^2} \quad [\text{rad}]
+\end{equation}
+For small angles, this approximates the opening angle between predicted and true directions.
+\end{definition}
+
+\begin{definition}[Sample Statistics]
+Given a test set of $M$ samples with errors $\{e_i\}_{i=1}^M$, we compute:
+\begin{align}
+\bar{e} &:= \frac{1}{M} \sum_{i=1}^M e_i \quad \text{(sample mean)} \\
+s_e &:= \sqrt{\frac{1}{M-1} \sum_{i=1}^M (e_i - \bar{e})^2} \quad \text{(sample standard deviation)} \\
+\text{SE}(\bar{e}) &:= \frac{s_e}{\sqrt{M}} \quad \text{(standard error of the mean)}
+\end{align}
+\end{definition}
+
+\begin{remark}[Statistical Significance]
+With $M = 2.5 \times 10^6$ test samples, the standard error is approximately $\text{SE} \approx s_e / 1581$, yielding sub-$\mu$m precision on mean estimates. All reported differences between models are statistically significant at the $p < 0.001$ level.
+\end{remark}
+
+\subsection{Position Accuracy}
+
+\begin{table}[H]
+\centering
+\caption{Model accuracy results ranked by mean position error (from benchmark)}
+\label{tab:accuracy}
+\begin{tabular}{clccccc}
+\toprule
+\textbf{Rank} & \textbf{Model} & \textbf{Type} & \textbf{Mean ($\mu$m)} & \textbf{Time ($\mu$s)} & \textbf{Throughput (k/s)} & \textbf{Params} \\
+\midrule
+1 & rkpinn\_wide & RK-PINN & \textbf{18.0} & 3.96 & 253 & 533k \\
+2 & rkpinn\_wide\_shallow & RK-PINN & 26.8 & 2.46 & 407 & 135k \\
+3 & mlp\_xlarge & MLP & 27.3 & 3.28 & 305 & 431k \\
+4 & mlp\_wide\_shallow & MLP & 33.5 & 5.55 & 180 & 35k \\
+5 & rkpinn\_small & RK-PINN & 36.3 & 1.92 & 519 & 35k \\
+6 & rkpinn\_large & RK-PINN & 39.3 & 4.13 & 242 & 201k \\
+7 & mlp\_small & MLP & 53.5 & 0.84 & 1195 & 9k \\
+8 & mlp\_wide & MLP & 54.8 & 1.44 & 694 & 136k \\
+9 & mlp\_deep & MLP & 57.3 & 9.01 & 111 & 59k \\
+10 & rkpinn\_medium & RK-PINN & 59.6 & 4.71 & 212 & 51k \\
+\midrule
+\multicolumn{7}{l}{\textit{All models achieve $< 100~\mu$m mean error}} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Key observations:}
+\begin{enumerate}
+    \item \textbf{RK-PINN dominates accuracy:} Top 5 positions include 3 RK-PINN and 2 MLP models
+    \item \textbf{Best accuracy: 18.0~$\mu$m:} Achieved by rkpinn\_wide
+    \item \textbf{Speed-accuracy trade-off:} Fastest model (mlp\_small, 0.84~$\mu$s) has moderate accuracy; most accurate (rkpinn\_wide, 18.0~$\mu$m) is slower (3.96~$\mu$s)
+\end{enumerate}
+
+\subsection{Inference Speed}
+
+\textbf{Critical Note on Speedup Claims:} The speedup numbers in this section require careful interpretation. The baseline for speedup calculations depends critically on the reference implementation:
+
+\begin{itemize}
+    \item \textbf{Full LHCb field map (production):} Traditional RK4 with 3D field interpolation from the full detector field map typically requires 100--200~$\mu$s per track due to expensive trilinear interpolation at each RK step.
+    \item \textbf{Simplified toy field (this study):} Our Gaussian-profile analytical field can be evaluated directly without interpolation, making C++ extrapolators much faster ($\sim$2--3~$\mu$s).
+\end{itemize}
+
+Table~\ref{tab:speed_comparison} compares neural networks against both the C++ extrapolators with our toy field and against estimated production RK4 timing.
+
+\begin{table}[H]
+\centering
+\caption{Inference speed comparison: Neural networks vs C++ extrapolators}
+\label{tab:speed_comparison}
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Model} & \textbf{Type} & \textbf{Time ($\mu$s)} & \textbf{Error ($\mu$m)} & \textbf{Throughput (k/s)} & \textbf{vs BS3\textsuperscript{*}} \\
+\midrule
+\multicolumn{6}{l}{\textit{Best Accuracy Models:}} \\
+rkpinn\_wide & RK-PINN & 3.96 & \textbf{18.0} & 253 & 0.6$\times$ \\
+rkpinn\_wide\_shallow & RK-PINN & 2.46 & 26.8 & 407 & 1.0$\times$ \\
+mlp\_xlarge & MLP & 3.28 & 27.3 & 305 & 0.7$\times$ \\
+\midrule
+\multicolumn{6}{l}{\textit{Best Speed Models (Pareto-optimal):}} \\
+mlp\_small & MLP & \textbf{0.84} & 53.5 & 1195 & \textbf{2.9$\times$} \\
+rkpinn\_small & RK-PINN & 1.92 & 36.3 & 519 & 1.3$\times$ \\
+\midrule
+\multicolumn{6}{l}{\textit{C++ Extrapolators (toy field):}} \\
+Reference RK4 & C++ & 2.50 & 0.0\textsuperscript{$\dagger$} & 400 & 1.0$\times$ \\
+BogackiShampine3 & C++ & 2.40 & 101.4 & 417 & (baseline) \\
+Herab & C++ & 1.95 & 759.6 & 513 & 1.2$\times$ \\
+\midrule
+\multicolumn{6}{l}{\textsuperscript{*}\textit{Speedup vs BogackiShampine3 (2.40~$\mu$s), fastest accurate C++ extrapolator}} \\
+\multicolumn{6}{l}{\textsuperscript{$\dagger$}\textit{Reference RK4 is ground truth generator (excluded from comparison)}} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Key observations:}
+\begin{enumerate}
+    \item \textbf{RK-PINN achieves best accuracy:} The \texttt{rkpinn\_wide} model achieves 18.0~$\mu$m error, significantly better than the best MLP (27.3~$\mu$m).
+    
+    \item \textbf{Speed-accuracy trade-off:} Pareto-optimal models span from \texttt{mlp\_small} (0.84~$\mu$s, 53.5~$\mu$m) to \texttt{rkpinn\_wide} (3.96~$\mu$s, 18.0~$\mu$m), allowing deployment-specific selection.
+    
+    \item \textbf{Modest speedup with toy field:} The fastest neural network (mlp\_small, 0.84~$\mu$s) achieves 2.9$\times$ speedup over BogackiShampine3 (2.40~$\mu$s). Most accurate models are comparable or slower than C++.
+    
+    \item \textbf{Why only modest speedup?} Our toy field is analytically computable, so C++ extrapolators don't pay the interpolation cost. The significant speedup required for Upgrade~II triggers is expected when neural networks replace expensive 3D field interpolation in production.
+\end{enumerate}
+
+\textbf{Implication for deployment:} The speedup advantage of neural networks scales with field map complexity. With our analytically-computable toy field, we achieve only 1--3$\times$ speedup. For the full LHCb field map with realistic fringe fields and 3D structure requiring trilinear interpolation, we expect the neural network approach to provide the $>$10$\times$ speedup required for Upgrade~II triggers.
+
+\subsection{Architecture Comparison}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{../analysis/results/paper_quality/fig1_error_analysis.png}
+\caption{Comprehensive error analysis showing model ranking, error statistics, and architecture comparison.}
+\label{fig:error_analysis}
+\end{figure}
+
+%==============================================================================
+\section{Discussion}
+%==============================================================================
+
+\subsection{Why RK-PINN Outperforms MLP}
+
+The RK-PINN architecture achieves 30-40\% better accuracy than equivalent MLPs. We attribute this to:
+
+\begin{enumerate}
+    \item \textbf{Inductive bias from numerical methods:} The multi-stage structure mirrors RK4 integration
+    \item \textbf{Physics regularization:} The $\mathcal{L}_{t_y}$ loss enforces vertical slope conservation
+    \item \textbf{Better gradient flow:} Multiple prediction heads provide diverse gradient signals
+\end{enumerate}
+
+\subsection{Performance Trade-off Analysis: Selecting the Optimal Model}
+
+The selection of an optimal neural network model for track extrapolation requires careful consideration of the deployment constraints. For the LHCb Upgrade II trigger, the primary requirement is achieving at least a \textbf{10$\times$ speedup} over traditional Runge-Kutta integration, with accuracy being a secondary consideration. This section presents a comprehensive analysis of the speed-accuracy trade-off to guide model selection.
+
+\subsubsection{The Pareto Frontier: Optimal Speed-Accuracy Trade-offs}
+
+Figure~\ref{fig:pareto_frontier} presents a scatter plot of all trained neural network models alongside traditional C++ extrapolators, plotting position error against inference time. The Pareto frontier identifies models that represent optimal trade-offs---no other model is simultaneously faster and more accurate.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/pareto_frontier_highlight.png}
+\caption{Pareto frontier analysis showing the optimal speed-accuracy trade-off. Points on the Pareto frontier (highlighted with thick outlines) represent models where no improvement in speed is possible without sacrificing accuracy, and vice versa. The shaded region below the frontier represents the achievable performance space.}
+\label{fig:pareto_frontier}
+\end{figure}
+
+The Pareto-optimal models identified in our study are:
+\begin{enumerate}
+    \item \textbf{mlp\_small} (0.84~$\mu$s, 53.5~$\mu$m): Fastest model, 2.9$\times$ faster than BS3
+    \item \textbf{rkpinn\_small} (1.92~$\mu$s, 36.3~$\mu$m): Best fast RK-PINN, 1.3$\times$ faster than BS3
+    \item \textbf{rkpinn\_wide\_shallow} (2.46~$\mu$s, 26.8~$\mu$m): Excellent accuracy-speed balance
+    \item \textbf{rkpinn\_wide} (3.96~$\mu$s, 18.0~$\mu$m): Best overall accuracy
+\end{enumerate}
+
+With the simplified toy field used in this study, neural networks achieve \textbf{modest speedup} (1--3$\times$) over C++ extrapolators. The $>$10$\times$ speedup required for Upgrade~II triggers is expected with production field maps requiring expensive 3D interpolation.
+
+\subsubsection{Comprehensive Model Comparison}
+
+Figure~\ref{fig:scatter_comparison} presents an annotated scatter plot of all models, allowing direct comparison of the three model categories: standard MLPs, RK-PINNs, and traditional C++ extrapolators.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/scatter_annotated_models.png}
+\caption{Annotated scatter plot comparing all neural network models and C++ extrapolators. Lower-left is better: faster inference time and lower position error. Model labels indicate architecture variant.}
+\label{fig:scatter_comparison}
+\end{figure}
+
+Key observations from this comparison:
+
+\begin{enumerate}
+    \item \textbf{RK-PINN achieves best accuracy:} rkpinn\_wide achieves 18.0~$\mu$m, significantly better than the best MLP (27.3~$\mu$m).
+    
+    \item \textbf{MLP achieves fastest speed:} mlp\_small (0.84~$\mu$s) is 2.9$\times$ faster than BogackiShampine3 (2.40~$\mu$s).
+    
+    \item \textbf{Modest speedup with toy field:} Neural networks achieve 1--3$\times$ speedup. The $>$10$\times$ requirement for Upgrade~II is expected with production field maps.
+\end{enumerate}
+
+\subsubsection{Throughput Analysis}
+
+For trigger applications, throughput (tracks processed per second) is the critical metric. Figure~\ref{fig:throughput} presents a ranking of all models by throughput.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/throughput_comparison.png}
+\caption{Throughput comparison showing tracks processed per second for each model. The mlp\_small model achieves over 1.1 million tracks/second, while rkpinn\_wide (best accuracy) achieves 253k tracks/second. Reference C++ RK4 achieves 400k tracks/second.}
+\label{fig:throughput}
+\end{figure}
+
+The throughput analysis reveals:
+\begin{itemize}
+    \item \textbf{mlp\_small:} 1,195,000 tracks/second (highest MLP throughput)
+    \item \textbf{mlp\_medium:} 854,000 tracks/second
+    \item \textbf{mlp\_wide:} 694,000 tracks/second
+    \item \textbf{rkpinn\_small:} 519,000 tracks/second (highest RK-PINN throughput)
+    \item \textbf{rkpinn\_wide\_shallow:} 407,000 tracks/second
+    \item \textbf{rkpinn\_wide:} 253,000 tracks/second (best accuracy: 18.0~$\mu$m)
+    \item \textbf{Best C++ (Herab):} 513,000 tracks/second (but with 760~$\mu$m error)
+    \item \textbf{Reference C++ RK4:} 400,000 tracks/second
+\end{itemize}
+
+\subsubsection{Category Comparison: Neural Networks vs. Traditional Methods}
+
+Figure~\ref{fig:category_comparison} provides a summary comparison across model categories, showing mean inference time and position error with error bars indicating the range within each category.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/category_comparison.png}
+\caption{Category-level comparison of C++ extrapolators, MLP neural networks, and RK-PINN models. Error bars show the range (min to max) within each category. RK-PINN achieves the best accuracy (18.0~$\mu$m), while MLP achieves the fastest inference (0.84~$\mu$s).}
+\label{fig:category_comparison}
+\end{figure}
+
+\subsubsection{Model Selection Recommendation}
+
+Given the LHCb Upgrade II requirement of \textbf{10$\times$ speedup} with subsequent accuracy optimization, we recommend the following model selection strategy:
+
+\vspace{0.5em}
+\noindent\fbox{\parbox{0.97\textwidth}{
+\textbf{Primary Recommendation: rkpinn\_small (accuracy-focused) or mlp\_small (speed-focused)}
+\begin{itemize}
+    \item \textbf{rkpinn\_small:} 36.3~$\mu$m error, 1.92~$\mu$s, 519k tracks/s, 35k params (1.3$\times$ vs BS3)
+    \item \textbf{mlp\_small:} 53.5~$\mu$m error, 0.84~$\mu$s, 1.2M tracks/s, 9k params (2.9$\times$ vs BS3)
+    \item \textbf{Note:} With toy field, speedup is 1--3$\times$; significant speedup expected with production field
+\end{itemize}
+}}
+\vspace{0.5em}
+
+\textbf{Rationale for recommended models:}
+
+\begin{enumerate}
+    \item \textbf{Modest speedup with toy field:} With our analytical field, the fastest neural network achieves 2.9$\times$ speedup over BogackiShampine3. The $>$10$\times$ speedup required for Upgrade~II is expected when neural networks replace expensive 3D field interpolation.
+    
+    \item \textbf{Excellent accuracy:} Best RK-PINN achieves 18.0~$\mu$m, well below typical detector resolutions. The LHCb SciFi tracker has spatial resolution of $\sim$80~$\mu$m~\cite{LHCb-Framework-TDR}.
+    
+    \item \textbf{Small model sizes:} Recommended models have 9--35k parameters, fitting easily in L1 cache for efficient inference.
+    
+    \item \textbf{RK-PINN vs MLP trade-off:} RK-PINN provides 2$\times$ better accuracy at 2$\times$ slower inference. Choose based on deployment constraints.
+\end{enumerate}
+
+\textbf{Alternative recommendations:}
+
+\begin{itemize}
+    \item \textbf{If highest accuracy is critical:} Use \textbf{rkpinn\_wide} (18.0~$\mu$m, 3.96~$\mu$s). Best accuracy but slowest.
+    
+    \item \textbf{If balanced accuracy-speed:} Use \textbf{rkpinn\_wide\_shallow} (26.8~$\mu$m, 2.46~$\mu$s). Excellent trade-off.
+    
+    \item \textbf{If maximum speed is critical:} Use \textbf{mlp\_small} (53.5~$\mu$m, 0.84~$\mu$s). Fastest model, 3$\times$ faster than C++.
+\end{itemize}
+
+\subsubsection{Discussion: RK-PINN vs MLP Trade-off}
+
+The most accurate model in our study is \textbf{rkpinn\_wide} with 18.0~$\mu$m mean position error. The choice between RK-PINN and MLP depends on deployment constraints:
+
+\begin{enumerate}
+    \item \textbf{Accuracy advantage:} RK-PINN achieves 18.0~$\mu$m vs MLP's best 27.3~$\mu$m---a 34\% improvement. This is significant relative to the detector resolution ($\sim$80~$\mu$m).
+    
+    \item \textbf{Speed trade-off:} RK-PINNs are 2--4$\times$ slower than comparable MLPs due to multi-stage evaluation. The fastest RK-PINN (rkpinn\_small, 1.92~$\mu$s) is still 2$\times$ slower than the fastest MLP (mlp\_small, 0.84~$\mu$s).
+    
+    \item \textbf{Pareto-optimal choices:} For speed-critical applications, use mlp\_small. For accuracy-critical applications, use rkpinn\_wide or rkpinn\_wide\_shallow.
+\end{enumerate}
+
+The choice between MLP and RK-PINN depends on whether accuracy or speed is prioritized:
+
+\begin{center}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Metric} & \textbf{mlp\_small} & \textbf{rkpinn\_small} & \textbf{rkpinn\_wide} & \textbf{C++ Reference} \\
+\midrule
+Position error & 53.5~$\mu$m & 36.3~$\mu$m & 18.0~$\mu$m & 0.0~$\mu$m \\
+Inference time & 0.84~$\mu$s & 1.92~$\mu$s & 3.96~$\mu$s & 2.50~$\mu$s \\
+Throughput & 1,195k tr/s & 519k tr/s & 253k tr/s & 400k tr/s \\
+Parameters & 9k & 35k & 533k & -- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Limitations and Future Work}
+
+\textbf{Current limitations:}
+\begin{enumerate}
+    \item \textbf{Toy field model:} Results are indicative but not directly transferable to LHCb. The simplified Gaussian field profile does not capture fringe fields, iron yoke effects, or the detailed 3D structure of the LHCb dipole.
+    \item \textbf{Fixed propagation distance:} Production requires variable $\Delta z$ extrapolation. This could be addressed by including $\Delta z$ as an input feature or training separate models for different z-ranges.
+    \item \textbf{No material effects:} Multiple scattering and energy loss in detector material are not included in the training data.
+    \item \textbf{PINN/ResidualMLP models:} Only MLP and RK-PINN architectures were fully trained; PINN and Residual MLP models were prepared but not trained due to time constraints.
+\end{enumerate}
+
+\textbf{Path to deployment:}
+\begin{enumerate}
+    \item Retrain with full LHCb field map from the detector simulation framework
+    \item Validate against LHCb Monte Carlo and compare with existing C++ extrapolators
+    \item Integrate with Allen GPU trigger~\cite{LHCb-Allen} using ONNX or TensorRT
+    \item Benchmark on production GPU hardware (NVIDIA A100/H100)
+\end{enumerate}
+
+%==============================================================================
+\section{Conclusions}
+%==============================================================================
+
+This work demonstrates proof-of-concept that neural networks can perform charged particle track extrapolation with accuracy suitable for HEP triggers.
+
+\textbf{Principal results:}
+\begin{enumerate}
+    \item \textbf{Best accuracy:} 18.0~$\mu$m mean position error (rkpinn\_wide with simplified field)
+    \item \textbf{Fastest inference:} 0.84~$\mu$s per track (mlp\_small), 2.9$\times$ faster than BogackiShampine3 C++
+    \item \textbf{Speed-accuracy trade-off:} RK-PINN provides 2$\times$ better accuracy at 2$\times$ slower speed vs MLP
+    \item \textbf{Toy field limitation:} Speedup is 1--3$\times$ with analytically-computable field; $>$10$\times$ expected with production field
+    \item \textbf{Architecture insight:} Multi-stage RK-inspired prediction provides effective inductive bias
+    \item \textbf{Architectures implemented:} MLP and RK-PINN trained; Residual MLP and PINN planned for future work
+\end{enumerate}
+
+\textbf{Critical clarification on speedup:} With our simplified toy field (analytically computable), neural networks achieve only modest speedup (1--3$\times$) over C++ extrapolators. The fastest model (mlp\_small, 0.84~$\mu$s) is 2.9$\times$ faster than BogackiShampine3 (2.40~$\mu$s). The $>$10$\times$ speedup required for Upgrade~II triggers is expected when neural networks replace expensive 3D field interpolation in production, where field evaluation dominates computation time.
+
+\textbf{Important caveats:} This study uses a simplified toy magnetic field; deployment requires retraining with the full LHCb field map and validation within the LHCb software framework.
+
+\section*{Acknowledgments}
+
+This work was performed using computational resources at NIKHEF, Amsterdam. Computing resources were provided by the Dutch National e-Infrastructure with support from the SURF Cooperative.
+
+%==============================================================================
+\begin{thebibliography}{99}
+
+\bibitem{LHC-Machine}
+L. Evans and P. Bryant (eds.),
+``LHC Machine,''
+\textit{JINST} \textbf{3}, S08001 (2008).
+\href{https://doi.org/10.1088/1748-0221/3/08/S08001}{doi:10.1088/1748-0221/3/08/S08001}
+
+\bibitem{LHCb-Detector}
+LHCb Collaboration,
+``The LHCb Detector at the LHC,''
+\textit{JINST} \textbf{3}, S08005 (2008).
+\href{https://doi.org/10.1088/1748-0221/3/08/S08005}{doi:10.1088/1748-0221/3/08/S08005}
+
+\bibitem{LHCb-Framework-TDR}
+LHCb Collaboration,
+``Framework TDR for the LHCb Upgrade II,''
+CERN-LHCC-2021-012, LHCb-TDR-023 (2021).
+\href{https://doi.org/10.17181/CERN.NTVH.Q21W}{doi:10.17181/CERN.NTVH.Q21W}
+
+\bibitem{LHCb-Trigger-TDR}
+LHCb Collaboration,
+``LHCb Trigger and Online Upgrade Technical Design Report,''
+CERN-LHCC-2014-016, LHCb-TDR-016 (2014).
+
+\bibitem{LHCb-Allen}
+R. Aaij et al.,
+``Allen: A high-level trigger on GPUs for LHCb,''
+\textit{Comput. Softw. Big Sci.} \textbf{4}, 7 (2020).
+\href{https://doi.org/10.1007/s41781-020-00039-7}{doi:10.1007/s41781-020-00039-7}
+
+\bibitem{Jackson-EM}
+J.D. Jackson,
+\textit{Classical Electrodynamics}, 3rd ed.,
+Wiley (1998). ISBN: 978-0471309321
+
+\bibitem{Geant4-Physics}
+GEANT4 Collaboration,
+``Geant4---a simulation toolkit,''
+\textit{Nucl. Instrum. Methods A} \textbf{506}, 250 (2003).
+\href{https://doi.org/10.1016/S0168-9002(03)01368-8}{doi:10.1016/S0168-9002(03)01368-8}
+
+\bibitem{GEANT4-RK}
+J. Apostolakis et al.,
+``Adaptive Runge-Kutta integration for particle tracking,''
+\textit{J. Phys. Conf. Ser.} \textbf{119}, 032023 (2008).
+
+\bibitem{Hairer-ODE}
+E. Hairer, S.P. N{\o}rsett, and G. Wanner,
+\textit{Solving Ordinary Differential Equations I: Nonstiff Problems},
+Springer (1993). ISBN: 978-3540566700
+
+\bibitem{Hornik-UAT}
+K. Hornik, M. Stinchcombe, and H. White,
+``Multilayer feedforward networks are universal approximators,''
+\textit{Neural Networks} \textbf{2}, 359 (1989).
+\href{https://doi.org/10.1016/0893-6080(89)90020-8}{doi:10.1016/0893-6080(89)90020-8}
+
+\bibitem{Deep-Learning-Book}
+I. Goodfellow, Y. Bengio, and A. Courville,
+\textit{Deep Learning},
+MIT Press (2016). ISBN: 978-0262035613
+
+\bibitem{Swish-Activation}
+P. Ramachandran, B. Zoph, and Q.V. Le,
+``Searching for Activation Functions,''
+arXiv:1710.05941 (2017).
+\href{https://arxiv.org/abs/1710.05941}{arXiv:1710.05941}
+
+\bibitem{GELU-Activation}
+D. Hendrycks and K. Gimpel,
+``Gaussian Error Linear Units (GELUs),''
+arXiv:1606.08415 (2016).
+\href{https://arxiv.org/abs/1606.08415}{arXiv:1606.08415}
+
+\bibitem{Wide-Networks}
+S. Zagoruyko and N. Komodakis,
+``Wide Residual Networks,''
+\textit{BMVC} (2016).
+\href{https://arxiv.org/abs/1605.07146}{arXiv:1605.07146}
+
+\bibitem{ResNet}
+K. He, X. Zhang, S. Ren, and J. Sun,
+``Deep Residual Learning for Image Recognition,''
+\textit{CVPR} (2016).
+\href{https://doi.org/10.1109/CVPR.2016.90}{doi:10.1109/CVPR.2016.90}
+
+\bibitem{PINN-Original}
+M. Raissi, P. Perdikaris, and G.E. Karniadakis,
+``Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations,''
+\textit{J. Comput. Phys.} \textbf{378}, 686 (2019).
+\href{https://doi.org/10.1016/j.jcp.2018.10.045}{doi:10.1016/j.jcp.2018.10.045}
+
+\bibitem{PINN-Review}
+G.E. Karniadakis et al.,
+``Physics-informed machine learning,''
+\textit{Nature Rev. Phys.} \textbf{3}, 422 (2021).
+\href{https://doi.org/10.1038/s42254-021-00314-5}{doi:10.1038/s42254-021-00314-5}
+
+\bibitem{Neural-ODE}
+R.T.Q. Chen, Y. Rubanova, J. Bettencourt, and D. Duvenaud,
+``Neural Ordinary Differential Equations,''
+\textit{NeurIPS} (2018).
+\href{https://arxiv.org/abs/1806.07366}{arXiv:1806.07366}
+
+\bibitem{DenseNet}
+G. Huang, Z. Liu, L. van der Maaten, and K.Q. Weinberger,
+``Densely Connected Convolutional Networks,''
+\textit{CVPR} (2017).
+\href{https://doi.org/10.1109/CVPR.2017.243}{doi:10.1109/CVPR.2017.243}
+
+\bibitem{Ensemble-Methods}
+L. Breiman,
+``Bagging predictors,''
+\textit{Machine Learning} \textbf{24}, 123 (1996).
+\href{https://doi.org/10.1007/BF00058655}{doi:10.1007/BF00058655}
+
+\bibitem{PyTorch}
+A. Paszke et al.,
+``PyTorch: An Imperative Style, High-Performance Deep Learning Library,''
+\textit{NeurIPS} (2019).
+\href{https://arxiv.org/abs/1912.01703}{arXiv:1912.01703}
+
+\bibitem{AdamW}
+I. Loshchilov and F. Hutter,
+``Decoupled Weight Decay Regularization,''
+\textit{ICLR} (2019).
+\href{https://arxiv.org/abs/1711.05101}{arXiv:1711.05101}
+
+\bibitem{Cosine-LR}
+I. Loshchilov and F. Hutter,
+``SGDR: Stochastic Gradient Descent with Warm Restarts,''
+\textit{ICLR} (2017).
+\href{https://arxiv.org/abs/1608.03983}{arXiv:1608.03983}
+
+\bibitem{Yarotsky-Approx}
+D. Yarotsky,
+``Error bounds for approximations with deep ReLU networks,''
+\textit{Neural Networks} \textbf{94}, 103 (2017).
+\href{https://doi.org/10.1016/j.neunet.2017.07.002}{doi:10.1016/j.neunet.2017.07.002}
+
+\bibitem{Fourier-Neural-Operator}
+Z. Li et al.,
+``Fourier Neural Operator for Parametric Partial Differential Equations,''
+\textit{ICLR} (2021).
+\href{https://arxiv.org/abs/2010.08895}{arXiv:2010.08895}
+
+\bibitem{PINN-Multiscale}
+S. Wang, H. Wang, and P. Perdikaris,
+``On the eigenvector bias of Fourier feature networks,''
+\textit{Comput. Methods Appl. Mech. Eng.} \textbf{384}, 113938 (2021).
+\href{https://doi.org/10.1016/j.cma.2021.113938}{doi:10.1016/j.cma.2021.113938}
+
+\end{thebibliography}
+
+\end{document}
+

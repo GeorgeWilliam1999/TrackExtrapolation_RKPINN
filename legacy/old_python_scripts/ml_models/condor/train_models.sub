@@ -1,0 +1,50 @@
+#!/usr/bin/env condor_submit
+#
+# HTCondor submit file for parallel GPU model training
+# 
+# This submit file trains multiple models in parallel on GPU nodes.
+# Each job trains a different architecture.
+#
+# Usage:
+#   condor_submit train_models.sub
+#
+# Author: G. Scriven
+# Date: 2026-01-12
+
+# Job configuration
+universe                = vanilla
+executable              = /bin/bash
+arguments               = train_model.sh $(Model) $(HiddenLayers)
+
+# GPU requirements
+request_gpus            = 1
+request_cpus            = 4
+request_memory          = 16GB
+request_disk            = 5GB
+
+# Require GPU nodes
+requirements            = (CUDACapability >= 7.0)
+
+# Environment
+getenv                  = True
+environment             = "CONDA_PREFIX=/data/bfys/gscriven/conda/envs/TE"
+
+# File I/O
+initialdir              = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/ml_models/condor
+output                  = logs/train_$(Model)_$(ClusterId).out
+error                   = logs/train_$(Model)_$(ClusterId).err
+log                     = logs/train_$(ClusterId).log
+
+# Email notification (optional)
+# notification            = Complete
+# notify_user             = your.email@institution.nl
+
+# Queue multiple training jobs with different architectures
+# Format: Model name, Hidden layer configuration
+queue Model,HiddenLayers from (
+    large,512-512-256-128
+    xlarge,1024-512-256-128
+    deep,256-256-256-256-128
+    ultra,1024-1024-512-256-128
+    wide,2048-1024-512-256
+)

@@ -1,0 +1,292 @@
+{
+  "mlp_balanced_v1": {
+    "model_type": "mlp",
+    "parameters": 57316,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 164.84893392771482,
+        "time_per_track_us": 164.84893392771482,
+        "throughput_hz": 6066.159945192569
+      },
+      "32": {
+        "batch_time_us": 718.070357106626,
+        "time_per_track_us": 22.439698659582064,
+        "throughput_hz": 44563.87829312432
+      },
+      "256": {
+        "batch_time_us": 1133.9952191337943,
+        "time_per_track_us": 4.429668824741384,
+        "throughput_hz": 225750.51083155922
+      },
+      "1024": {
+        "batch_time_us": 1845.0174015015364,
+        "time_per_track_us": 1.801774806153844,
+        "throughput_hz": 555008.3154590492
+      }
+    },
+    "time_per_track_us": 1.801774806153844,
+    "throughput_hz": 555008.3154590492,
+    "device": "cpu"
+  },
+  "mlp_deep_v1": {
+    "model_type": "mlp",
+    "parameters": 58948,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 216.39034617692232,
+        "time_per_track_us": 216.39034617692232,
+        "throughput_hz": 4621.2782486257165
+      },
+      "32": {
+        "batch_time_us": 1118.3336982503533,
+        "time_per_track_us": 34.94792807032354,
+        "throughput_hz": 28613.999605005545
+      },
+      "256": {
+        "batch_time_us": 2052.097269333899,
+        "time_per_track_us": 8.016004958335543,
+        "throughput_hz": 124750.42183701963
+      },
+      "1024": {
+        "batch_time_us": 9151.254431344569,
+        "time_per_track_us": 8.93677190560993,
+        "throughput_hz": 111897.2276076851
+      }
+    },
+    "time_per_track_us": 8.93677190560993,
+    "throughput_hz": 111897.2276076851,
+    "device": "cpu"
+  },
+  "mlp_large_v1": {
+    "model_type": "mlp",
+    "parameters": 100996,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 172.74257726967335,
+        "time_per_track_us": 172.74257726967335,
+        "throughput_hz": 5788.960751922044
+      },
+      "32": {
+        "batch_time_us": 3403.635062277317,
+        "time_per_track_us": 106.36359569616616,
+        "throughput_hz": 9401.712996395483
+      },
+      "256": {
+        "batch_time_us": 2253.0445735901594,
+        "time_per_track_us": 8.80095536558656,
+        "throughput_hz": 113624.02812655926
+      },
+      "1024": {
+        "batch_time_us": 3321.357616223395,
+        "time_per_track_us": 3.243513297093159,
+        "throughput_hz": 308307.66160144965
+      }
+    },
+    "time_per_track_us": 3.243513297093159,
+    "throughput_hz": 308307.66160144965,
+    "device": "cpu"
+  },
+  "mlp_medium_v1": {
+    "model_type": "mlp",
+    "parameters": 25924,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 157.89182391017675,
+        "time_per_track_us": 157.89182391017675,
+        "throughput_hz": 6333.450176425165
+      },
+      "32": {
+        "batch_time_us": 2553.5312620922923,
+        "time_per_track_us": 79.79785194038413,
+        "throughput_hz": 12531.66564868295
+      },
+      "256": {
+        "batch_time_us": 3188.971998170018,
+        "time_per_track_us": 12.456921867851634,
+        "throughput_hz": 80276.65346290429
+      },
+      "1024": {
+        "batch_time_us": 4938.979102298617,
+        "time_per_track_us": 4.8232217795884935,
+        "throughput_hz": 207330.2961584565
+      }
+    },
+    "time_per_track_us": 4.8232217795884935,
+    "throughput_hz": 207330.2961584565,
+    "device": "cpu"
+  },
+  "mlp_narrow_deep_v1": {
+    "model_type": "mlp",
+    "parameters": 15140,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 204.233773984015,
+        "time_per_track_us": 204.233773984015,
+        "throughput_hz": 4896.349807834762
+      },
+      "32": {
+        "batch_time_us": 4951.236047782004,
+        "time_per_track_us": 154.72612649318762,
+        "throughput_hz": 6463.032602603341
+      },
+      "256": {
+        "batch_time_us": 4772.888515144587,
+        "time_per_track_us": 18.64409576228354,
+        "throughput_hz": 53636.28318317109
+      },
+      "1024": {
+        "batch_time_us": 9281.208738684654,
+        "time_per_track_us": 9.063680408871733,
+        "throughput_hz": 110330.45682206289
+      }
+    },
+    "time_per_track_us": 9.063680408871733,
+    "throughput_hz": 110330.45682206289,
+    "device": "cpu"
+  },
+  "mlp_small_v1": {
+    "model_type": "mlp",
+    "parameters": 9412,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 127.34970543533562,
+        "time_per_track_us": 127.34970543533562,
+        "throughput_hz": 7852.393506381293
+      },
+      "32": {
+        "batch_time_us": 2391.511881724,
+        "time_per_track_us": 74.734746303875,
+        "throughput_hz": 13380.656916047496
+      },
+      "256": {
+        "batch_time_us": 2416.98213852942,
+        "time_per_track_us": 9.441336478630546,
+        "throughput_hz": 105917.20804182679
+      },
+      "1024": {
+        "batch_time_us": 5943.471863865852,
+        "time_per_track_us": 5.804171742056496,
+        "throughput_hz": 172289.8708792663
+      }
+    },
+    "time_per_track_us": 5.804171742056496,
+    "throughput_hz": 172289.8708792663,
+    "device": "cpu"
+  },
+  "mlp_tiny_v1": {
+    "model_type": "mlp",
+    "parameters": 2660,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 125.95346663147211,
+        "time_per_track_us": 125.95346663147211,
+        "throughput_hz": 7939.440070561179
+      },
+      "32": {
+        "batch_time_us": 2552.519580349326,
+        "time_per_track_us": 79.76623688591644,
+        "throughput_hz": 12536.63252824906
+      },
+      "256": {
+        "batch_time_us": 2360.8683049678802,
+        "time_per_track_us": 9.222141816280782,
+        "throughput_hz": 108434.68035100031
+      },
+      "1024": {
+        "batch_time_us": 4005.355457775295,
+        "time_per_track_us": 3.9114799392336863,
+        "throughput_hz": 255657.70898365238
+      }
+    },
+    "time_per_track_us": 3.9114799392336863,
+    "throughput_hz": 255657.70898365238,
+    "device": "cpu"
+  },
+  "mlp_wide_shallow_v1": {
+    "model_type": "mlp",
+    "parameters": 35204,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 133.44412203878164,
+        "time_per_track_us": 133.44412203878164,
+        "throughput_hz": 7493.773309171153
+      },
+      "32": {
+        "batch_time_us": 2483.081459067762,
+        "time_per_track_us": 77.59629559586756,
+        "throughput_hz": 12887.21313718558
+      },
+      "256": {
+        "batch_time_us": 3587.57883310318,
+        "time_per_track_us": 14.013979816809297,
+        "throughput_hz": 71357.31698432544
+      },
+      "1024": {
+        "batch_time_us": 5384.053378365934,
+        "time_per_track_us": 5.257864627310482,
+        "throughput_hz": 190191.27932769217
+      }
+    },
+    "time_per_track_us": 5.257864627310482,
+    "throughput_hz": 190191.27932769217,
+    "device": "cpu"
+  },
+  "mlp_wide_v1": {
+    "model_type": "mlp",
+    "parameters": 135940,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 148.6113714054227,
+        "time_per_track_us": 148.6113714054227,
+        "throughput_hz": 6728.960176754758
+      },
+      "32": {
+        "batch_time_us": 2527.6719219982624,
+        "time_per_track_us": 78.9897475624457,
+        "throughput_hz": 12659.87081689868
+      },
+      "256": {
+        "batch_time_us": 5894.140303134918,
+        "time_per_track_us": 23.023985559120774,
+        "throughput_hz": 43432.96678293206
+      },
+      "1024": {
+        "batch_time_us": 5010.821353644133,
+        "time_per_track_us": 4.893380228168098,
+        "throughput_hz": 204357.71458012436
+      }
+    },
+    "time_per_track_us": 4.893380228168098,
+    "throughput_hz": 204357.71458012436,
+    "device": "cpu"
+  },
+  "mlp_xlarge_v1": {
+    "model_type": "mlp",
+    "parameters": 430980,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 243.97565983235836,
+        "time_per_track_us": 243.97565983235836,
+        "throughput_hz": 4098.769527612404
+      },
+      "32": {
+        "batch_time_us": 4184.28482953459,
+        "time_per_track_us": 130.75890092295595,
+        "throughput_hz": 7647.662934924842
+      },
+      "256": {
+        "batch_time_us": 5904.923812486231,
+        "time_per_track_us": 23.06610864252434,
+        "throughput_hz": 43353.6499588151
+      },
+      "1024": {
+        "batch_time_us": 8836.678178049624,
+        "time_per_track_us": 8.629568533251586,
+        "throughput_hz": 115880.6487423774
+      }
+    },
+    "time_per_track_us": 8.629568533251586,
+    "throughput_hz": 115880.6487423774,
+    "device": "cpu"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "dataset_info": {
+    "total_tracks": 100000,
+    "extrapolator": "RungeKutta",
+    "z_range": "3000 - 7000 mm",
+    "propagation_distance": "4000 mm"
+  },
+  "momentum_stats": {
+    "mean_GeV": 27.63715844388801,
+    "median_GeV": 17.210783715388104,
+    "std_GeV": 25.724912547721605,
+    "min_GeV": 3.0000003958860044,
+    "max_GeV": 99.99554265613638
+  },
+  "charge_distribution": {
+    "positive_count": 49943,
+    "negative_count": 50057,
+    "positive_pct": 49.943
+  },
+  "deflection_stats": {
+    "mean_x_deflection_mm": -0.13226743147138423,
+    "std_x_deflection_mm": 302.5405064469256,
+    "mean_slope_change": -6.613371573569215e-05,
+    "std_slope_change": 0.1512702532234628
+  },
+  "phase_space_coverage": {
+    "x_range_mm": [
+      -299.9935278569501,
+      299.9876305800302
+    ],
+    "y_range_mm": [
+      -249.99625275663607,
+      249.9951422285672
+    ],
+    "tx_range": [
+      -0.14999994409821993,
+      0.14999981064733872
+    ],
+    "ty_range": [
+      -0.1499997978752116,
+      0.14999979762255924
+    ]
+  }
+}

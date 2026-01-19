@@ -1,0 +1,553 @@
+\documentclass[11pt,a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{bm}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+% Note: algorithm, algpseudocode, and tikz packages not available on this system
+% Pseudocode will be written in equation/align environments instead
+
+\geometry{margin=2.5cm}
+
+% Custom commands
+\newcommand{\vect}[1]{\bm{#1}}
+\newcommand{\mat}[1]{\mathbf{#1}}
+\newcommand{\qop}{q/p}
+\newcommand{\clight}{c_{\text{light}}}
+\newcommand{\Ldata}{\mathcal{L}_{\text{data}}}
+\newcommand{\Lpde}{\mathcal{L}_{\text{PDE}}}
+\newcommand{\Lic}{\mathcal{L}_{\text{IC}}}
+\newcommand{\Ltotal}{\mathcal{L}_{\text{total}}}
+\newcommand{\dv}[2]{\frac{d #1}{d #2}}
+\newcommand{\pdv}[2]{\frac{\partial #1}{\partial #2}}
+
+% Theorem environments
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{remark}{Remark}[section]
+
+\title{Mathematical Foundations of Neural Network\\Track Extrapolation in LHCb}
+\author{G. Scriven}
+\date{January 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document presents the complete mathematical derivations for neural network-based track extrapolation in the LHCb detector. We cover the physics of charged particle motion in magnetic fields, derive the governing equations in z-parameterization, and develop three neural network architectures: Multi-Layer Perceptron (MLP), Physics-Informed Neural Network (PINN), and Runge-Kutta Physics-Informed Neural Network (RK-PINN). We also provide a comprehensive treatment of Runge-Kutta numerical integration theory that motivates the RK-PINN architecture.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%=============================================================================
+\section{Introduction}
+%=============================================================================
+
+Track reconstruction in the LHCb detector requires extrapolating particle trajectories through the magnetic field. The traditional approach uses numerical integration of the equations of motion (Runge-Kutta methods). We explore neural network alternatives that learn the extrapolation mapping directly from data or by incorporating physics constraints.
+
+\subsection{Notation}
+
+Throughout this document, we use the following notation:
+\begin{itemize}
+    \item $\vect{x} = (x, y, z)^T$ - spatial position in mm
+    \item $\vect{p} = (p_x, p_y, p_z)^T$ - momentum in MeV
+    \item $\vect{B} = (B_x, B_y, B_z)^T$ - magnetic field in Tesla
+    \item $t_x = \dv{x}{z}$, $t_y = \dv{y}{z}$ - track slopes (dimensionless)
+    \item $\qop$ - charge over momentum in MeV$^{-1}$
+    \item $\clight = 2.99792458 \times 10^{-4}$ - speed of light factor
+\end{itemize}
+
+%=============================================================================
+\section{Physics of Charged Particle Motion}
+%=============================================================================
+
+\subsection{The Lorentz Force}
+
+A charged particle with charge $q$ and velocity $\vect{v}$ in a magnetic field $\vect{B}$ experiences the Lorentz force:
+\begin{equation}
+    \vect{F} = q(\vect{v} \times \vect{B})
+    \label{eq:lorentz}
+\end{equation}
+
+Using Newton's second law and the relativistic momentum $\vect{p} = \gamma m \vect{v}$:
+\begin{equation}
+    \dv{\vect{p}}{t} = q(\vect{v} \times \vect{B})
+\end{equation}
+
+\begin{remark}
+The Lorentz force is perpendicular to the velocity, so it does no work on the particle. Energy (and thus $|\vect{p}|$) is conserved in a pure magnetic field.
+\end{remark}
+
+\subsection{Z-Parameterization}
+
+In LHCb, tracks propagate predominantly in the $+z$ direction. It is therefore convenient to parameterize the trajectory by $z$ rather than time. We define the \textbf{track state} at position $z$ as:
+\begin{equation}
+    \vect{y}(z) = \begin{pmatrix} x(z) \\ y(z) \\ t_x(z) \\ t_y(z) \end{pmatrix}
+\end{equation}
+
+where $t_x = \dv{x}{z}$ and $t_y = \dv{y}{z}$ are the track slopes.
+
+The relationship between time and $z$ derivatives is:
+\begin{equation}
+    \dv{}{t} = \frac{v_z}{1} \dv{}{z} = \frac{p_z}{\gamma m} \dv{}{z}
+\end{equation}
+
+\subsection{Derivation of the Equations of Motion}
+
+\begin{theorem}[Equations of Motion in Z-Parameterization]
+The evolution of the track state $\vect{y}(z)$ is governed by:
+\begin{align}
+    \dv{x}{z} &= t_x \label{eq:dxdz} \\
+    \dv{y}{z} &= t_y \label{eq:dydz} \\
+    \dv{t_x}{z} &= \kappa \cdot N \cdot \left[ t_x t_y B_x - (1 + t_x^2) B_y + t_y B_z \right] \label{eq:dtxdz} \\
+    \dv{t_y}{z} &= \kappa \cdot N \cdot \left[ (1 + t_y^2) B_x - t_x t_y B_y - t_x B_z \right] \label{eq:dtydz}
+\end{align}
+where:
+\begin{equation}
+    \kappa = \frac{q}{p} \cdot \clight, \qquad N = \sqrt{1 + t_x^2 + t_y^2}
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+We derive the slope equations starting from the Lorentz force. The momentum components are related to the slopes by:
+\begin{equation}
+    p_x = p \cdot \frac{t_x}{N}, \quad p_y = p \cdot \frac{t_y}{N}, \quad p_z = p \cdot \frac{1}{N}
+\end{equation}
+where $N = \sqrt{1 + t_x^2 + t_y^2}$ ensures $|\vect{p}| = p$.
+
+The velocity is $\vect{v} = \vect{p}/(\gamma m)$, so:
+\begin{equation}
+    v_z = \frac{p_z}{\gamma m} = \frac{p}{N \gamma m}
+\end{equation}
+
+From the Lorentz force $\dv{\vect{p}}{t} = q(\vect{v} \times \vect{B})$, the $x$-component is:
+\begin{equation}
+    \dv{p_x}{t} = q(v_y B_z - v_z B_y) = \frac{q}{\gamma m} (p_y B_z - p_z B_y)
+\end{equation}
+
+Converting to $z$-derivatives using $\dv{t} = v_z \dv{z}$:
+\begin{equation}
+    \dv{p_x}{z} = \frac{1}{v_z} \dv{p_x}{t} = \frac{N \gamma m}{p} \cdot \frac{q}{\gamma m} (p_y B_z - p_z B_y)
+\end{equation}
+
+Simplifying:
+\begin{equation}
+    \dv{p_x}{z} = \frac{qN}{p} \left( \frac{p t_y}{N} B_z - \frac{p}{N} B_y \right) = q(t_y B_z - B_y)
+\end{equation}
+
+Now, $t_x = p_x / p_z = p_x N / p$, so:
+\begin{equation}
+    \dv{t_x}{z} = \frac{N}{p} \dv{p_x}{z} + \frac{p_x}{p} \dv{N}{z}
+\end{equation}
+
+Since $|\vect{p}|$ is conserved and $N$ depends on slopes:
+\begin{equation}
+    \dv{N}{z} = \frac{t_x}{N} \dv{t_x}{z} + \frac{t_y}{N} \dv{t_y}{z}
+\end{equation}
+
+After algebraic manipulation (similar derivation for $t_y$), we obtain:
+\begin{align}
+    \dv{t_x}{z} &= \frac{q}{p} \clight \cdot N \cdot \left[ t_x t_y B_x - (1 + t_x^2) B_y + t_y B_z \right] \\
+    \dv{t_y}{z} &= \frac{q}{p} \clight \cdot N \cdot \left[ (1 + t_y^2) B_x - t_x t_y B_y - t_x B_z \right]
+\end{align}
+where $\clight = 2.99792458 \times 10^{-4}$ accounts for unit conversions.
+\end{proof}
+
+\subsection{Compact Form}
+
+We can write the system compactly as:
+\begin{equation}
+    \dv{\vect{y}}{z} = \vect{f}(\vect{y}, z; \qop)
+    \label{eq:ode_system}
+\end{equation}
+where $\vect{f}: \mathbb{R}^4 \times \mathbb{R} \times \mathbb{R} \to \mathbb{R}^4$ is defined by Equations~\eqref{eq:dxdz}--\eqref{eq:dtydz}.
+
+%=============================================================================
+\section{The LHCb Magnetic Field}
+%=============================================================================
+
+\subsection{Dipole Magnet Characteristics}
+
+The LHCb dipole magnet produces a field primarily in the $y$-direction (vertical):
+\begin{itemize}
+    \item Peak field: $|B_y| \approx 1.03$ T at $z \approx 5000$ mm
+    \item Field integral: $\int B_y \, dz \approx 4.44$ T$\cdot$m
+    \item Dominant component: $B_y$ (causes bending in the $x$-$z$ plane)
+\end{itemize}
+
+\subsection{Gaussian Field Approximation}
+
+For analytical work and differentiable physics loss, we approximate the field as:
+\begin{equation}
+    B_y(z) = B_0 \exp\left( -\frac{1}{2} \left( \frac{z - z_c}{\sigma_z} \right)^2 \right)
+    \label{eq:gaussian_field}
+\end{equation}
+with fitted parameters:
+\begin{equation}
+    B_0 = -1.0182 \text{ T}, \quad z_c = 5007 \text{ mm}, \quad \sigma_z = 1744 \text{ mm}
+\end{equation}
+
+%=============================================================================
+\section{Multi-Layer Perceptron (MLP)}
+%=============================================================================
+
+\subsection{Architecture}
+
+The MLP learns the extrapolation mapping directly from data without explicit physics. Given input features:
+\begin{equation}
+    \vect{x} = (x_0, y_0, t_{x,0}, t_{y,0}, \qop, \Delta z)^T \in \mathbb{R}^6
+\end{equation}
+the network predicts the final state:
+\begin{equation}
+    \hat{\vect{y}} = (x_f, y_f, t_{x,f}, t_{y,f})^T \in \mathbb{R}^4
+\end{equation}
+
+\subsection{Network Definition}
+
+\begin{definition}[Multi-Layer Perceptron]
+An MLP with $L$ hidden layers is defined as:
+\begin{equation}
+    \text{MLP}(\vect{x}) = \mat{W}_{L+1} \sigma_L(\mat{W}_L \sigma_{L-1}(\cdots \sigma_1(\mat{W}_1 \vect{x} + \vect{b}_1) \cdots) + \vect{b}_L) + \vect{b}_{L+1}
+\end{equation}
+where $\mat{W}_i \in \mathbb{R}^{d_i \times d_{i-1}}$ are weight matrices, $\vect{b}_i$ are bias vectors, and $\sigma_i$ are activation functions.
+\end{definition}
+
+\subsection{Input/Output Normalization}
+
+For stable training, we apply z-score normalization:
+\begin{equation}
+    \tilde{x}_i = \frac{x_i - \mu_i}{\sigma_i}
+\end{equation}
+where $\mu_i$ and $\sigma_i$ are the mean and standard deviation computed from training data.
+
+The network operates on normalized inputs and outputs:
+\begin{equation}
+    \hat{\vect{y}} = \sigma_y \odot \text{MLP}(\tilde{\vect{x}}) + \mu_y
+\end{equation}
+
+\subsection{Loss Function}
+
+The MLP is trained with Mean Squared Error (MSE) loss:
+\begin{equation}
+    \Ldata = \frac{1}{N} \sum_{i=1}^{N} \|\hat{\vect{y}}_i - \vect{y}_i^*\|^2
+    \label{eq:mse_loss}
+\end{equation}
+where $\vect{y}_i^*$ is the ground truth from Runge-Kutta integration.
+
+\subsection{Implicit Physics Learning}
+
+\begin{remark}
+The MLP learns the physics \textit{implicitly} from training data generated by the RK extrapolator. The network approximates the flow map:
+\begin{equation}
+    \Phi_{\Delta z}: \vect{y}_0 \mapsto \vect{y}(\Delta z)
+\end{equation}
+which is the solution operator for the ODE system~\eqref{eq:ode_system}.
+\end{remark}
+
+%=============================================================================
+\section{Physics-Informed Neural Network (PINN)}
+%=============================================================================
+
+\subsection{Concept}
+
+Physics-Informed Neural Networks (PINNs) incorporate the governing physics equations directly into the loss function. Instead of learning only from data, the network is constrained to satisfy the differential equations.
+
+\subsection{Network as Trajectory Function}
+
+Unlike the MLP which predicts only the endpoint, the PINN learns the continuous trajectory:
+\begin{equation}
+    \vect{y}_\theta: [0, 1] \to \mathbb{R}^4, \quad \zeta \mapsto \vect{y}_\theta(\zeta)
+\end{equation}
+where $\zeta = (z - z_0)/\Delta z \in [0, 1]$ is the normalized position and $\theta$ represents network parameters.
+
+\subsection{Loss Function Components}
+
+The total PINN loss consists of three components:
+\begin{equation}
+    \Ltotal = \Ldata + \lambda_{\text{IC}} \Lic + \lambda_{\text{PDE}} \Lpde
+    \label{eq:pinn_loss}
+\end{equation}
+
+\subsubsection{Data Loss}
+
+At the endpoint $\zeta = 1$:
+\begin{equation}
+    \Ldata = \frac{1}{N} \sum_{i=1}^{N} \|\vect{y}_\theta(\zeta=1; \vect{x}_i) - \vect{y}_i^*\|^2
+\end{equation}
+
+\subsubsection{Initial Condition Loss}
+
+At $\zeta = 0$, the trajectory must match the initial state:
+\begin{equation}
+    \Lic = \frac{1}{N} \sum_{i=1}^{N} \|\vect{y}_\theta(\zeta=0; \vect{x}_i) - \vect{y}_{0,i}\|^2
+\end{equation}
+where $\vect{y}_{0,i} = (x_{0,i}, y_{0,i}, t_{x,0,i}, t_{y,0,i})^T$.
+
+\subsubsection{PDE Residual Loss}
+
+The physics constraint is enforced at \textit{collocation points} $\{\zeta_k\}_{k=1}^K$ sampled along the trajectory:
+\begin{equation}
+    \Lpde = \frac{1}{NK} \sum_{i=1}^{N} \sum_{k=1}^{K} \left\| \dv{\vect{y}_\theta}{\zeta}\bigg|_{\zeta_k} - \Delta z \cdot \vect{f}(\vect{y}_\theta(\zeta_k), z_k; \qop_i) \right\|^2
+    \label{eq:pde_loss}
+\end{equation}
+
+\subsection{Automatic Differentiation}
+
+The key insight of PINNs is that the derivative $\pdv{\vect{y}_\theta}{\zeta}$ can be computed exactly using automatic differentiation:
+\begin{equation}
+    \pdv{y_j}{\zeta} = \pdv{}{\zeta} \text{NN}_j(\vect{x}, \zeta; \theta)
+\end{equation}
+This is computed via backpropagation through the network graph.
+
+\subsection{Algorithm}
+
+The PINN training procedure follows these steps:
+
+\begin{enumerate}
+    \item \textbf{Input:} Batch of initial states $\{\vect{x}_i\}$, ground truth $\{\vect{y}_i^*\}$
+    \item Sample collocation points $\{\zeta_k\}_{k=1}^K \sim \text{Uniform}(0, 1)$
+    \item For each sample $i$:
+    \begin{itemize}
+        \item Compute $\vect{y}_\theta(\zeta=0)$, $\vect{y}_\theta(\zeta=1)$, and $\vect{y}_\theta(\zeta_k)$ for all $k$
+        \item Compute $\pdv{\vect{y}_\theta}{\zeta}$ at each $\zeta_k$ via autodiff
+        \item Evaluate physics residual using Eqs.~\eqref{eq:dxdz}--\eqref{eq:dtydz}
+    \end{itemize}
+    \item Compute $\Ltotal$ using Eq.~\eqref{eq:pinn_loss}
+    \item Update $\theta$ via gradient descent
+\end{enumerate}
+
+%=============================================================================
+\section{Runge-Kutta Numerical Integration}
+%=============================================================================
+
+\subsection{General Framework}
+
+Runge-Kutta methods approximate the solution of an initial value problem:
+\begin{equation}
+    \dv{\vect{y}}{z} = \vect{f}(\vect{y}, z), \quad \vect{y}(z_0) = \vect{y}_0
+\end{equation}
+
+\begin{definition}[Explicit Runge-Kutta Method]
+An $s$-stage explicit RK method advances the solution from $\vect{y}_n$ to $\vect{y}_{n+1}$ over step $h$ by:
+\begin{align}
+    \vect{k}_1 &= h \cdot \vect{f}(z_n, \vect{y}_n) \\
+    \vect{k}_2 &= h \cdot \vect{f}(z_n + c_2 h, \vect{y}_n + a_{21} \vect{k}_1) \\
+    \vect{k}_3 &= h \cdot \vect{f}(z_n + c_3 h, \vect{y}_n + a_{31} \vect{k}_1 + a_{32} \vect{k}_2) \\
+    &\vdots \\
+    \vect{k}_s &= h \cdot \vect{f}(z_n + c_s h, \vect{y}_n + \sum_{j=1}^{s-1} a_{sj} \vect{k}_j) \\
+    \vect{y}_{n+1} &= \vect{y}_n + \sum_{i=1}^{s} b_i \vect{k}_i
+\end{align}
+\end{definition}
+
+\subsection{Butcher Tableau}
+
+The RK method is characterized by its Butcher tableau:
+\begin{equation}
+\begin{array}{c|cccc}
+c_1 & 0 & & & \\
+c_2 & a_{21} & 0 & & \\
+c_3 & a_{31} & a_{32} & 0 & \\
+\vdots & \vdots & & \ddots & \\
+c_s & a_{s1} & a_{s2} & \cdots & 0 \\
+\hline
+& b_1 & b_2 & \cdots & b_s
+\end{array}
+\end{equation}
+
+\subsection{Classical RK4}
+
+The classical fourth-order Runge-Kutta method (RK4) has the tableau:
+\begin{equation}
+\begin{array}{c|cccc}
+0 & & & & \\
+\frac{1}{2} & \frac{1}{2} & & & \\
+\frac{1}{2} & 0 & \frac{1}{2} & & \\
+1 & 0 & 0 & 1 & \\
+\hline
+& \frac{1}{6} & \frac{1}{3} & \frac{1}{3} & \frac{1}{6}
+\end{array}
+\end{equation}
+
+Explicitly:
+\begin{align}
+    \vect{k}_1 &= h \cdot \vect{f}(z_n, \vect{y}_n) \\
+    \vect{k}_2 &= h \cdot \vect{f}\left(z_n + \frac{h}{2}, \vect{y}_n + \frac{\vect{k}_1}{2}\right) \\
+    \vect{k}_3 &= h \cdot \vect{f}\left(z_n + \frac{h}{2}, \vect{y}_n + \frac{\vect{k}_2}{2}\right) \\
+    \vect{k}_4 &= h \cdot \vect{f}(z_n + h, \vect{y}_n + \vect{k}_3) \\
+    \vect{y}_{n+1} &= \vect{y}_n + \frac{1}{6}(\vect{k}_1 + 2\vect{k}_2 + 2\vect{k}_3 + \vect{k}_4)
+    \label{eq:rk4}
+\end{align}
+
+\subsection{Order Conditions}
+
+\begin{theorem}[Local Truncation Error]
+The local truncation error of RK4 is $O(h^5)$, making it a fourth-order method with global error $O(h^4)$.
+\end{theorem}
+
+The order conditions are derived by matching Taylor series coefficients. For order $p$, the method must satisfy:
+\begin{equation}
+    \vect{y}(z_n + h) - \vect{y}_{n+1} = O(h^{p+1})
+\end{equation}
+
+\subsection{Geometric Interpretation}
+
+RK4 can be interpreted as:
+\begin{enumerate}
+    \item $\vect{k}_1$: Slope at the starting point
+    \item $\vect{k}_2$: Slope at the midpoint using $\vect{k}_1$
+    \item $\vect{k}_3$: Slope at the midpoint using $\vect{k}_2$
+    \item $\vect{k}_4$: Slope at the endpoint using $\vect{k}_3$
+\end{enumerate}
+
+The final update is a weighted average: $(1 + 2 + 2 + 1)/6 = 1$.
+
+%=============================================================================
+\section{RK-PINN: Runge-Kutta Physics-Informed Neural Network}
+%=============================================================================
+
+\subsection{Motivation}
+
+The RK-PINN combines the structure of Runge-Kutta methods with neural network learning. The key insight is that the intermediate stages of RK methods provide natural positions for physics constraints.
+
+\subsection{Architecture}
+
+\begin{definition}[RK-PINN]
+The RK-PINN consists of:
+\begin{enumerate}
+    \item \textbf{Shared backbone} $\vect{h}_\theta: \mathbb{R}^6 \to \mathbb{R}^d$ that extracts features
+    \item \textbf{Stage heads} $\{g_{\phi_i}\}_{i=1}^s$ that predict states at stage positions
+    \item \textbf{Learnable weights} $\{w_i\}_{i=1}^s$ for combining stage outputs
+\end{enumerate}
+\end{definition}
+
+For a 4-stage RK-PINN (analogous to RK4):
+\begin{align}
+    \vect{h} &= \text{Backbone}(\vect{x}) \\
+    \hat{\vect{y}}_1 &= g_{\phi_1}(\vect{h}, \zeta = 0.25) \quad \text{(at } z_0 + 0.25\Delta z \text{)} \\
+    \hat{\vect{y}}_2 &= g_{\phi_2}(\vect{h}, \zeta = 0.50) \quad \text{(at } z_0 + 0.50\Delta z \text{)} \\
+    \hat{\vect{y}}_3 &= g_{\phi_3}(\vect{h}, \zeta = 0.75) \quad \text{(at } z_0 + 0.75\Delta z \text{)} \\
+    \hat{\vect{y}}_4 &= g_{\phi_4}(\vect{h}, \zeta = 1.00) \quad \text{(at } z_0 + \Delta z \text{)} \\
+    \hat{\vect{y}}_{\text{final}} &= \sum_{i=1}^{4} \tilde{w}_i \hat{\vect{y}}_i
+\end{align}
+where $\tilde{w}_i = \text{softmax}(\vect{w})_i$ ensures weights sum to 1.
+
+\subsection{Weight Initialization}
+
+The weights are initialized to match RK4:
+\begin{equation}
+    w_1^{(0)} = \frac{1}{6}, \quad w_2^{(0)} = \frac{2}{6}, \quad w_3^{(0)} = \frac{2}{6}, \quad w_4^{(0)} = \frac{1}{6}
+\end{equation}
+
+During training, these weights can adapt to better fit the data.
+
+\subsection{Loss Function}
+
+The RK-PINN loss combines data and physics terms:
+\begin{equation}
+    \Ltotal = \Ldata + \lambda_{\text{IC}} \Lic + \lambda_{\text{PDE}} \sum_{i=1}^{s} \mathcal{L}_{\text{PDE}}^{(i)}
+\end{equation}
+
+where the PDE loss at each stage is:
+\begin{equation}
+    \mathcal{L}_{\text{PDE}}^{(i)} = \frac{1}{N} \sum_{j=1}^{N} \left\| \pdv{\hat{\vect{y}}_i}{\zeta} - \Delta z \cdot \vect{f}(\hat{\vect{y}}_i, z_i; \qop_j) \right\|^2
+\end{equation}
+
+\subsection{Comparison with Standard PINN}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Property} & \textbf{PINN} & \textbf{RK-PINN} \\
+\midrule
+Collocation points & Random sampling & Fixed at RK positions \\
+Architecture & Single network & Backbone + stage heads \\
+Stage weights & N/A & Learnable (init: RK4) \\
+Physics structure & Soft constraint & Structured like RK \\
+\bottomrule
+\end{tabular}
+\caption{Comparison of PINN and RK-PINN architectures.}
+\end{table}
+
+%=============================================================================
+\section{Summary of Loss Functions}
+%=============================================================================
+
+\subsection{MLP}
+\begin{equation}
+    \mathcal{L}_{\text{MLP}} = \frac{1}{N} \sum_{i=1}^{N} \|\hat{\vect{y}}_i - \vect{y}_i^*\|^2
+\end{equation}
+
+\subsection{PINN}
+\begin{equation}
+    \mathcal{L}_{\text{PINN}} = \underbrace{\frac{1}{N} \sum_{i=1}^{N} \|\hat{\vect{y}}_i - \vect{y}_i^*\|^2}_{\Ldata} + \lambda_{\text{IC}} \underbrace{\frac{1}{N} \sum_{i=1}^{N} \|\hat{\vect{y}}_{0,i} - \vect{y}_{0,i}\|^2}_{\Lic} + \lambda_{\text{PDE}} \underbrace{\frac{1}{NK} \sum_{i,k} \|\mathcal{R}_{ik}\|^2}_{\Lpde}
+\end{equation}
+where the residual is:
+\begin{equation}
+    \mathcal{R}_{ik} = \pdv{\vect{y}_\theta}{\zeta}\bigg|_{\zeta_k} - \Delta z \cdot \vect{f}(\vect{y}_\theta(\zeta_k), z_k; \qop_i)
+\end{equation}
+
+\subsection{RK-PINN}
+\begin{equation}
+    \mathcal{L}_{\text{RK-PINN}} = \Ldata + \lambda_{\text{IC}} \Lic + \lambda_{\text{PDE}} \sum_{s=1}^{4} \mathcal{L}_{\text{PDE}}^{(s)}
+\end{equation}
+
+%=============================================================================
+\section{Implementation Notes}
+%=============================================================================
+
+\subsection{Critical Constants}
+
+\begin{equation}
+    \clight = 2.99792458 \times 10^{-4} \quad \text{[mm/ns $\times$ unit conversions]}
+\end{equation}
+
+This constant converts:
+\begin{equation}
+    \kappa = \frac{q}{p} \cdot \clight \quad \text{[MeV}^{-1} \text{ T}^{-1} \text{ mm}^{-1}\text{]}
+\end{equation}
+
+\subsection{Normalization Factor}
+
+The path length factor:
+\begin{equation}
+    N = \sqrt{1 + t_x^2 + t_y^2} = \frac{|\vect{p}|}{p_z} = \frac{ds}{dz}
+\end{equation}
+accounts for the fact that the particle travels a distance $ds = N \cdot dz$ when advancing by $dz$ in $z$.
+
+\subsection{Dominant Field Component}
+
+In LHCb, $B_y$ dominates, causing bending in the $x$-$z$ plane:
+\begin{equation}
+    \dv{t_x}{z} \approx -\kappa \cdot N \cdot (1 + t_x^2) \cdot B_y
+\end{equation}
+
+For small slopes ($t_x, t_y \ll 1$) and positive particles ($q > 0$) in a negative field ($B_y < 0$):
+\begin{equation}
+    \dv{t_x}{z} > 0 \quad \Rightarrow \quad \text{track bends to positive } x
+\end{equation}
+
+%=============================================================================
+\section{Conclusion}
+%=============================================================================
+
+We have derived the complete mathematical framework for neural network-based track extrapolation:
+
+\begin{enumerate}
+    \item \textbf{MLP}: Learns the extrapolation mapping implicitly from data
+    \item \textbf{PINN}: Enforces Lorentz force equations via automatic differentiation
+    \item \textbf{RK-PINN}: Combines RK structure with learnable physics constraints
+\end{enumerate}
+
+The key physics are encoded in Equations~\eqref{eq:dtxdz}--\eqref{eq:dtydz}, with the critical constant $\clight = 2.99792458 \times 10^{-4}$.
+
+\end{document}

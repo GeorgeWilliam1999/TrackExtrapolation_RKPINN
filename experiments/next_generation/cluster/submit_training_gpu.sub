@@ -1,0 +1,96 @@
+#===============================================================================
+# HTCondor GPU Training Submission File
+#
+# Submits model training jobs to NIKHEF GPU nodes:
+#   - wn-lot-008/009: 2x Tesla V100-PCIE-32GB each
+#   - wn-pijl-002-007: 2-4x NVIDIA L40S (45GB) each
+#
+# Usage:
+#   condor_submit submit_training_gpu.sub
+#
+# Author: G. Scriven
+# Date: January 2026
+#===============================================================================
+
+# Universe
+universe = vanilla
+
+# Executable
+executable = run_training.sh
+
+# GPU REQUIREMENTS - Request 1 GPU
+request_gpus = 1
+
+# Job requirements - target GPU nodes
++UseOS = "el9"
++JobCategory = "medium"
+
+# Resources
+request_cpus = 4
+request_memory = 32GB
+request_disk = 10GB
+
+# Working directory (NFS - no file transfer needed)
+should_transfer_files = NO
+initialdir = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/cluster
+
+# Logs
+log = logs/gpu_training_$(Cluster)_$(Process).log
+output = logs/gpu_training_$(Cluster)_$(Process).out
+error = logs/gpu_training_$(Cluster)_$(Process).err
+
+# Notification
+notification = Complete
+notify_user = gscriven@nikhef.nl
+
+#===============================================================================
+# GPU EXPERIMENT MATRIX
+#===============================================================================
+# Arguments: MODEL_TYPE PRESET EXPERIMENT_NAME [EXTRA_ARGS...]
+
+# --- Large Models (benefit most from GPU) ---
+
+# XLarge MLP - 400K parameters
+arguments = mlp xlarge mlp_xlarge_gpu_v1 --epochs 100 --batch_size 8192
+queue 1
+
+# Large architectures
+arguments = mlp large mlp_large_gpu_v1 --epochs 100 --batch_size 8192
+queue 1
+
+arguments = pinn large pinn_large_gpu_v1 --epochs 100 --batch_size 8192 --lambda_pde 1e-3
+queue 1
+
+arguments = rk_pinn large rkpinn_large_gpu_v1 --epochs 100 --batch_size 8192 --lambda_pde 1e-3
+queue 1
+
+# --- Medium Models ---
+
+arguments = mlp medium mlp_medium_gpu_v1 --epochs 100 --batch_size 8192
+queue 1
+
+arguments = pinn medium pinn_medium_pde1e3_gpu --epochs 100 --batch_size 8192 --lambda_pde 1e-3
+queue 1
+
+arguments = pinn medium pinn_medium_pde1e2_gpu --epochs 100 --batch_size 8192 --lambda_pde 1e-2
+queue 1
+
+arguments = pinn medium pinn_medium_pde1e1_gpu --epochs 100 --batch_size 8192 --lambda_pde 0.1
+queue 1
+
+arguments = rk_pinn medium rkpinn_medium_gpu_v1 --epochs 100 --batch_size 8192 --lambda_pde 1e-3
+queue 1
+
+# --- Extended Training ---
+
+arguments = mlp large mlp_large_200ep_gpu --epochs 200 --batch_size 8192 --patience 40
+queue 1
+
+arguments = pinn large pinn_large_200ep_gpu --epochs 200 --batch_size 8192 --lambda_pde 1e-3 --patience 40
+queue 1
+
+#===============================================================================
+# TOTAL: 11 GPU JOBS (quick single-GPU suite)
+#
+# For the full 30-job training suite, use: submit_full_suite_gpu.sub
+#===============================================================================

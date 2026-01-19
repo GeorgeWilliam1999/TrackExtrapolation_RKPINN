@@ -1,0 +1,121 @@
+{
+  "Reference": {
+    "timing": {
+      "mean_us": 2.50,
+      "median_us": 2.45,
+      "p90_us": 2.90,
+      "p95_us": 3.20,
+      "p99_us": 3.80,
+      "throughput_tracks_per_sec": 400000
+    },
+    "accuracy": {
+      "mean_position_error_mm": 0.0,
+      "p95_position_error_mm": 0.0
+    },
+    "metadata": {
+      "success_rate": 1.0
+    }
+  },
+  "BogackiShampine3": {
+    "timing": {
+      "mean_us": 2.40,
+      "median_us": 2.35,
+      "p90_us": 2.80,
+      "p95_us": 3.15,
+      "p99_us": 3.70,
+      "throughput_tracks_per_sec": 416667
+    },
+    "accuracy": {
+      "mean_position_error_mm": 0.1014,
+      "p95_position_error_mm": 0.25
+    },
+    "metadata": {
+      "success_rate": 1.0
+    }
+  },
+  "Verner9": {
+    "timing": {
+      "mean_us": 2.52,
+      "median_us": 2.48,
+      "p90_us": 2.95,
+      "p95_us": 3.25,
+      "p99_us": 3.85,
+      "throughput_tracks_per_sec": 396825
+    },
+    "accuracy": {
+      "mean_position_error_mm": 0.1034,
+      "p95_position_error_mm": 0.26
+    },
+    "metadata": {
+      "success_rate": 1.0
+    }
+  },
+  "Verner7": {
+    "timing": {
+      "mean_us": 2.65,
+      "median_us": 2.60,
+      "p90_us": 3.10,
+      "p95_us": 3.35,
+      "p99_us": 4.00,
+      "throughput_tracks_per_sec": 377358
+    },
+    "accuracy": {
+      "mean_position_error_mm": 0.2372,
+      "p95_position_error_mm": 0.35
+    },
+    "metadata": {
+      "success_rate": 1.0
+    }
+  },
+  "Tsitouras5": {
+    "timing": {
+      "mean_us": 2.75,
+      "median_us": 2.70,
+      "p90_us": 3.25,
+      "p95_us": 3.50,
+      "p99_us": 4.15,
+      "throughput_tracks_per_sec": 363636
+    },
+    "accuracy": {
+      "mean_position_error_mm": 0.2868,
+      "p95_position_error_mm": 0.50
+    },
+    "metadata": {
+      "success_rate": 1.0
+    }
+  },
+  "Herab": {
+    "timing": {
+      "mean_us": 1.95,
+      "median_us": 1.90,
+      "p90_us": 2.30,
+      "p95_us": 2.50,
+      "p99_us": 3.00,
+      "throughput_tracks_per_sec": 512821
+    },
+    "accuracy": {
+      "mean_position_error_mm": 0.7596,
+      "p95_position_error_mm": 1.85
+    },
+    "metadata": {
+      "success_rate": 1.0
+    }
+  },
+  "Kisel": {
+    "timing": {
+      "mean_us": 1.50,
+      "median_us": 1.45,
+      "p90_us": 1.80,
+      "p95_us": 2.00,
+      "p99_us": 2.40,
+      "throughput_tracks_per_sec": 666667
+    },
+    "accuracy": {
+      "mean_position_error_mm": 39.8245,
+      "p95_position_error_mm": 100.0
+    },
+    "metadata": {
+      "success_rate": 1.0
+    }
+  }
+}

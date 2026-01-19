@@ -1,0 +1,742 @@
+{
+  "mlp_balanced_v1": {
+    "model_type": "mlp",
+    "parameters": 57316,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 158.1345871090889,
+        "time_per_track_us": 158.1345871090889,
+        "throughput_hz": 6323.727264739064
+      },
+      "32": {
+        "batch_time_us": 839.9505168199539,
+        "time_per_track_us": 26.24845365062356,
+        "throughput_hz": 38097.482362594106
+      },
+      "256": {
+        "batch_time_us": 6493.912553414702,
+        "time_per_track_us": 25.36684591177618,
+        "throughput_hz": 39421.53484425767
+      },
+      "1024": {
+        "batch_time_us": 7625.552318058908,
+        "time_per_track_us": 7.446828435604402,
+        "throughput_hz": 134285.35498667462
+      }
+    },
+    "time_per_track_us": 7.446828435604402,
+    "throughput_hz": 134285.35498667462,
+    "device": "cpu",
+    "pos_mean": 0.07261265814304352,
+    "pos_std": 0.05279150232672691,
+    "pos_median": 0.06282202154397964,
+    "pos_68": 0.08220094442367554,
+    "pos_90": 0.1273205280303955,
+    "pos_95": 0.1563721001148224,
+    "slope_mean_mrad": 6.635735511779785,
+    "slope_median_mrad": 5.707956790924072
+  },
+  "mlp_deep_v1": {
+    "model_type": "mlp",
+    "parameters": 58948,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 209.49327386915684,
+        "time_per_track_us": 209.49327386915684,
+        "throughput_hz": 4773.422943519274
+      },
+      "32": {
+        "batch_time_us": 4985.5777295306325,
+        "time_per_track_us": 155.79930404783227,
+        "throughput_hz": 6418.513908720593
+      },
+      "256": {
+        "batch_time_us": 4868.416930548847,
+        "time_per_track_us": 19.017253634956433,
+        "throughput_hz": 52583.828306409974
+      },
+      "1024": {
+        "batch_time_us": 9227.324635721743,
+        "time_per_track_us": 9.011059214572015,
+        "throughput_hz": 110974.74516457226
+      }
+    },
+    "time_per_track_us": 9.011059214572015,
+    "throughput_hz": 110974.74516457226,
+    "device": "cpu",
+    "pos_mean": 0.057305268943309784,
+    "pos_std": 0.04376855865120888,
+    "pos_median": 0.048359207808971405,
+    "pos_68": 0.06367272883653641,
+    "pos_90": 0.10183676332235336,
+    "pos_95": 0.12962454557418823,
+    "slope_mean_mrad": 6.782849311828613,
+    "slope_median_mrad": 5.412415981292725
+  },
+  "mlp_large_v1": {
+    "model_type": "mlp",
+    "parameters": 100996,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 165.97809735685587,
+        "time_per_track_us": 165.97809735685587,
+        "throughput_hz": 6024.89133159529
+      },
+      "32": {
+        "batch_time_us": 381.2778415158391,
+        "time_per_track_us": 11.914932547369972,
+        "throughput_hz": 83928.29720389258
+      },
+      "256": {
+        "batch_time_us": 1024.547885172069,
+        "time_per_track_us": 4.002140176453395,
+        "throughput_hz": 249866.31050144203
+      },
+      "1024": {
+        "batch_time_us": 1481.0225181281567,
+        "time_per_track_us": 1.446311052859528,
+        "throughput_hz": 691414.200301437
+      }
+    },
+    "time_per_track_us": 1.446311052859528,
+    "throughput_hz": 691414.200301437,
+    "device": "cpu",
+    "pos_mean": 0.10103228688240051,
+    "pos_std": 0.09151851385831833,
+    "pos_median": 0.08135376870632172,
+    "pos_68": 0.10980155318975449,
+    "pos_90": 0.18350976705551147,
+    "pos_95": 0.23622354865074158,
+    "slope_mean_mrad": 8.63068675994873,
+    "slope_median_mrad": 7.3826904296875
+  },
+  "mlp_medium_v1": {
+    "model_type": "mlp",
+    "parameters": 25924,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 150.55084601044655,
+        "time_per_track_us": 150.55084601044655,
+        "throughput_hz": 6642.274198383523
+      },
+      "32": {
+        "batch_time_us": 1767.43243355304,
+        "time_per_track_us": 55.2322635485325,
+        "throughput_hz": 18105.359725503586
+      },
+      "256": {
+        "batch_time_us": 794.1395929083228,
+        "time_per_track_us": 3.102107784798136,
+        "throughput_hz": 322361.4617456218
+      },
+      "1024": {
+        "batch_time_us": 1199.0593234077096,
+        "time_per_track_us": 1.1709563705153414,
+        "throughput_hz": 854002.7836903069
+      }
+    },
+    "time_per_track_us": 1.1709563705153414,
+    "throughput_hz": 854002.7836903069,
+    "device": "cpu",
+    "pos_mean": 0.07459865510463715,
+    "pos_std": 0.06132390350103378,
+    "pos_median": 0.05990632250905037,
+    "pos_68": 0.08276140689849854,
+    "pos_90": 0.14329873025417328,
+    "pos_95": 0.17993974685668945,
+    "slope_mean_mrad": 4.326173305511475,
+    "slope_median_mrad": 3.4957058429718018
+  },
+  "mlp_narrow_deep_v1": {
+    "model_type": "mlp",
+    "parameters": 15140,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 199.70658235251904,
+        "time_per_track_us": 199.70658235251904,
+        "throughput_hz": 5007.346218738125
+      },
+      "32": {
+        "batch_time_us": 4775.198833085597,
+        "time_per_track_us": 149.2249635339249,
+        "throughput_hz": 6701.2916359176015
+      },
+      "256": {
+        "batch_time_us": 4766.548876650631,
+        "time_per_track_us": 18.61933154941653,
+        "throughput_hz": 53707.620885634686
+      },
+      "1024": {
+        "batch_time_us": 1465.7281478866935,
+        "time_per_track_us": 1.431375144420599,
+        "throughput_hz": 698628.8702147236
+      }
+    },
+    "time_per_track_us": 1.431375144420599,
+    "throughput_hz": 698628.8702147236,
+    "device": "cpu",
+    "pos_mean": 0.07571464031934738,
+    "pos_std": 0.05963468551635742,
+    "pos_median": 0.06304717063903809,
+    "pos_68": 0.08228589594364166,
+    "pos_90": 0.13733984529972076,
+    "pos_95": 0.17758870124816895,
+    "slope_mean_mrad": 14.36448860168457,
+    "slope_median_mrad": 11.60149097442627
+  },
+  "mlp_small_v1": {
+    "model_type": "mlp",
+    "parameters": 9412,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 122.88800440728663,
+        "time_per_track_us": 122.88800440728663,
+        "throughput_hz": 8137.490756914798
+      },
+      "32": {
+        "batch_time_us": 242.53737181425095,
+        "time_per_track_us": 7.579292869195342,
+        "throughput_hz": 131938.42977942154
+      },
+      "256": {
+        "batch_time_us": 529.120727442205,
+        "time_per_track_us": 2.066877841571113,
+        "throughput_hz": 483821.5301780301
+      },
+      "1024": {
+        "batch_time_us": 856.6292654722929,
+        "time_per_track_us": 0.836552017062786,
+        "throughput_hz": 1195382.9285010817
+      }
+    },
+    "time_per_track_us": 0.836552017062786,
+    "throughput_hz": 1195382.9285010817,
+    "device": "cpu",
+    "pos_mean": 0.05347259342670441,
+    "pos_std": 0.042855191975831985,
+    "pos_median": 0.04360128939151764,
+    "pos_68": 0.059720948338508606,
+    "pos_90": 0.10163561999797821,
+    "pos_95": 0.12962684035301208,
+    "slope_mean_mrad": 2.0858395099639893,
+    "slope_median_mrad": 1.538967490196228
+  },
+  "mlp_tiny_v1": {
+    "model_type": "mlp",
+    "parameters": 2660,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 119.67140715569258,
+        "time_per_track_us": 119.67140715569258,
+        "throughput_hz": 8356.214936948132
+      },
+      "32": {
+        "batch_time_us": 212.11504470556974,
+        "time_per_track_us": 6.6285951470490545,
+        "throughput_hz": 150861.52914998648
+      },
+      "256": {
+        "batch_time_us": 368.7424212694168,
+        "time_per_track_us": 1.4404000830836594,
+        "throughput_hz": 694251.5567335741
+      },
+      "1024": {
+        "batch_time_us": 3377.2715367376804,
+        "time_per_track_us": 3.298116735095391,
+        "throughput_hz": 303203.33703139133
+      }
+    },
+    "time_per_track_us": 3.298116735095391,
+    "throughput_hz": 303203.33703139133,
+    "device": "cpu",
+    "pos_mean": 0.07252053916454315,
+    "pos_std": 0.043176982551813126,
+    "pos_median": 0.06543528288602829,
+    "pos_68": 0.08475278317928314,
+    "pos_90": 0.1259673684835434,
+    "pos_95": 0.14899438619613647,
+    "slope_mean_mrad": 3.83742356300354,
+    "slope_median_mrad": 3.082028865814209
+  },
+  "mlp_wide_shallow_v1": {
+    "model_type": "mlp",
+    "parameters": 35204,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 127.17130128294228,
+        "time_per_track_us": 127.17130128294228,
+        "throughput_hz": 7863.409353460251
+      },
+      "32": {
+        "batch_time_us": 2428.1756998971105,
+        "time_per_track_us": 75.8804906217847,
+        "throughput_hz": 13178.618005837032
+      },
+      "256": {
+        "batch_time_us": 4039.3496770411734,
+        "time_per_track_us": 15.778709675942084,
+        "throughput_hz": 63376.53842029349
+      },
+      "1024": {
+        "batch_time_us": 5678.44791803509,
+        "time_per_track_us": 5.5453592949561425,
+        "throughput_hz": 180330.9662747306
+      }
+    },
+    "time_per_track_us": 5.5453592949561425,
+    "throughput_hz": 180330.9662747306,
+    "device": "cpu",
+    "pos_mean": 0.03348051756620407,
+    "pos_std": 0.02735297568142414,
+    "pos_median": 0.027162503451108932,
+    "pos_68": 0.03664351627230644,
+    "pos_90": 0.06234520301222801,
+    "pos_95": 0.08099328726530075,
+    "slope_mean_mrad": 2.1636435985565186,
+    "slope_median_mrad": 1.7712302207946777
+  },
+  "mlp_wide_v1": {
+    "model_type": "mlp",
+    "parameters": 135940,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 143.6241576448083,
+        "time_per_track_us": 143.6241576448083,
+        "throughput_hz": 6962.616988661919
+      },
+      "32": {
+        "batch_time_us": 415.02103209495544,
+        "time_per_track_us": 12.969407252967358,
+        "throughput_hz": 77104.52609707382
+      },
+      "256": {
+        "batch_time_us": 884.9707478657365,
+        "time_per_track_us": 3.456916983850533,
+        "throughput_hz": 289275.098207923
+      },
+      "1024": {
+        "batch_time_us": 1476.312899030745,
+        "time_per_track_us": 1.441711815459712,
+        "throughput_hz": 693619.8963460216
+      }
+    },
+    "time_per_track_us": 1.441711815459712,
+    "throughput_hz": 693619.8963460216,
+    "device": "cpu",
+    "pos_mean": 0.054791368544101715,
+    "pos_std": 0.038939740508794785,
+    "pos_median": 0.04646299034357071,
+    "pos_68": 0.062432944774627686,
+    "pos_90": 0.10020868480205536,
+    "pos_95": 0.1227407455444336,
+    "slope_mean_mrad": 3.0731656551361084,
+    "slope_median_mrad": 2.6276345252990723
+  },
+  "mlp_xlarge_v1": {
+    "model_type": "mlp",
+    "parameters": 430980,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 233.82398299872875,
+        "time_per_track_us": 233.82398299872875,
+        "throughput_hz": 4276.721263470381
+      },
+      "32": {
+        "batch_time_us": 694.5711839944124,
+        "time_per_track_us": 21.705349499825388,
+        "throughput_hz": 46071.59170636919
+      },
+      "256": {
+        "batch_time_us": 1648.656944744289,
+        "time_per_track_us": 6.440066190407379,
+        "throughput_hz": 155277.90715715347
+      },
+      "1024": {
+        "batch_time_us": 3357.769213616848,
+        "time_per_track_us": 3.279071497672703,
+        "throughput_hz": 304964.3780898778
+      }
+    },
+    "time_per_track_us": 3.279071497672703,
+    "throughput_hz": 304964.3780898778,
+    "device": "cpu",
+    "pos_mean": 0.027311472222208977,
+    "pos_std": 0.019574850797653198,
+    "pos_median": 0.023277655243873596,
+    "pos_68": 0.03078395128250122,
+    "pos_90": 0.04955432564020157,
+    "pos_95": 0.06175394728779793,
+    "slope_mean_mrad": 4.544393539428711,
+    "slope_median_mrad": 3.8911333084106445
+  },
+  "rkpinn_balanced_v1": {
+    "model_type": "rk_pinn",
+    "parameters": 114068,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 388.7529019266367,
+        "time_per_track_us": 388.7529019266367,
+        "throughput_hz": 2572.3280650615297
+      },
+      "32": {
+        "batch_time_us": 776.8469443544745,
+        "time_per_track_us": 24.27646701107733,
+        "throughput_hz": 41192.15533066244
+      },
+      "256": {
+        "batch_time_us": 1783.5622653365135,
+        "time_per_track_us": 6.967040098970756,
+        "throughput_hz": 143532.97609808942
+      },
+      "1024": {
+        "batch_time_us": 2829.826776869595,
+        "time_per_track_us": 2.763502711786714,
+        "throughput_hz": 361859.60510726634
+      }
+    },
+    "time_per_track_us": 2.763502711786714,
+    "throughput_hz": 361859.60510726634,
+    "device": "cpu",
+    "pos_mean": 0.06172594055533409,
+    "pos_std": 0.05303538590669632,
+    "pos_median": 0.05125869810581207,
+    "pos_68": 0.06772264838218689,
+    "pos_90": 0.10928809642791748,
+    "pos_95": 0.1417926847934723,
+    "slope_mean_mrad": 4.007318496704102,
+    "slope_median_mrad": 3.4098267555236816
+  },
+  "rkpinn_deep_v1": {
+    "model_type": "rk_pinn",
+    "parameters": 84500,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 433.2383070141077,
+        "time_per_track_us": 433.2383070141077,
+        "throughput_hz": 2308.1984760120404
+      },
+      "32": {
+        "batch_time_us": 7832.982195541263,
+        "time_per_track_us": 244.78069361066446,
+        "throughput_hz": 4085.2895105794105
+      },
+      "256": {
+        "batch_time_us": 2458.0876994878054,
+        "time_per_track_us": 9.60190507612424,
+        "throughput_hz": 104145.99936907989
+      },
+      "1024": {
+        "batch_time_us": 11411.200668662786,
+        "time_per_track_us": 11.143750652991002,
+        "throughput_hz": 89736.39406868802
+      }
+    },
+    "time_per_track_us": 11.143750652991002,
+    "throughput_hz": 89736.39406868802,
+    "device": "cpu",
+    "pos_mean": 0.15033099055290222,
+    "pos_std": 0.12068502604961395,
+    "pos_median": 0.12198811024427414,
+    "pos_68": 0.16643774509429932,
+    "pos_90": 0.28270068764686584,
+    "pos_95": 0.3585183024406433,
+    "slope_mean_mrad": 11.243823051452637,
+    "slope_median_mrad": 9.677634239196777
+  },
+  "rkpinn_large_v1": {
+    "model_type": "rk_pinn",
+    "parameters": 201236,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 401.28012653440237,
+        "time_per_track_us": 401.28012653440237,
+        "throughput_hz": 2492.0247325387254
+      },
+      "32": {
+        "batch_time_us": 5973.298228345811,
+        "time_per_track_us": 186.6655696358066,
+        "throughput_hz": 5357.174340994151
+      },
+      "256": {
+        "batch_time_us": 10773.66715297103,
+        "time_per_track_us": 42.08463731629308,
+        "throughput_hz": 23761.63996577558
+      },
+      "1024": {
+        "batch_time_us": 4228.28137408942,
+        "time_per_track_us": 4.129181029384199,
+        "throughput_hz": 242178.7741646033
+      }
+    },
+    "time_per_track_us": 4.129181029384199,
+    "throughput_hz": 242178.7741646033,
+    "device": "cpu",
+    "pos_mean": 0.03925607353448868,
+    "pos_std": 0.03184564411640167,
+    "pos_median": 0.030356112867593765,
+    "pos_68": 0.04546534642577171,
+    "pos_90": 0.0798213854432106,
+    "pos_95": 0.10070948302745819,
+    "slope_mean_mrad": 1.0572328567504883,
+    "slope_median_mrad": 0.8454617857933044
+  },
+  "rkpinn_medium_v1": {
+    "model_type": "rk_pinn",
+    "parameters": 51476,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 375.4609730094671,
+        "time_per_track_us": 375.4609730094671,
+        "throughput_hz": 2663.3926609857936
+      },
+      "32": {
+        "batch_time_us": 699.6421376243234,
+        "time_per_track_us": 21.863816800760105,
+        "throughput_hz": 45737.66827232263
+      },
+      "256": {
+        "batch_time_us": 4484.369624406099,
+        "time_per_track_us": 17.517068845336325,
+        "throughput_hz": 57087.17644654551
+      },
+      "1024": {
+        "batch_time_us": 4819.796266965568,
+        "time_per_track_us": 4.706832291958563,
+        "throughput_hz": 212457.11297350886
+      }
+    },
+    "time_per_track_us": 4.706832291958563,
+    "throughput_hz": 212457.11297350886,
+    "device": "cpu",
+    "pos_mean": 0.05955631658434868,
+    "pos_std": 0.034403808414936066,
+    "pos_median": 0.05413784831762314,
+    "pos_68": 0.0698864683508873,
+    "pos_90": 0.10473181307315826,
+    "pos_95": 0.12247801572084427,
+    "slope_mean_mrad": 1.197003960609436,
+    "slope_median_mrad": 0.9559570550918579
+  },
+  "rkpinn_narrow_deep_v1": {
+    "model_type": "rk_pinn",
+    "parameters": 21780,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 419.48222555220127,
+        "time_per_track_us": 419.48222555220127,
+        "throughput_hz": 2383.891233254549
+      },
+      "32": {
+        "batch_time_us": 6789.836245588958,
+        "time_per_track_us": 212.18238267465495,
+        "throughput_hz": 4712.926621873821
+      },
+      "256": {
+        "batch_time_us": 1346.1150135844946,
+        "time_per_track_us": 5.258261771814432,
+        "throughput_hz": 190176.91461468206
+      },
+      "1024": {
+        "batch_time_us": 2523.1334567070007,
+        "time_per_track_us": 2.4639975163154304,
+        "throughput_hz": 405844.56493095926
+      }
+    },
+    "time_per_track_us": 2.4639975163154304,
+    "throughput_hz": 405844.56493095926,
+    "device": "cpu",
+    "pos_mean": 0.24524572491645813,
+    "pos_std": 0.1652957797050476,
+    "pos_median": 0.2203979194164276,
+    "pos_68": 0.28774625062942505,
+    "pos_90": 0.4233871102333069,
+    "pos_95": 0.5379963517189026,
+    "slope_mean_mrad": 40.8024787902832,
+    "slope_median_mrad": 37.09339904785156
+  },
+  "rkpinn_small_v1": {
+    "model_type": "rk_pinn",
+    "parameters": 34964,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 352.1095449104905,
+        "time_per_track_us": 352.1095449104905,
+        "throughput_hz": 2840.0252547945247
+      },
+      "32": {
+        "batch_time_us": 5279.355528764427,
+        "time_per_track_us": 164.97986027388833,
+        "throughput_hz": 6061.3459020990085
+      },
+      "256": {
+        "batch_time_us": 1163.3279733359814,
+        "time_per_track_us": 4.544249895843677,
+        "throughput_hz": 220058.32049743424
+      },
+      "1024": {
+        "batch_time_us": 1971.1616402491925,
+        "time_per_track_us": 1.924962539305852,
+        "throughput_hz": 519490.6288205501
+      }
+    },
+    "time_per_track_us": 1.924962539305852,
+    "throughput_hz": 519490.6288205501,
+    "device": "cpu",
+    "pos_mean": 0.03634042665362358,
+    "pos_std": 0.026562631130218506,
+    "pos_median": 0.030802056193351746,
+    "pos_68": 0.04034331440925598,
+    "pos_90": 0.0660402700304985,
+    "pos_95": 0.08389423042535782,
+    "slope_mean_mrad": 0.352352112531662,
+    "slope_median_mrad": 0.26534944772720337
+  },
+  "rkpinn_tiny_v1": {
+    "model_type": "rk_pinn",
+    "parameters": 9300,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 340.591911226511,
+        "time_per_track_us": 340.591911226511,
+        "throughput_hz": 2936.0650298443197
+      },
+      "32": {
+        "batch_time_us": 3117.645806632936,
+        "time_per_track_us": 97.42643145727925,
+        "throughput_hz": 10264.155065953457
+      },
+      "256": {
+        "batch_time_us": 873.9930484443903,
+        "time_per_track_us": 3.4140353454858996,
+        "throughput_hz": 292908.5082034134
+      },
+      "1024": {
+        "batch_time_us": 3156.6508673131466,
+        "time_per_track_us": 3.0826668626104947,
+        "throughput_hz": 324394.4430483059
+      }
+    },
+    "time_per_track_us": 3.0826668626104947,
+    "throughput_hz": 324394.4430483059,
+    "device": "cpu",
+    "pos_mean": 0.06043223664164543,
+    "pos_std": 0.04517129063606262,
+    "pos_median": 0.05015075206756592,
+    "pos_68": 0.06709527969360352,
+    "pos_90": 0.11310410499572754,
+    "pos_95": 0.14234107732772827,
+    "slope_mean_mrad": 0.3653932213783264,
+    "slope_median_mrad": 0.27688270807266235
+  },
+  "rkpinn_wide_shallow_v1": {
+    "model_type": "rk_pinn",
+    "parameters": 135444,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 365.0948125869036,
+        "time_per_track_us": 365.0948125869036,
+        "throughput_hz": 2739.0145395779073
+      },
+      "32": {
+        "batch_time_us": 2844.627909362316,
+        "time_per_track_us": 88.89462216757238,
+        "throughput_hz": 11249.274428715522
+      },
+      "256": {
+        "batch_time_us": 8692.525369115174,
+        "time_per_track_us": 33.95517722310615,
+        "throughput_hz": 29450.589918273505
+      },
+      "1024": {
+        "batch_time_us": 2514.296490699053,
+        "time_per_track_us": 2.4553676666982938,
+        "throughput_hz": 407270.98167937074
+      }
+    },
+    "time_per_track_us": 2.4553676666982938,
+    "throughput_hz": 407270.98167937074,
+    "device": "cpu",
+    "pos_mean": 0.026802925392985344,
+    "pos_std": 0.02016894333064556,
+    "pos_median": 0.02193664014339447,
+    "pos_68": 0.030006345361471176,
+    "pos_90": 0.050472963601350784,
+    "pos_95": 0.06366538256406784,
+    "slope_mean_mrad": 0.7947866916656494,
+    "slope_median_mrad": 0.6316210031509399
+  },
+  "rkpinn_wide_v1": {
+    "model_type": "rk_pinn",
+    "parameters": 533012,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 419.84129697084427,
+        "time_per_track_us": 419.84129697084427,
+        "throughput_hz": 2381.8523980728
+      },
+      "32": {
+        "batch_time_us": 954.6687779948115,
+        "time_per_track_us": 29.83339931233786,
+        "throughput_hz": 33519.47894139041
+      },
+      "256": {
+        "batch_time_us": 2221.5042263269424,
+        "time_per_track_us": 8.677750884089619,
+        "throughput_hz": 115237.2329371045
+      },
+      "1024": {
+        "batch_time_us": 4053.350198082626,
+        "time_per_track_us": 3.9583498028150643,
+        "throughput_hz": 252630.52782470838
+      }
+    },
+    "time_per_track_us": 3.9583498028150643,
+    "throughput_hz": 252630.52782470838,
+    "device": "cpu",
+    "pos_mean": 0.018013061955571175,
+    "pos_std": 0.013617810793220997,
+    "pos_median": 0.015094785019755363,
+    "pos_68": 0.020084725692868233,
+    "pos_90": 0.03276761621236801,
+    "pos_95": 0.04161570593714714,
+    "slope_mean_mrad": 1.7107799053192139,
+    "slope_median_mrad": 1.4327539205551147
+  },
+  "rkpinn_xlarge_v1": {
+    "model_type": "rk_pinn",
+    "parameters": 531220,
+    "batch_timings": {
+      "1": {
+        "batch_time_us": 475.02866946160793,
+        "time_per_track_us": 475.02866946160793,
+        "throughput_hz": 2105.136098697766
+      },
+      "32": {
+        "batch_time_us": 1124.628852121532,
+        "time_per_track_us": 35.144651628797874,
+        "throughput_hz": 28453.831625993134
+      },
+      "256": {
+        "batch_time_us": 4032.714306376874,
+        "time_per_track_us": 15.752790259284664,
+        "throughput_hz": 63480.81727366375
+      },
+      "1024": {
+        "batch_time_us": 5644.963472150266,
+        "time_per_track_us": 5.512659640771744,
+        "throughput_hz": 181400.64236942536
+      }
+    },
+    "time_per_track_us": 5.512659640771744,
+    "throughput_hz": 181400.64236942536,
+    "device": "cpu",
+    "pos_mean": 0.08383414149284363,
+    "pos_std": 0.06580455601215363,
+    "pos_median": 0.06910313665866852,
+    "pos_68": 0.09383177012205124,
+    "pos_90": 0.15541714429855347,
+    "pos_95": 0.1962062418460846,
+    "slope_mean_mrad": 17.72089385986328,
+    "slope_median_mrad": 14.512048721313477
+  }
+}

@@ -1,0 +1,8 @@
+Extrapolator,Mean Time (μs),P95 Time (μs),Throughput (tr/s),Mean Error (mm),P95 Error (mm),Success Rate
+Kisel,1.5,2.0,666667,39.8245,100.0,1.0
+Herab,1.95,2.5,512821,0.7596,1.85,1.0
+BogackiShampine3,2.4,3.15,416667,0.1014,0.25,1.0
+Reference,2.5,3.2,400000,0.0,0.0,1.0
+Verner9,2.52,3.25,396825,0.1034,0.26,1.0
+Verner7,2.65,3.35,377358,0.2372,0.35,1.0
+Tsitouras5,2.75,3.5,363636,0.2868,0.5,1.0

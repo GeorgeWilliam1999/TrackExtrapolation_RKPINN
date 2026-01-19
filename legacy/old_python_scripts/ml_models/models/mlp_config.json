@@ -1,0 +1,63 @@
+{
+    "model_name": "mlp_baseline_v2",
+    "model_type": "MLP",
+    "description": "Data-driven Multi-Layer Perceptron trained on C++ RK4 output (NOT a true PINN)",
+    "date": "2025-12-20",
+    
+    "architecture": {
+        "type": "MLP",
+        "input_dim": 6,
+        "hidden_dims": [128, 128, 64],
+        "output_dim": 4,
+        "activation": "tanh",
+        "total_parameters": 26180
+    },
+    
+    "training": {
+        "method": "supervised",
+        "loss_function": "MSE (data only, no physics)",
+        "epochs": 2000,
+        "batch_size": 64,
+        "learning_rate": 0.001,
+        "optimizer": "adam",
+        "scheduler": "reduce_on_plateau",
+        "train_samples": 968,
+        "val_samples": 242,
+        "total_samples": 1210
+    },
+    
+    "data": {
+        "source": "C++ Reference (TrackRungeKuttaExtrapolator)",
+        "x_range_mm": [-900, 900],
+        "y_range_mm": [-750, 750],
+        "tx_range": [-0.3, 0.3],
+        "ty_range": [-0.25, 0.25],
+        "qop_values_inv_mev": [-0.0004, 0.0004],
+        "momentum_gev": 2.5,
+        "z_start_mm": 3000,
+        "z_end_mm": 7000,
+        "dz_mm": 4000
+    },
+    
+    "results": {
+        "mean_radial_error_mm": 6.97,
+        "std_radial_error_mm": 8.86,
+        "p95_radial_error_mm": 23.64,
+        "max_radial_error_mm": 83.35
+    },
+    
+    "timing": {
+        "cpp_rk4_us_per_track": 189.0,
+        "mlp_pytorch_us_per_track": 1.22,
+        "speedup_factor": 155
+    },
+    
+    "model_file": "mlp_model_cpp_v2.bin",
+    
+    "notes": [
+        "This is a DATA-DRIVEN model, NOT a true Physics-Informed Neural Network",
+        "Training used only MSE loss on RK4 output data",
+        "No physics equations were enforced during training",
+        "The network learned to mimic RK4 without explicit physics knowledge"
+    ]
+}

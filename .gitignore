@@ -1,0 +1,47 @@
+# Large data files (>150MB)
+experiments/next_generation/data_generation/data_old_wrong_clight/
+experiments/next_generation/data_generation/data/
+*.npz
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+*.egg
+.ipynb_checkpoints/
+
+# LaTeX auxiliary files
+*.aux
+*.log
+*.toc
+*.out
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model checkpoints (can be large)
+*.pt
+*.pth
+*.ckpt
+
+# HTCondor
+*.condor.log
+*.condor.out
+*.condor.err
+condor_logs/

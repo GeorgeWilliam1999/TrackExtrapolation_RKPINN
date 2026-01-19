@@ -1,0 +1,91 @@
+#!/usr/bin/env condor_submit
+#
+# HTCondor submission script for training data generation using Python RK4
+#
+# This job array generates high-precision track extrapolation training data
+# using pure Python RK4 integrator with the fitted Gaussian field model.
+#
+# Usage:
+#   condor_submit submit_python_rk4.sub
+#
+# Monitor:
+#   condor_q
+#   condor_q -better-analyze <job_id>
+#
+# After completion:
+#   python merge_batches.py --input "data/batch_*.npz" --output full_dataset_50M.npz
+#
+# Author: G. Scriven
+# Date: 2026-01-19
+# ============================================================================
+
+# Executable and arguments
+# Using fitted field parameters: B0=-1.02T, z_center=5007mm, z_width=1744mm
+# Polarity=-1 matches real field map (field points down)
+executable              = /data/bfys/gscriven/conda/envs/TE/bin/python
+arguments               = generate_data.py --n-tracks 10000 --name batch_$(Process).npz --output-dir data --step-size 5.0 --polarity -1 --seed $(Process) --workers 1
+
+# Environment
+environment             = "PATH=/data/bfys/gscriven/conda/envs/TE/bin:$ENV(PATH)"
+getenv                  = True
+
+# Job requirements
+request_cpus            = 1
+request_memory          = 1GB
+request_disk            = 100MB
++UseOS                  = "el9"
++JobCategory            = "short"
+
+# File transfer - disabled because we're using NFS
+should_transfer_files   = NO
+
+# Working directory and logs
+initialdir              = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/data_generation
+output                  = logs/python_$(Process).out
+error                   = logs/python_$(Process).err
+log                     = logs/python_$(Cluster).log
+
+# ============================================================================
+# PRODUCTION RUN: 5000 jobs × 10k tracks = 50M tracks
+# Using Python RK4 with fitted Gaussian field (fast, ~5000 tracks/sec)
+# Estimated time: 15-30 min total (parallel execution)
+# Output size: ~10 GB uncompressed, ~2 GB compressed
+# ============================================================================
+queue 5000
+
+# ============================================================================
+# NOTES:
+# ------
+# 1. Uses pure Python RK4 integrator with Gaussian field model
+#    - Field parameters fitted from real twodip.rtf field map
+#    - B0 = -1.0182 T, z_center = 5007 mm, z_width = 1744 mm
+#    - Polarity = -1 (field points down, matches real field)
+#
+# 2. For ENDPOINT-ONLY data (default):
+#    - Fast generation (~5000 tracks/sec per worker)
+#    - Compact storage: ~4 bytes × 10 floats per track
+#    - Use for MLP/PINN training
+#
+# 3. For FULL TRAJECTORIES (add --save-trajectories):
+#    - Slower due to storage overhead
+#    - ~1600 steps × 6 floats per track (for 8km @ 5mm step)
+#    - Use for visualization and physics validation
+#
+# 4. Step size options:
+#    - 5.0 mm: Fast generation, good for training (default)
+#    - 1.0 mm: High precision, ~5× slower
+#    - 10.0 mm: Very fast, slightly less accurate
+#
+# 5. To merge all batches after completion:
+#    python merge_batches.py --input "data/batch_*.npz" --output full_dataset_50M.npz --verify
+#
+# 6. Dataset structure (per batch):
+#    - X: (10000, 6) = [x, y, tx, ty, qop, dz] input states
+#    - Y: (10000, 4) = [x, y, tx, ty] final states  
+#    - P: (10000,) = momentum in GeV
+#    - T: (10000,) object array of trajectories (if --save-trajectories)
+#
+# 7. Scaling:
+#    - For 10M tracks: queue 1000
+#    - For 100M tracks: queue 10000
+# ============================================================================

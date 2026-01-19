@@ -1,0 +1,52 @@
+#!/usr/bin/env condor_submit
+#
+# HTCondor submit file for training analysis models
+# 
+# Trains all models needed for the analysis notebook:
+# - Architecture comparison (tiny, small, medium, large, xlarge)
+# - PINN variants with different physics weights
+# - Activation function variants
+#
+# Usage:
+#   condor_submit train_analysis.sub
+#
+
+universe                = vanilla
+executable              = /bin/bash
+arguments               = train_analysis_job.sh $(JobType) $(Params)
+
+# GPU requirements - match working jobs
+request_gpus            = 1
+request_cpus            = 4
+request_memory          = 16GB
+request_disk            = 5GB
+
+# Match the OS on GPU nodes (Debian12)
+requirements            = (GPUs >= 1)
++JobCategory            = "short"
++UseOS                  = "el9"
+
+getenv                  = True
+environment             = "CONDA_PREFIX=/data/bfys/gscriven/conda/envs/TE"
+
+initialdir              = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/ml_models/condor
+output                  = logs/analysis_$(JobType)_$(ClusterId).$(ProcId).out
+error                   = logs/analysis_$(JobType)_$(ClusterId).$(ProcId).err
+log                     = logs/analysis_$(ClusterId).log
+
+# Queue all analysis jobs
+# Format: JobType, Parameters
+queue JobType,Params from (
+    arch,tiny:32-32
+    arch,small:64-64-32
+    arch,medium:128-128-64
+    arch,large:256-256-128-64
+    arch,xlarge:512-512-256-128
+    pinn,0.01:128-128-64
+    pinn,0.05:128-128-64
+    pinn,0.1:128-128-64
+    pinn,0.2:128-128-64
+    activation,tanh:128-128-64
+    activation,relu:128-128-64
+    activation,silu:128-128-64
+)
