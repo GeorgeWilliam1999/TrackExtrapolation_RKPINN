@@ -60,52 +60,52 @@ notify_user = gscriven@nikhef.nl
 
 # MLP 1: Tiny - fastest inference
 # Architecture: 64-32 (~2,700 params)
-arguments = mlp tiny mlp_tiny_v1 --epochs 100 --batch_size 8192
+arguments = mlp tiny mlp_tiny_v1 --epochs 10 --batch_size 8192
 queue 1
 
 # MLP 2: Small baseline
 # Architecture: 128-64 (~9,800 params)
-arguments = mlp small mlp_small_v1 --epochs 100 --batch_size 8192
+arguments = mlp small mlp_small_v1 --epochs 10 --batch_size 8192
 queue 1
 
 # MLP 3: Medium
 # Architecture: 128-128-64 (~26,000 params)
-arguments = mlp medium mlp_medium_v1 --epochs 100 --batch_size 8192
+arguments = mlp medium mlp_medium_v1 --epochs 10 --batch_size 8192
 queue 1
 
 # MLP 4: Large - more capacity
 # Architecture: 256-256-128 (~140,000 params)
-arguments = mlp large mlp_large_v1 --epochs 100 --batch_size 8192
+arguments = mlp large mlp_large_v1 --epochs 10 --batch_size 8192
 queue 1
 
 # MLP 5: XLarge - maximum capacity
 # Architecture: 512-512-256-128 (~400,000 params)
-arguments = mlp xlarge mlp_xlarge_v1 --epochs 100 --batch_size 8192
+arguments = mlp xlarge mlp_xlarge_v1 --epochs 10 --batch_size 8192
 queue 1
 
 # MLP 6: Wide - test width vs depth
 # Architecture: 512-256 (~140,000 params)
-arguments = mlp wide mlp_wide_v1 --epochs 100 --batch_size 8192
+arguments = mlp wide mlp_wide_v1 --epochs 10 --batch_size 8192
 queue 1
 
 # MLP 7: Deep - test depth
 # Architecture: 128-128-128-128-64 (~50,000 params)
-arguments = mlp deep mlp_deep_v1 --epochs 100 --batch_size 8192
+arguments = mlp deep mlp_deep_v1 --epochs 10 --batch_size 8192
 queue 1
 
 # MLP 8: Custom narrow deep
 # Architecture: 64-64-64-64-32 (~15,000 params)
-arguments = mlp medium mlp_narrow_deep_v1 --epochs 100 --batch_size 8192 --hidden_dims 64 64 64 64 32
+arguments = mlp medium mlp_narrow_deep_v1 --epochs 10 --batch_size 8192 --hidden_dims 64 64 64 64 32
 queue 1
 
 # MLP 9: Custom wide shallow
 # Architecture: 256-128 (~35,000 params)
-arguments = mlp medium mlp_wide_shallow_v1 --epochs 100 --batch_size 8192 --hidden_dims 256 128
+arguments = mlp medium mlp_wide_shallow_v1 --epochs 10 --batch_size 8192 --hidden_dims 256 128
 queue 1
 
 # MLP 10: Custom balanced
 # Architecture: 192-192-96 (~60,000 params)
-arguments = mlp medium mlp_balanced_v1 --epochs 100 --batch_size 8192 --hidden_dims 192 192 96
+arguments = mlp medium mlp_balanced_v1 --epochs 10 --batch_size 8192 --hidden_dims 192 192 96
 queue 1
 
 #===============================================================================
@@ -120,43 +120,43 @@ queue 1
 #===============================================================================
 
 # PINN 1: Weak physics (baseline comparison)
-arguments = pinn medium pinn_weak_v1 --epochs 100 --batch_size 8192 --lambda_pde 1e-5
+arguments = pinn medium pinn_weak_v1 --epochs 10 --batch_size 8192 --lambda_pde 1e-5
 queue 1
 
 # PINN 2: Light physics constraint
-arguments = pinn medium pinn_light_v1 --epochs 100 --batch_size 8192 --lambda_pde 1e-4
+arguments = pinn medium pinn_light_v1 --epochs 10 --batch_size 8192 --lambda_pde 1e-4
 queue 1
 
 # PINN 3: Moderate physics
-arguments = pinn medium pinn_moderate_v1 --epochs 100 --batch_size 8192 --lambda_pde 1e-3
+arguments = pinn medium pinn_moderate_v1 --epochs 10 --batch_size 8192 --lambda_pde 1e-3
 queue 1
 
 # PINN 4: Standard physics weight
-arguments = pinn medium pinn_standard_v1 --epochs 100 --batch_size 8192 --lambda_pde 1e-2
+arguments = pinn medium pinn_standard_v1 --epochs 10 --batch_size 8192 --lambda_pde 1e-2
 queue 1
 
 # PINN 5: Strong physics
-arguments = pinn medium pinn_strong_v1 --epochs 100 --batch_size 8192 --lambda_pde 0.1
+arguments = pinn medium pinn_strong_v1 --epochs 10 --batch_size 8192 --lambda_pde 0.1
 queue 1
 
 # PINN 6: Large with moderate physics
-arguments = pinn large pinn_large_v1 --epochs 100 --batch_size 8192 --lambda_pde 1e-3
+arguments = pinn large pinn_large_v1 --epochs 10 --batch_size 8192 --lambda_pde 1e-3
 queue 1
 
 # PINN 7: Large with standard physics
-arguments = pinn large pinn_large_std_v1 --epochs 100 --batch_size 8192 --lambda_pde 1e-2
+arguments = pinn large pinn_large_std_v1 --epochs 10 --batch_size 8192 --lambda_pde 1e-2
 queue 1
 
 # PINN 8: XLarge with physics
-arguments = pinn xlarge pinn_xlarge_v1 --epochs 100 --batch_size 8192 --lambda_pde 1e-3
+arguments = pinn xlarge pinn_xlarge_v1 --epochs 10 --batch_size 8192 --lambda_pde 1e-3
 queue 1
 
 # PINN 9: Wide with physics
-arguments = pinn wide pinn_wide_v1 --epochs 100 --batch_size 8192 --lambda_pde 1e-3
+arguments = pinn wide pinn_wide_v1 --epochs 10 --batch_size 8192 --lambda_pde 1e-3
 queue 1
 
 # PINN 10: Deep with physics
-arguments = pinn deep pinn_deep_v1 --epochs 100 --batch_size 8192 --lambda_pde 1e-3
+arguments = pinn deep pinn_deep_v1 --epochs 10 --batch_size 8192 --lambda_pde 1e-3
 queue 1
 
 #===============================================================================
@@ -168,51 +168,51 @@ queue 1
 #===============================================================================
 
 # RK-PINN 1: Few collocation points
-arguments = rk_pinn medium rkpinn_coll5_v1 --epochs 100 --batch_size 8192 --n_collocation 5 --lambda_pde 1e-3
+arguments = rk_pinn medium rkpinn_coll5_v1 --epochs 10 --batch_size 8192 --n_collocation 5 --lambda_pde 1e-3
 queue 1
 
 # RK-PINN 2: Standard collocation
-arguments = rk_pinn medium rkpinn_coll10_v1 --epochs 100 --batch_size 8192 --n_collocation 10 --lambda_pde 1e-3
+arguments = rk_pinn medium rkpinn_coll10_v1 --epochs 10 --batch_size 8192 --n_collocation 10 --lambda_pde 1e-3
 queue 1
 
 # RK-PINN 3: Many collocation points
-arguments = rk_pinn medium rkpinn_coll20_v1 --epochs 100 --batch_size 8192 --n_collocation 20 --lambda_pde 1e-3
+arguments = rk_pinn medium rkpinn_coll20_v1 --epochs 10 --batch_size 8192 --n_collocation 20 --lambda_pde 1e-3
 queue 1
 
 # RK-PINN 4: Strong physics with collocation
-arguments = rk_pinn medium rkpinn_strong_v1 --epochs 100 --batch_size 8192 --n_collocation 10 --lambda_pde 1e-2
+arguments = rk_pinn medium rkpinn_strong_v1 --epochs 10 --batch_size 8192 --n_collocation 10 --lambda_pde 1e-2
 queue 1
 
 # RK-PINN 5: Large with collocation
-arguments = rk_pinn large rkpinn_large_v1 --epochs 100 --batch_size 8192 --n_collocation 10 --lambda_pde 1e-3
+arguments = rk_pinn large rkpinn_large_v1 --epochs 10 --batch_size 8192 --n_collocation 10 --lambda_pde 1e-3
 queue 1
 
 # RK-PINN 6: Large with many points
-arguments = rk_pinn large rkpinn_large_coll20_v1 --epochs 100 --batch_size 8192 --n_collocation 20 --lambda_pde 1e-3
+arguments = rk_pinn large rkpinn_large_coll20_v1 --epochs 10 --batch_size 8192 --n_collocation 20 --lambda_pde 1e-3
 queue 1
 
 # RK-PINN 7: XLarge
-arguments = rk_pinn xlarge rkpinn_xlarge_v1 --epochs 100 --batch_size 8192 --n_collocation 10 --lambda_pde 1e-3
+arguments = rk_pinn xlarge rkpinn_xlarge_v1 --epochs 10 --batch_size 8192 --n_collocation 10 --lambda_pde 1e-3
 queue 1
 
 # RK-PINN 8: Wide
-arguments = rk_pinn wide rkpinn_wide_v1 --epochs 100 --batch_size 8192 --n_collocation 10 --lambda_pde 1e-3
+arguments = rk_pinn wide rkpinn_wide_v1 --epochs 10 --batch_size 8192 --n_collocation 10 --lambda_pde 1e-3
 queue 1
 
 # RK-PINN 9: Deep
-arguments = rk_pinn deep rkpinn_deep_v1 --epochs 100 --batch_size 8192 --n_collocation 10 --lambda_pde 1e-3
+arguments = rk_pinn deep rkpinn_deep_v1 --epochs 10 --batch_size 8192 --n_collocation 10 --lambda_pde 1e-3
 queue 1
 
 # RK-PINN 10: Custom balanced
-arguments = rk_pinn medium rkpinn_balanced_v1 --epochs 100 --batch_size 8192 --n_collocation 15 --lambda_pde 5e-3 --hidden_dims 192 192 96
+arguments = rk_pinn medium rkpinn_balanced_v1 --epochs 10 --batch_size 8192 --n_collocation 15 --lambda_pde 5e-3 --hidden_dims 192 192 96
 queue 1
 
 #===============================================================================
 # TOTAL: 30 GPU JOBS
 #
-# Expected runtime per job: 5-15 minutes (GPU accelerated)
-# Total GPU hours: ~7.5 hours (can run in parallel if GPUs available)
+# Expected runtime per job: ~1-2 minutes (GPU accelerated, 10 epochs)
+# Total GPU hours: ~1 hour (can run in parallel if GPUs available)
 #
 # After completion, analyze results with:
-#   cd ../models && python evaluate_all_models.py
+#   cd ../models && python evaluate.py --compare checkpoints/*
 #===============================================================================

@@ -409,7 +409,7 @@ Features:
 ```bash
 # 1. Generate training data (see ../data_generation/)
 cd ../data_generation
-python generate_tracks_htcondor.py --n-tracks 50000000
+python generate_data.py --n-tracks 50000000 --n-workers 32 --output data/training_50M.npz
 
 # 2. Train models
 cd ../models

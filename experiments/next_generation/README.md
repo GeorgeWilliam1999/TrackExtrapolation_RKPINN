@@ -2,7 +2,7 @@
 
 **Project Goal:** Systematically train and compare neural network architectures for LHCb track extrapolation, storing all training metrics for comprehensive analysis.
 
-**Status:** Data generation in progress (50M tracks via HTCondor)
+**Status:** ✅ Training in progress (30 HTCondor GPU jobs, cluster 3880818, 10 epochs each)
 
 ---
 
@@ -244,15 +244,17 @@ experiment_name: pinn_medium_strong_v1
 
 ## Running Experiments
 
-### Step 1: Generate Training Data (In Progress)
+### Step 1: Generate Training Data (✅ Complete)
+
+Training data has been generated and merged:
+- `data_generation/data/training_50M.npz` - 50M tracks (3.7GB)
+- `data_generation/data/training_low_p.npz` - 10M tracks (p < 5 GeV)
+- `data_generation/data/training_mid_p.npz` - 10M tracks (5 ≤ p < 20 GeV)
+- `data_generation/data/training_high_p.npz` - 10M tracks (p ≥ 20 GeV)
 
 ```bash
-# Currently running: 5000 jobs × 10k tracks = 50M tracks
-cd data_generation
-condor_q gscriven  # Check status
-
-# After completion, merge batches:
-python merge_batches.py --input "data/batch_*.npz" --output data/full_dataset_50M.npz --verify
+# Verify data:
+python -c "import numpy as np; d=np.load('data_generation/data/training_50M.npz'); print(f'Loaded {d[\"X\"].shape[0]:,} tracks')"
 ```
 
 ### Step 2: Run Single Experiment
@@ -273,12 +275,14 @@ python train.py --model rk_pinn --preset medium --lambda_pde 1.0 --epochs 100 --
 ### Step 3: Run Full Experiment Suite
 
 ```bash
-# Run all 12 base experiments
-./scripts/run_all_experiments.sh
+# Run all experiments via unified runner
+python run_all_experiments.py --list        # List available experiments
+python run_all_experiments.py --all         # Submit all to HTCondor
+python run_all_experiments.py --local       # Run locally (interactive)
 
-# Or submit to HTCondor for parallel training
-cd cluster
-condor_submit submit_training_suite.sub
+# Or submit individual jobs
+cd training/jobs
+condor_submit mlp_medium.sub
 ```
 
 ### Step 4: Evaluate and Compare
@@ -287,10 +291,11 @@ condor_submit submit_training_suite.sub
 cd models
 
 # Evaluate single model
-python evaluate.py --model_path checkpoints/mlp_medium_v1/best_model.pt
+python evaluate.py --model_path ../trained_models/mlp_medium/best_model.pt
 
-# Evaluate all models and generate comparison report
-python evaluate_all_models.py --checkpoint_dir checkpoints --output_dir ../analysis/results
+# Run comprehensive analysis
+cd ../analysis
+jupyter notebook experiment_analysis.ipynb
 ```
 
 ---
@@ -360,19 +365,17 @@ checkpoints/<experiment_name>/
 
 ### Convergence Analysis
 
-After training, analyze convergence behavior:
+After training, analyze convergence behavior using the analysis notebook or scripts:
 
 ```bash
 cd analysis
 
-# Plot loss curves for all experiments
-python plot_convergence.py --input ../models/checkpoints --output plots/convergence
+# Main analysis notebook (recommended)
+jupyter notebook experiment_analysis.ipynb
 
-# Compare physics loss components
-python analyze_physics_losses.py --experiments pinn_medium_v1 rkpinn_medium_v1
-
-# Generate convergence report
-python generate_convergence_report.py --output reports/convergence_analysis.html
+# Or use command-line tools:
+python analyze_models.py --checkpoint_dir ../trained_models
+python timing_benchmark.py --models_dir ../trained_models
 ```
 
 #### Key Convergence Questions
@@ -411,21 +414,16 @@ python generate_convergence_report.py --output reports/convergence_analysis.html
 ### Benchmark Protocol
 
 ```bash
-cd benchmarking
+cd analysis
 
-# Run inference benchmarks on all trained models
-python benchmark_inference.py \
-    --checkpoint_dir ../models/checkpoints \
-    --batch_sizes 1 32 256 1024 4096 \
-    --n_warmup 10 \
-    --n_iterations 100 \
-    --output results/inference_benchmark.json
+# Run timing benchmarks on all trained models
+python timing_benchmark.py \
+    --models_dir ../trained_models \
+    --data_path ../data_generation/data/training_50M.npz \
+    --output results/timing_results.json
 
-# Compare with C++ extrapolator baseline
-python compare_with_cpp.py \
-    --model_path ../models/checkpoints/mlp_wide_v1/best_model.pt \
-    --n_tracks 100000 \
-    --output results/cpp_comparison.json
+# Generate paper-quality plots
+python generate_paper_quality_plots.py
 ```
 
 ### Expected Results Table
@@ -455,61 +453,72 @@ After all experiments complete, we generate a summary table:
 ```
 next_generation/
 ├── README.md                    # This file - experiment plan
+├── run_all_experiments.py       # ⭐ Unified experiment runner script
 │
 ├── data_generation/             # Training data generation
 │   ├── README.md               # Field map and data format docs
-│   ├── generate_data.py        # Python RK4 data generator
+│   ├── generate_data.py        # Main data generator
+│   ├── generate_cpp_data.py    # C++ extrapolator data wrapper
 │   ├── merge_batches.py        # Combine HTCondor batch outputs
-│   ├── submit_python_rk4.sub   # HTCondor submission
+│   ├── create_momentum_splits.py # Split by momentum range
 │   └── data/                   # Generated datasets
-│       └── full_dataset_50M.npz
+│       ├── training_50M.npz    # Full dataset (50M tracks)
+│       ├── training_low_p.npz  # Low momentum (0.5-5 GeV, 10M)
+│       ├── training_mid_p.npz  # Mid momentum (5-20 GeV, 10M)
+│       └── training_high_p.npz # High momentum (20-100 GeV, 10M)
 │
 ├── models/                      # Model definitions and training
 │   ├── README.md               # Detailed architecture documentation
 │   ├── architectures.py        # MLP, PINN, RK_PINN classes
-│   ├── train.py                # Training script
-│   ├── evaluate.py             # Single model evaluation
-│   ├── evaluate_all_models.py  # Batch evaluation
+│   ├── train.py                # ⭐ Main training script
+│   ├── evaluate.py             # Model evaluation
 │   ├── export_onnx.py          # ONNX export for C++ deployment
-│   └── checkpoints/            # Trained models (created during training)
-│       ├── mlp_tiny_v1/
-│       │   ├── config.json
-│       │   ├── best_model.pt
-│       │   ├── history.json     # ← All losses stored here
-│       │   └── normalization.json
-│       ├── pinn_medium_v1/
-│       └── ...
+│   ├── run_experiments.py      # Batch experiment runner
+│   └── submit_training.py      # HTCondor job generator
 │
-├── configs/                     # Experiment configurations
-│   ├── mlp_tiny.yaml
-│   ├── mlp_small.yaml
-│   ├── pinn_medium_strong.yaml
-│   └── ...
+├── training/                    # HTCondor training jobs
+│   ├── README.md               # Job documentation
+│   ├── train_wrapper.sh        # Worker node script
+│   ├── jobs/                   # 29 .sub files for all experiments
+│   └── logs/                   # Job output logs
 │
-├── scripts/                     # Automation scripts
-│   ├── run_all_experiments.sh  # Run full experiment suite locally
-│   └── generate_configs.py     # Generate config files programmatically
-│
-├── cluster/                     # HTCondor job submission
-│   ├── submit_training_suite.sub
-│   └── README.md
+├── trained_models/              # Output: trained model checkpoints
+│   └── <experiment_name>/
+│       ├── best_model.pt
+│       ├── config.json
+│       ├── history.json        # ← All losses stored here
+│       └── normalization.json
 │
 ├── analysis/                    # Results analysis and visualization
-│   ├── plot_convergence.py     # Loss curve plotting
-│   ├── analyze_physics_losses.py
-│   ├── compare_architectures.py
-│   ├── generate_report.py
+│   ├── README.md               # Analysis tools documentation
+│   ├── experiment_analysis.ipynb # ⭐ Main analysis notebook
+│   ├── model_analysis.ipynb    # Interactive analysis
+│   ├── analyze_models.py       # Analysis functions
+│   ├── physics_analysis.py     # Physics-specific tests
+│   ├── timing_benchmark.py     # ⭐ Timing benchmark tool
+│   ├── timing_comparison_plots.py # Timing visualizations
+│   ├── generate_paper_quality_plots.py # Publication-ready figures
+│   ├── trajectory_visualizer.py # Track visualization
+│   ├── run_analysis.py         # Batch analysis runner
 │   ├── results/                # Analysis outputs
 │   └── plots/                  # Generated figures
 │
-├── benchmarking/                # Performance benchmarks
-│   ├── benchmark_inference.py  # Inference speed tests
-│   ├── compare_with_cpp.py     # Comparison with C++ extrapolator
-│   └── results/
+├── benchmarking/                # C++ baseline benchmarks
+│   ├── benchmark_cpp.py        # Run C++ extrapolators
+│   └── parse_benchmark_results.py # Parse benchmark logs
 │
-└── deployment/                  # Production deployment
-    ├── export_best_model.py    # Export best model to ONNX
-    └── README.md
+├── utils/                       # Utility modules
+│   ├── README.md               # Utils documentation
+│   ├── magnetic_field.py       # ⭐ Unified field map (InterpolatedFieldTorch)
+│   └── rk4_propagator.py       # Python RK4 integrator
+│
+├── notes/                       # Documentation
+│   ├── experimental_protocol.tex  # Full experiment methodology
+│   └── experimental_protocol.pdf
+│
+└── cluster/                     # HTCondor utilities
+    ├── README.md
+    └── monitor_training.sh     # Job monitoring script
 ```
 
 ---
@@ -551,28 +560,40 @@ python train.py --model rk_pinn --preset wide --name rkpinn_wide_v1
 # After training, analyze results:
 cd analysis
 
-# Plot loss convergence for all experiments
-python plot_convergence.py --checkpoint_dir ../models/checkpoints
+# Main analysis notebook (recommended)
+jupyter notebook experiment_analysis.ipynb
 
-# Compare all models
-python compare_architectures.py --checkpoint_dir ../models/checkpoints
+# Command-line analysis
+python analyze_models.py --checkpoint_dir ../trained_models
+python timing_benchmark.py --models_dir ../trained_models
 
-# Generate comprehensive HTML report
-python generate_report.py --output reports/full_comparison.html
+# Generate paper-quality plots
+python generate_paper_quality_plots.py
 ```
 
 ### Current Status
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Data Generation | 🟡 In Progress | 5000 jobs on HTCondor, ~50M tracks |
+| Data Generation | ✅ Complete | 50M tracks in `training_50M.npz` |
+| Momentum Splits | ✅ Complete | Low/Mid/High-p datasets (10M each) |
 | Training Script | ✅ Ready | `models/train.py` functional |
-| Architectures | ✅ Ready | MLP, PINN, RK_PINN implemented |
+| Architectures | ✅ Ready | MLP, PINN, RK_PINN (using InterpolatedFieldTorch) |
 | Loss Tracking | ✅ Ready | All losses stored in history.json |
 | Evaluation | ✅ Ready | `models/evaluate.py` functional |
-| Analysis Scripts | 🔴 TODO | Need to create analysis/ scripts |
-| Benchmarking | 🔴 TODO | Need inference benchmarks |
+| HTCondor Jobs | ✅ Submitted | 29 experiments (clusters 3880473-3880501) |
+| Unified Runner | ✅ Ready | `run_all_experiments.py` |
+| Analysis Notebook | ✅ Ready | `analysis/experiment_analysis.ipynb` |
+| Experiment Protocol | ✅ Ready | `notes/experimental_protocol.pdf` |
 | ONNX Export | ✅ Ready | `models/export_onnx.py` functional |
+
+### Recent Updates (January 22, 2026)
+
+1. **Fixed PINN/RK_PINN field model**: Now uses `InterpolatedFieldTorch` (real field map) instead of `GaussianFieldTorch`
+2. **Created unified experiment runner**: `run_all_experiments.py` for all 29+ experiments
+3. **Created analysis notebook**: `analysis/experiment_analysis.ipynb` with sections for each experiment type
+4. **Documented experiment protocol**: `notes/experimental_protocol.tex/.pdf` with full methodology
+5. **Submitted all training jobs**: 29 HTCondor jobs for core, ablation, and momentum experiments
 
 ---
 
@@ -585,4 +606,4 @@ python generate_report.py --output reports/full_comparison.html
 
 ---
 
-*Last updated: January 19, 2026*
+*Last updated: January 22, 2026*

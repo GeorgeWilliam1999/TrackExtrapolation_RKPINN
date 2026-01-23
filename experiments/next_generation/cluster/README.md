@@ -113,10 +113,10 @@ After training completes:
 
 ```bash
 cd ../models
-python evaluate_all_models.py
+python evaluate.py --compare checkpoints/*
 ```
 
-Results will be in `../analysis/results/`.
+Results will be in the checkpoints directory with metrics JSON files.
 
 ## Troubleshooting
 

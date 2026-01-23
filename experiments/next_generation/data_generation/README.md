@@ -69,16 +69,6 @@ By(z) = B0 × exp(-0.5 × ((z - z_center) / z_width)²)
 ⚠️ About 3% of grid points at edges (|x|, |y| > 3500 mm) have non-physical 
 |By| > 2T due to extrapolation artifacts. **Mask these regions** for training.
 
-### Pre-computed Data Files
-
-For convenience, the following are saved in `../models/data/`:
-
-| File | Contents |
-|------|----------|
-| `field_By_vs_z.npy` | 1D profile at x=0, y=0: shape (146, 2) = [z, By] |
-| `gaussian_field_params.json` | Fitted Gaussian parameters |
-| `field_map_downsampled.npz` | Downsampled 3D grid (~240k points) |
-
 ---
 
 ## C++ Extrapolators (Ground Truth)
@@ -151,32 +141,33 @@ dty_dz = kappa * sqrt_term * ((1+ty*ty)*B.x() - tx*ty*B.y() - tx*B.z());
 For generating data without the LHCb framework, use Python RK4 with the real field:
 
 ```python
-# In utils/archived/rk4_propagator.py
+# In utils/magnetic_field.py
 
-from rk4_propagator import RK4Integrator
-from models.architectures import InterpolatedMagneticField
+from utils.magnetic_field import InterpolatedFieldTorch, InterpolatedField
+from utils.rk4_propagator import RK4Integrator
 
-# Load real field map (cubic spline interpolation)
-field = InterpolatedMagneticField()
+# Load real field map (trilinear interpolation)
+field = InterpolatedField('/path/to/twodip.rtf')
 
 # Create integrator
 integrator = RK4Integrator(field, step_size=5.0)  # 5mm steps
 
 # Propagate a track
 state_initial = np.array([x, y, tx, ty, qop])  # at z_start
-state_final = integrator.propagate(state_initial, z_start=3000, z_end=9000)
+state_final = integrator.propagate(state_initial, z_start=4000, z_end=12000)
 ```
 
 ### Field Model Options
 
 ```python
-# Option 1: Gaussian approximation (fast, for physics losses)
-from models.architectures import MagneticField
-field = MagneticField()  # Uses fitted params: B0=-1.02, z_center=5007, z_width=1744
+# Option 1: Interpolated field (RECOMMENDED - used by PINN/RK_PINN)
+from utils.magnetic_field import InterpolatedFieldTorch
+field = InterpolatedFieldTorch('/path/to/twodip.rtf')  # Trilinear from twodip.rtf
+Bx, By, Bz = field(x, y, z)  # x, y, z are torch tensors
 
-# Option 2: Interpolated from real map (accurate, for data generation)
-from models.architectures import InterpolatedMagneticField
-field = InterpolatedMagneticField()  # Cubic spline from twodip.rtf
+# Option 2: Gaussian approximation (for quick prototyping only)
+from utils.magnetic_field import GaussianFieldTorch
+field = GaussianFieldTorch()  # Analytical: B0=-1.02, z_center=5007, z_width=1744
 ```
 
 ---
@@ -188,21 +179,20 @@ field = InterpolatedMagneticField()  # Cubic spline from twodip.rtf
 ```bash
 cd data_generation
 
-# Small test dataset
+# Small test dataset (uses real interpolated field by default)
 python generate_data.py \
     --n-tracks 10000 \
     --z-start 3000 \
     --z-end 9000 \
     --p-min 2.0 \
     --p-max 100.0 \
-    --output test_data/test_10k.npz \
-    --use-real-field  # Use InterpolatedMagneticField
+    --output test_data/test_10k.npz
 ```
 
 ### 2. Generate Production Dataset
 
 ```bash
-# 1M tracks for training
+# 1M tracks for training (real field is default)
 python generate_data.py \
     --n-tracks 1000000 \
     --z-start 2000 \
@@ -210,8 +200,9 @@ python generate_data.py \
     --p-min 0.5 \
     --p-max 100.0 \
     --output data/training_1M.npz \
-    --use-real-field \
     --n-workers 16
+
+# Use --use-gaussian-field for Gaussian approximation (not recommended for production)
 ```
 
 ### 3. Submit to HTCondor (Massive Scale)
@@ -325,5 +316,5 @@ print("✓ Dataset verified!")
 ---
 
 **Author:** G. Scriven  
-**Updated:** 2026-01-19  
-**Status:** Field map verified, ready for data generation
+**Updated:** 2026-01-22  
+**Status:** 50M tracks generated (`training_50M.npz`), momentum splits available

@@ -34,6 +34,14 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
+# TensorBoard support
+try:
+    from torch.utils.tensorboard import SummaryWriter
+    TENSORBOARD_AVAILABLE = True
+except ImportError:
+    TENSORBOARD_AVAILABLE = False
+    SummaryWriter = None
+
 # Add models directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 from architectures import (
@@ -47,7 +55,7 @@ from architectures import (
 
 DEFAULT_CONFIG = {
     # Data
-    'data_path': '../data_generation/data/training_50M.npz',
+    'data_path': '/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/data_generation/data/training_50M.npz',
     'train_fraction': 0.8,
     'val_fraction': 0.1,
     'test_fraction': 0.1,
@@ -71,6 +79,10 @@ DEFAULT_CONFIG = {
     'weight_decay': 1e-4,
     'scheduler': 'cosine',  # 'cosine', 'step', 'none'
     'warmup_epochs': 5,
+    
+    # PINN Training Stability (see train_epoch docstring for details)
+    'physics_warmup_epochs': 10,  # Gradually increase physics loss over N epochs
+    'grad_clip': 1.0,             # Gradient clipping threshold (0 to disable)
     
     # Early stopping
     'patience': 20,
@@ -109,23 +121,32 @@ def load_data(config: dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     print(f"Loading data from {config['data_path']}...")
     
     data = np.load(config['data_path'])
-    X = data['X']  # [N, 5] - [x, y, tx, ty, q/p]
-    Y = data['Y']  # [N, 5] - [x, y, tx, ty, qop_out]
+    X = data['X']  # [N, 5] or [N, 6] depending on format
+    Y = data['Y']  # [N, 4] or [N, 5]
     P = data['P']  # [N] - momentum
     
-    # Load metadata for dz
-    if 'dz_mean' in data:
-        dz_mean = float(data['dz_mean'])
+    # Handle X format: new format has 6 columns (includes dz), old format has 5
+    if X.shape[1] == 5:
+        # Old format: need to add dz column
+        if 'dz_mean' in data:
+            dz_mean = float(data['dz_mean'])
+        else:
+            dz_mean = 2300.0  # Default: VELO to T station
+        N = X.shape[0]
+        dz = np.full((N, 1), dz_mean, dtype=np.float32)
+        X = np.hstack([X, dz])  # [N, 6]
+        print(f"  Added dz column (mean={dz_mean:.1f} mm)")
+    elif X.shape[1] == 6:
+        # New format: dz already included
+        print(f"  dz already in data (mean={X[:, 5].mean():.1f} mm)")
     else:
-        dz_mean = 2300.0  # Default: VELO to T station
-    
-    # Add dz to input (constant for now, could be varied)
-    N = X.shape[0]
-    dz = np.full((N, 1), dz_mean, dtype=np.float32)
-    X = np.hstack([X, dz])  # [N, 6]
+        raise ValueError(f"Unexpected X shape: {X.shape}, expected 5 or 6 columns")
     
     # Extract output (x, y, tx, ty only)
     Y = Y[:, :4].astype(np.float32)
+    
+    # Get sample count
+    N = X.shape[0]
     
     # Limit samples if requested
     if config['max_samples'] is not None:
@@ -139,7 +160,6 @@ def load_data(config: dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     print(f"  X shape: {X.shape}")
     print(f"  Y shape: {Y.shape}")
     print(f"  P shape: {P.shape}")
-    print(f"  dz: {dz_mean:.1f} mm")
     
     return X.astype(np.float32), Y.astype(np.float32), P.astype(np.float32)
 
@@ -323,17 +343,45 @@ def train_epoch(
     optimizer: optim.Optimizer,
     scheduler: Optional[object],
     device: torch.device,
-    config: dict
+    config: dict,
+    epoch: int = 0,
 ) -> Dict[str, float]:
-    """Train for one epoch."""
+    """Train for one epoch.
+    
+    PINN Training Stability Features:
+    ---------------------------------
+    1. Gradient Clipping: Prevents gradient explosion during backprop through
+       physics loss computation (which involves second derivatives via autograd).
+       
+    2. Physics Loss Warmup: Gradually increases physics loss contribution over
+       the first N epochs. This allows the network to first learn a reasonable
+       approximation from data before physics constraints are enforced.
+       
+    3. NaN/Inf Detection: Skips batches that produce invalid loss values,
+       preventing the entire training from crashing.
+       
+    4. Loss Scaling: Physics loss is scaled by warmup factor to prevent
+       early training instability.
+    """
     model.train()
     
     total_loss = 0
     total_data_loss = 0
     total_physics_loss = 0
     n_batches = 0
+    n_skipped = 0
     
     criterion = nn.MSELoss()
+    
+    # Physics loss warmup: ramp from 0 to 1 over warmup_epochs
+    warmup_epochs = config.get('physics_warmup_epochs', 10)
+    if epoch < warmup_epochs:
+        physics_scale = epoch / warmup_epochs
+    else:
+        physics_scale = 1.0
+    
+    # Gradient clipping threshold
+    grad_clip = config.get('grad_clip', 1.0)
     
     for x, y, p in loader:
         x = x.to(device)
@@ -346,18 +394,45 @@ def train_epoch(
         
         # Data loss
         data_loss = criterion(y_pred, y)
+        
+        # Check for NaN/Inf in data loss
+        if torch.isnan(data_loss) or torch.isinf(data_loss):
+            n_skipped += 1
+            continue
+            
         total_data_loss += data_loss.item()
         
-        # Physics loss (PINN models)
+        # Physics loss (PINN models) with warmup scaling
         loss = data_loss
-        if hasattr(model, 'compute_physics_loss'):
+        batch_physics_loss = 0.0
+        if hasattr(model, 'compute_physics_loss') and physics_scale > 0:
             physics_losses = model.compute_physics_loss(x, y_pred)
             physics_loss = sum(physics_losses.values())
-            loss = loss + physics_loss
-            total_physics_loss += physics_loss.item() if isinstance(physics_loss, torch.Tensor) else physics_loss
+            
+            # Check for NaN/Inf in physics loss
+            if isinstance(physics_loss, torch.Tensor):
+                if torch.isnan(physics_loss) or torch.isinf(physics_loss):
+                    # Skip physics loss for this batch but continue with data loss
+                    physics_loss = torch.tensor(0.0, device=device)
+                else:
+                    batch_physics_loss = physics_loss.item()
+            
+            # Apply warmup scaling
+            loss = loss + physics_scale * physics_loss
+            total_physics_loss += batch_physics_loss
         
-        # Backward pass
+        # Final loss check
+        if torch.isnan(loss) or torch.isinf(loss):
+            n_skipped += 1
+            continue
+        
+        # Backward pass with gradient clipping
         loss.backward()
+        
+        # Gradient clipping to prevent explosion
+        if grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        
         optimizer.step()
         
         if scheduler is not None:
@@ -366,11 +441,24 @@ def train_epoch(
         total_loss += loss.item()
         n_batches += 1
     
+    # Handle case where all batches were skipped
+    if n_batches == 0:
+        return {
+            'loss': float('inf'),
+            'data_loss': float('inf'),
+            'physics_loss': float('inf'),
+            'lr': optimizer.param_groups[0]['lr'],
+            'skipped_batches': n_skipped,
+            'physics_scale': physics_scale,
+        }
+    
     return {
         'loss': total_loss / n_batches,
         'data_loss': total_data_loss / n_batches,
         'physics_loss': total_physics_loss / n_batches,
         'lr': optimizer.param_groups[0]['lr'],
+        'skipped_batches': n_skipped,
+        'physics_scale': physics_scale,
     }
 
 
@@ -483,6 +571,17 @@ def train(config: dict):
         min_delta=config['min_delta']
     )
     
+    # TensorBoard writer
+    writer = None
+    if config['use_tensorboard']:
+        if not TENSORBOARD_AVAILABLE:
+            print("Warning: TensorBoard not available. Install with: pip install tensorboard")
+        else:
+            tb_dir = exp_dir / 'tensorboard'
+            writer = SummaryWriter(log_dir=str(tb_dir))
+            print(f"TensorBoard logging to: {tb_dir}")
+            print(f"  Launch with: tensorboard --logdir={exp_dir.parent}")
+    
     # Training history
     history = {
         'train': [],
@@ -502,9 +601,9 @@ def train(config: dict):
     best_val_loss = float('inf')
     
     for epoch in range(config['epochs']):
-        # Train
+        # Train (pass epoch for physics warmup)
         train_metrics = train_epoch(
-            model, loaders['train'], optimizer, scheduler, device, config
+            model, loaders['train'], optimizer, scheduler, device, config, epoch=epoch
         )
         
         # Validate
@@ -513,6 +612,37 @@ def train(config: dict):
         # Record history
         history['train'].append(train_metrics)
         history['val'].append(val_metrics)
+        
+        # TensorBoard logging
+        if writer is not None:
+            # Loss curves
+            writer.add_scalars('Loss', {
+                'train': train_metrics['loss'],
+                'val': val_metrics['loss'],
+            }, epoch)
+            writer.add_scalar('Loss/train_total', train_metrics['loss'], epoch)
+            writer.add_scalar('Loss/train_data', train_metrics['data_loss'], epoch)
+            writer.add_scalar('Loss/train_physics', train_metrics['physics_loss'], epoch)
+            writer.add_scalar('Loss/val', val_metrics['loss'], epoch)
+            
+            # Position errors
+            writer.add_scalar('Error/pos_mean_mm', val_metrics['pos_mean_mm'], epoch)
+            writer.add_scalar('Error/pos_std_mm', val_metrics['pos_std_mm'], epoch)
+            writer.add_scalar('Error/pos_95_mm', val_metrics['pos_95_mm'], epoch)
+            writer.add_scalar('Error/slope_mean', val_metrics['slope_mean'], epoch)
+            
+            # Per-component errors
+            writer.add_scalars('Error/position', {
+                'x_mm': val_metrics['x_mean_mm'],
+                'y_mm': val_metrics['y_mean_mm'],
+            }, epoch)
+            writer.add_scalars('Error/slopes', {
+                'tx': val_metrics['tx_mean'],
+                'ty': val_metrics['ty_mean'],
+            }, epoch)
+            
+            # Learning rate
+            writer.add_scalar('Training/learning_rate', train_metrics['lr'], epoch)
         
         # Log progress
         if epoch % config['log_every'] == 0:
@@ -571,6 +701,26 @@ def train(config: dict):
     print("\nEvaluating on test set...")
     test_metrics = validate(model, loaders['test'], device, config)
     history['test_final'] = test_metrics
+    
+    # Log final test metrics to TensorBoard
+    if writer is not None:
+        writer.add_hparams(
+            {
+                'model_type': config['model_type'],
+                'hidden_dims': str(config['hidden_dims']),
+                'activation': config['activation'],
+                'lambda_pde': config.get('lambda_pde', 0.0),
+                'learning_rate': config['learning_rate'],
+                'batch_size': config['batch_size'],
+            },
+            {
+                'hparam/pos_mean_mm': test_metrics['pos_mean_mm'],
+                'hparam/pos_95_mm': test_metrics['pos_95_mm'],
+                'hparam/slope_mean': test_metrics['slope_mean'],
+                'hparam/best_val_loss': history['best_val_loss'],
+            }
+        )
+        writer.close()
     
     print(f"\nTest Results:")
     print(f"  Position error: {test_metrics['pos_mean_mm']:.4f} ± {test_metrics['pos_std_mm']:.4f} mm")
@@ -650,6 +800,8 @@ def parse_args():
                        help='Experiment name')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints',
                        help='Directory for checkpoints')
+    parser.add_argument('--tensorboard', action='store_true',
+                       help='Enable TensorBoard logging')
     
     # Hardware
     parser.add_argument('--device', type=str, default=None,
@@ -683,6 +835,7 @@ def main():
     config['min_delta'] = args.min_delta
     config['experiment_name'] = args.name
     config['checkpoint_dir'] = args.checkpoint_dir
+    config['use_tensorboard'] = args.tensorboard
     config['num_workers'] = args.num_workers
     
     # Apply preset first, then allow hidden_dims to override

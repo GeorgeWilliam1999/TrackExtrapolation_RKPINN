@@ -10,8 +10,23 @@ The analysis suite provides:
 2. **Physics-Aware Analysis** - Testing whether models learn correct physics
 3. **Trajectory Visualization** - Visual comparison of predicted vs true tracks
 4. **Benchmarking** - Timing comparisons with C++ extrapolators
+5. **Experiment-Specific Analysis** - Dedicated sections for each experiment type
 
 ## Quick Start
+
+### Main Analysis Notebook (Recommended)
+```bash
+# Open the comprehensive analysis notebook
+jupyter notebook experiment_analysis.ipynb
+```
+
+The **experiment_analysis.ipynb** notebook includes sections for:
+- Architecture Comparison (MLP/PINN/RK_PINN)
+- Physics Loss Ablation (λ_PDE studies)
+- Momentum Range Studies (Low/Mid/High-p)
+- Learning Dynamics (loss curves, convergence)
+- Timing Benchmarks
+- Summary and Export
 
 ### Quick Analysis
 ```bash
@@ -92,14 +107,15 @@ The analysis suite evaluates three model types:
 
 | File | Purpose |
 |------|---------|
+| `experiment_analysis.ipynb` | ⭐ Main analysis notebook (recommended) |
+| `model_analysis.ipynb` | Interactive notebook |
 | `run_analysis.py` | Main entry point |
 | `analyze_models.py` | Core analysis functions |
 | `physics_analysis.py` | Physics-specific tests |
 | `trajectory_visualizer.py` | Visualization tools |
-| `benchmark_all_models.py` | Timing benchmarks |
-| `timing_benchmark.py` | Detailed timing analysis |
+| `timing_benchmark.py` | ⭐ Comprehensive timing benchmarks |
+| `timing_comparison_plots.py` | Timing visualizations |
 | `generate_paper_quality_plots.py` | Publication-ready figures |
-| `model_analysis.ipynb` | Interactive notebook |
 | `plots/` | Generated figures |
 | `results/` | JSON results files |
 

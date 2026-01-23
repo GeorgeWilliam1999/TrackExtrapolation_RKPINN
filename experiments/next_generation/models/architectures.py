@@ -83,16 +83,39 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional, Union
 import json
 import warnings
+import sys
+from pathlib import Path
+
+# Add utils directory to path for unified imports
+_utils_dir = Path(__file__).parent.parent / 'utils'
+if str(_utils_dir) not in sys.path:
+    sys.path.insert(0, str(_utils_dir))
+
+# Import unified magnetic field module - SINGLE SOURCE OF TRUTH
+# This ensures consistent field model between data generation and PINN training
+try:
+    from magnetic_field import (
+        GaussianFieldTorch, InterpolatedFieldTorch,
+        get_field_torch, C_LIGHT
+    )
+    UNIFIED_FIELD_AVAILABLE = True
+except ImportError as e:
+    warnings.warn(
+        f"Could not import unified magnetic_field module: {e}\n"
+        f"Using local field definitions. This may cause inconsistencies!"
+    )
+    UNIFIED_FIELD_AVAILABLE = False
+    # Fallback constant
+    C_LIGHT = 2.99792458e-4
 
 
 # =============================================================================
-# Physical Constants
+# Physical Constants (re-exported from magnetic_field module for compatibility)
 # =============================================================================
 
 # Speed of light factor for Lorentz force calculation
 # Converts (q/p in 1/MeV) × (B in Tesla) → curvature in 1/mm
-# This is the critical constant that matches LHCb's C++ extrapolators
-C_LIGHT = 2.99792458e-4  # c in mm/ns × conversion factors
+# NOTE: C_LIGHT is imported from magnetic_field.py for consistency
 
 
 # =============================================================================
@@ -129,8 +152,18 @@ def get_activation(name: str) -> nn.Module:
 
 
 # =============================================================================
-# Magnetic Field Models
+# Magnetic Field Models (UNIFIED - imported from utils/magnetic_field.py)
 # =============================================================================
+
+# IMPORTANT: All field models are now imported from the unified magnetic_field module
+# to ensure consistency between data generation and PINN training.
+# 
+# The unified module is the SINGLE SOURCE OF TRUTH for:
+# - Data generation (RK4 integrator in generate_cpp_data.py)
+# - PINN physics loss computation (this file)
+# - Model validation and testing
+#
+# Using different field implementations will cause systematic errors!
 
 DEFAULT_FIELD_PARAMS = {
     'B0': -1.0182,        # Peak field strength (Tesla)
@@ -139,186 +172,154 @@ DEFAULT_FIELD_PARAMS = {
 }
 
 
-class GaussianMagneticField(nn.Module):
-    """
-    Simplified Gaussian approximation of LHCb dipole magnetic field (differentiable).
+if UNIFIED_FIELD_AVAILABLE:
+    # Use unified module - RECOMMENDED
+    GaussianMagneticField = GaussianFieldTorch
+    InterpolatedMagneticField = InterpolatedFieldTorch
     
-    Models field as Gaussian profile: By(z) = B0 × exp(-0.5 × ((z - z_center) / z_width)²)
+    # Default field for PINN physics loss - MUST match data generation!
+    # Data is generated with InterpolatedFieldNumpy (twodip.rtf)
+    # So PINN physics loss must use InterpolatedFieldTorch for consistency
+    def _get_default_field():
+        """Get default field model (interpolated, matching data generation)."""
+        return get_field_torch(use_interpolated=True)
     
-    This is an APPROXIMATION with ~1.3% RMS error compared to the true field map.
-    Use InterpolatedMagneticField for higher accuracy when the field map is available.
+    # Alias for backward compatibility (Gaussian for simple cases)
+    MagneticField = GaussianFieldTorch
     
-    Field Parameters (fitted from twodip.rtf):
-        B0 = -1.0182 T      Peak field (negative = pointing down in y)
-        z_center = 5007 mm  Center of magnet
-        z_width = 1744 mm   Characteristic Gaussian width
-    """
-    
-    def __init__(
-        self,
-        B0: float = DEFAULT_FIELD_PARAMS['B0'],
-        z_center: float = DEFAULT_FIELD_PARAMS['z_center'],
-        z_width: float = DEFAULT_FIELD_PARAMS['z_width'],
-    ):
-        super().__init__()
-        self.register_buffer('B0', torch.tensor(B0, dtype=torch.float32))
-        self.register_buffer('z_center', torch.tensor(z_center, dtype=torch.float32))
-        self.register_buffer('z_width', torch.tensor(z_width, dtype=torch.float32))
-    
-    def forward(self, x: torch.Tensor, y: torch.Tensor, z: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def create_magnetic_field(field_type: str = 'gaussian', field_map_path: str = None, **kwargs) -> nn.Module:
         """
-        Compute magnetic field at position(s) (x, y, z).
+        Factory function to create magnetic field model.
         
-        Note: This simplified model only depends on z. The x, y arguments are accepted
-        for API compatibility with InterpolatedMagneticField but are ignored.
-        
-        Returns: (Bx, By, Bz) in Tesla
-        """
-        z_rel = (z - self.z_center) / self.z_width
-        By = self.B0 * torch.exp(-0.5 * z_rel**2)
-        Bx = torch.zeros_like(By)
-        Bz = torch.zeros_like(By)
-        return Bx, By, Bz
-
-
-class InterpolatedMagneticField(nn.Module):
-    """
-    Interpolated 3D magnetic field from tabulated field map (differentiable via grid_sample).
-    
-    Loads field map from file (e.g., twodip.rtf) and performs trilinear interpolation.
-    This is MORE ACCURATE than the Gaussian approximation but requires the field map file.
-    
-    File Format (twodip.rtf):
-        x[mm] y[mm] z[mm] Bx[T] By[T] Bz[T]
-        Regular grid, space-separated values
-    
-    Interpolation Error:
-        Trilinear interpolation has error O(h²) where h is the grid spacing.
-        For twodip.rtf with 100mm grid spacing, interpolation error is ~10⁻⁵ T.
-    """
-    
-    def __init__(self, field_map_path: str, device: str = 'cpu'):
-        super().__init__()
-        self._load_field_map(field_map_path, device)
-    
-    def _load_field_map(self, path: str, device: str) -> None:
-        """Load and preprocess field map for GPU-accelerated interpolation."""
-        import numpy as np
-        
-        # Load field map data
-        data = np.loadtxt(path)
-        x, y, z = data[:, 0], data[:, 1], data[:, 2]
-        Bx, By, Bz = data[:, 3], data[:, 4], data[:, 5]
-        
-        # Determine grid dimensions
-        x_unique = np.sort(np.unique(x))
-        y_unique = np.sort(np.unique(y))
-        z_unique = np.sort(np.unique(z))
-        
-        nx, ny, nz = len(x_unique), len(y_unique), len(z_unique)
-        
-        # Store grid bounds for normalization
-        self.register_buffer('x_min', torch.tensor(x_unique[0], dtype=torch.float32))
-        self.register_buffer('x_max', torch.tensor(x_unique[-1], dtype=torch.float32))
-        self.register_buffer('y_min', torch.tensor(y_unique[0], dtype=torch.float32))
-        self.register_buffer('y_max', torch.tensor(y_unique[-1], dtype=torch.float32))
-        self.register_buffer('z_min', torch.tensor(z_unique[0], dtype=torch.float32))
-        self.register_buffer('z_max', torch.tensor(z_unique[-1], dtype=torch.float32))
-        
-        # Grid spacing for error estimation
-        self.register_buffer('dx', torch.tensor(x_unique[1] - x_unique[0], dtype=torch.float32))
-        self.register_buffer('dy', torch.tensor(y_unique[1] - y_unique[0], dtype=torch.float32))
-        self.register_buffer('dz', torch.tensor(z_unique[1] - z_unique[0], dtype=torch.float32))
-        
-        # Reshape into 3D grids [nx, ny, nz] and stack as [3, nx, ny, nz] for grid_sample
-        # grid_sample expects [N, C, D, H, W] so we'll use [1, 3, nz, ny, nx]
-        Bx_grid = Bx.reshape(nx, ny, nz)
-        By_grid = By.reshape(nx, ny, nz)
-        Bz_grid = Bz.reshape(nx, ny, nz)
-        
-        # Stack and reorder to [1, 3, nz, ny, nx] for grid_sample (D=z, H=y, W=x)
-        B_grid = np.stack([Bx_grid, By_grid, Bz_grid], axis=0)  # [3, nx, ny, nz]
-        B_grid = np.transpose(B_grid, (0, 3, 2, 1))  # [3, nz, ny, nx]
-        B_grid = B_grid[np.newaxis, ...]  # [1, 3, nz, ny, nx]
-        
-        self.register_buffer('B_grid', torch.tensor(B_grid, dtype=torch.float32))
-        self.grid_shape = (nz, ny, nx)
-    
-    def forward(self, x: torch.Tensor, y: torch.Tensor, z: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Compute magnetic field at position(s) (x, y, z) via trilinear interpolation.
+        IMPORTANT: Uses unified magnetic_field module for consistency.
         
         Args:
-            x, y, z: Position coordinates in mm. Can be scalars or tensors of same shape.
+            field_type: 'gaussian' for analytical approximation, 'interpolated' for field map
+            field_map_path: Path to field map file (required if field_type='interpolated')
+            **kwargs: Additional arguments passed to field constructor
             
         Returns:
-            (Bx, By, Bz) in Tesla, same shape as inputs
+            Magnetic field module from unified module
         """
-        # Normalize coordinates to [-1, 1] for grid_sample
-        x_norm = 2.0 * (x - self.x_min) / (self.x_max - self.x_min) - 1.0
-        y_norm = 2.0 * (y - self.y_min) / (self.y_max - self.y_min) - 1.0
-        z_norm = 2.0 * (z - self.z_min) / (self.z_max - self.z_min) - 1.0
-        
-        # Clamp to valid range (extrapolation returns boundary values)
-        x_norm = torch.clamp(x_norm, -1.0, 1.0)
-        y_norm = torch.clamp(y_norm, -1.0, 1.0)
-        z_norm = torch.clamp(z_norm, -1.0, 1.0)
-        
-        # Reshape for grid_sample: need [N, D, H, W, 3] grid
-        original_shape = x.shape
-        grid = torch.stack([x_norm.flatten(), y_norm.flatten(), z_norm.flatten()], dim=-1)
-        grid = grid.view(1, 1, 1, -1, 3)  # [1, 1, 1, n_points, 3]
-        
-        # Interpolate using grid_sample
-        B_interp = torch.nn.functional.grid_sample(
-            self.B_grid, grid, mode='bilinear', padding_mode='border', align_corners=True
-        )
-        
-        # Reshape output: [1, 3, 1, 1, n_points] -> [n_points, 3] -> original_shape
-        B_interp = B_interp.squeeze().T  # [n_points, 3]
-        
-        Bx = B_interp[:, 0].view(original_shape)
-        By = B_interp[:, 1].view(original_shape)
-        Bz = B_interp[:, 2].view(original_shape)
-        
-        return Bx, By, Bz
+        return get_field_torch(use_interpolated=(field_type == 'interpolated'), 
+                               field_map_path=field_map_path, **kwargs)
+
+else:
+    # Fallback definitions - only used if unified module import fails
+    warnings.warn(
+        "Using LOCAL field definitions because unified module is unavailable. "
+        "This may cause inconsistencies with data generation!"
+    )
     
-    def interpolation_error_bound(self) -> float:
+    class GaussianMagneticField(nn.Module):
         """
-        Estimate upper bound on interpolation error.
+        Simplified Gaussian approximation of LHCb dipole magnetic field (FALLBACK).
         
-        For trilinear interpolation, error is O(h² × max|∂²B/∂x²|).
-        With typical grid spacing h=100mm and field gradients, error ~10⁻⁵ T.
+        WARNING: This is a fallback. Prefer importing from unified magnetic_field module.
         """
-        h_max = max(self.dx.item(), self.dy.item(), self.dz.item())
-        # Conservative estimate assuming max second derivative ~10⁻⁶ T/mm²
-        return 0.5 * h_max**2 * 1e-6
-
-
-# Alias for backward compatibility
-MagneticField = GaussianMagneticField
-
-
-def create_magnetic_field(field_type: str = 'gaussian', field_map_path: str = None, **kwargs) -> nn.Module:
-    """
-    Factory function to create magnetic field model.
+        
+        def __init__(
+            self,
+            B0: float = DEFAULT_FIELD_PARAMS['B0'],
+            z_center: float = DEFAULT_FIELD_PARAMS['z_center'],
+            z_width: float = DEFAULT_FIELD_PARAMS['z_width'],
+        ):
+            super().__init__()
+            self.register_buffer('B0', torch.tensor(B0, dtype=torch.float32))
+            self.register_buffer('z_center', torch.tensor(z_center, dtype=torch.float32))
+            self.register_buffer('z_width', torch.tensor(z_width, dtype=torch.float32))
+        
+        def forward(self, x: torch.Tensor, y: torch.Tensor, z: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            z_rel = (z - self.z_center) / self.z_width
+            By = self.B0 * torch.exp(-0.5 * z_rel**2)
+            Bx = torch.zeros_like(By)
+            Bz = torch.zeros_like(By)
+            return Bx, By, Bz
     
-    Args:
-        field_type: 'gaussian' for analytical approximation, 'interpolated' for field map
-        field_map_path: Path to field map file (required if field_type='interpolated')
-        **kwargs: Additional arguments passed to field constructor
+    
+    class InterpolatedMagneticField(nn.Module):
+        """
+        Interpolated 3D magnetic field from tabulated field map (FALLBACK).
         
-    Returns:
-        Magnetic field module
-    """
-    if field_type == 'gaussian':
-        return GaussianMagneticField(**kwargs)
-    elif field_type == 'interpolated':
-        if field_map_path is None:
-            raise ValueError("field_map_path required for interpolated field")
-        return InterpolatedMagneticField(field_map_path, **kwargs)
-    else:
-        raise ValueError(f"Unknown field_type: {field_type}")
+        WARNING: This is a fallback. Prefer importing from unified magnetic_field module.
+        """
+        
+        def __init__(self, field_map_path: str, device: str = 'cpu'):
+            super().__init__()
+            self._load_field_map(field_map_path, device)
+        
+        def _load_field_map(self, path: str, device: str) -> None:
+            data = np.loadtxt(path)
+            x, y, z = data[:, 0], data[:, 1], data[:, 2]
+            Bx, By, Bz = data[:, 3], data[:, 4], data[:, 5]
+            
+            x_unique = np.sort(np.unique(x))
+            y_unique = np.sort(np.unique(y))
+            z_unique = np.sort(np.unique(z))
+            
+            nx, ny, nz = len(x_unique), len(y_unique), len(z_unique)
+            
+            self.register_buffer('x_min', torch.tensor(x_unique[0], dtype=torch.float32))
+            self.register_buffer('x_max', torch.tensor(x_unique[-1], dtype=torch.float32))
+            self.register_buffer('y_min', torch.tensor(y_unique[0], dtype=torch.float32))
+            self.register_buffer('y_max', torch.tensor(y_unique[-1], dtype=torch.float32))
+            self.register_buffer('z_min', torch.tensor(z_unique[0], dtype=torch.float32))
+            self.register_buffer('z_max', torch.tensor(z_unique[-1], dtype=torch.float32))
+            
+            self.register_buffer('dx', torch.tensor(x_unique[1] - x_unique[0], dtype=torch.float32))
+            self.register_buffer('dy', torch.tensor(y_unique[1] - y_unique[0], dtype=torch.float32))
+            self.register_buffer('dz', torch.tensor(z_unique[1] - z_unique[0], dtype=torch.float32))
+            
+            # Note: File ordering is y-fastest, then x, then z -> reshape order is (nz, nx, ny)
+            Bx_grid = Bx.reshape(nz, nx, ny).transpose(1, 2, 0)  # [nx, ny, nz]
+            By_grid = By.reshape(nz, nx, ny).transpose(1, 2, 0)
+            Bz_grid = Bz.reshape(nz, nx, ny).transpose(1, 2, 0)
+            
+            B_grid = np.stack([Bx_grid, By_grid, Bz_grid], axis=0)
+            B_grid = np.transpose(B_grid, (0, 3, 2, 1))  # [3, nz, ny, nx]
+            B_grid = B_grid[np.newaxis, ...]  # [1, 3, nz, ny, nx]
+            
+            self.register_buffer('B_grid', torch.tensor(B_grid, dtype=torch.float32))
+            self.grid_shape = (nz, ny, nx)
+        
+        def forward(self, x: torch.Tensor, y: torch.Tensor, z: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            x_norm = 2.0 * (x - self.x_min) / (self.x_max - self.x_min) - 1.0
+            y_norm = 2.0 * (y - self.y_min) / (self.y_max - self.y_min) - 1.0
+            z_norm = 2.0 * (z - self.z_min) / (self.z_max - self.z_min) - 1.0
+            
+            x_norm = torch.clamp(x_norm, -1.0, 1.0)
+            y_norm = torch.clamp(y_norm, -1.0, 1.0)
+            z_norm = torch.clamp(z_norm, -1.0, 1.0)
+            
+            original_shape = x.shape
+            grid = torch.stack([x_norm.flatten(), y_norm.flatten(), z_norm.flatten()], dim=-1)
+            grid = grid.view(1, 1, 1, -1, 3)
+            
+            B_interp = torch.nn.functional.grid_sample(
+                self.B_grid, grid, mode='bilinear', padding_mode='border', align_corners=True
+            )
+            
+            B_interp = B_interp.squeeze().T
+            
+            Bx = B_interp[:, 0].view(original_shape)
+            By = B_interp[:, 1].view(original_shape)
+            Bz = B_interp[:, 2].view(original_shape)
+            
+            return Bx, By, Bz
+    
+    # Alias for backward compatibility
+    MagneticField = GaussianMagneticField
+    
+    def create_magnetic_field(field_type: str = 'gaussian', field_map_path: str = None, **kwargs) -> nn.Module:
+        """Factory function to create magnetic field model (FALLBACK)."""
+        if field_type == 'gaussian':
+            return GaussianMagneticField(**kwargs)
+        elif field_type == 'interpolated':
+            if field_map_path is None:
+                raise ValueError("field_map_path required for interpolated field")
+            return InterpolatedMagneticField(field_map_path, **kwargs)
+        else:
+            raise ValueError(f"Unknown field_type: {field_type}")
 
 
 # =============================================================================
@@ -535,7 +536,13 @@ class PINN(BaseTrackExtrapolator):
         self.z_start = z_start
         self.z_end = z_end
         
-        self.field = field_model if field_model is not None else MagneticField()
+        # Use interpolated field by default to match data generation
+        if field_model is not None:
+            self.field = field_model
+        elif UNIFIED_FIELD_AVAILABLE:
+            self.field = _get_default_field()  # InterpolatedFieldTorch
+        else:
+            self.field = MagneticField()  # Fallback to Gaussian
         
         # Build network
         layers = []
@@ -551,11 +558,56 @@ class PINN(BaseTrackExtrapolator):
         self._init_weights()
     
     def _init_weights(self) -> None:
-        for m in self.modules():
+        """Initialize weights for stable training.
+        
+        PINN Training Stability Note:
+        -----------------------------
+        Standard Xavier/He initialization can cause the network to output
+        very large values initially (|output| >> 1), which when denormalized
+        to physical coordinates (mm) become astronomically large (~10^13).
+        
+        This causes:
+        1. Huge IC loss (L_ic ~ 10^26) from comparing to initial conditions
+        2. Infinite PDE residuals due to overflow in squared terms
+        3. NaN gradients from backpropagating through infinities
+        
+        Solution: Use smaller initialization (gain=0.1 for hidden layers) and
+        near-zero initialization for output layer, so initial network output
+        is close to zero (before denormalization, this gives ~output_mean).
+        """
+        for i, m in enumerate(self.network.modules()):
             if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
+                # Check if this is the last Linear layer (output layer)
+                is_output = (m.out_features == 4)
+                if is_output:
+                    # Output layer: near-zero so denormalized output ≈ output_mean
+                    nn.init.uniform_(m.weight, -0.001, 0.001)
+                else:
+                    # Hidden layers: smaller than default for stability
+                    nn.init.xavier_uniform_(m.weight, gain=0.1)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
+    
+    def set_normalization(self, X: torch.Tensor, Y: torch.Tensor, eps: float = 1e-8) -> None:
+        """Compute normalization from training data.
+        
+        IMPORTANT: For PINN, the 6th input column (index 5) is treated specially.
+        In the training data, it contains dz (step size in mm, e.g., 8000).
+        But during forward/physics computation, we replace it with z_frac (0-1).
+        
+        Therefore, we DON'T normalize column 5 - we set its mean to 0 and std to 1
+        so the z_frac values pass through unchanged.
+        """
+        self.input_mean = X.mean(dim=0).clone()
+        self.input_std = X.std(dim=0).clone() + eps
+        self.output_mean = Y.mean(dim=0)
+        self.output_std = Y.std(dim=0) + eps
+        
+        # Don't normalize column 5 (z/dz) - it's replaced with z_frac during forward
+        self.input_mean[5] = 0.0
+        self.input_std[5] = 1.0
+        
+        self._normalization_set = True
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass at endpoint (z_norm=1)."""
@@ -590,27 +642,71 @@ class PINN(BaseTrackExtrapolator):
             
         Returns:
             Dict with 'ic' and 'pde' loss components (scaled by λ)
+            
+        NUMERICAL STABILITY NOTES:
+        --------------------------
+        This function can produce NaN/Inf values through several mechanisms:
+        
+        1. DENORMALIZATION AMPLIFICATION: If network outputs are ~O(1) but
+           output_std is ~700mm, denormalized values are ~700mm. Errors squared
+           become ~500,000, and with λ=1, physics loss >> data loss.
+           
+        2. GRADIENT EXPLOSION: Computing ∂y/∂z via autograd involves chain rule
+           through all layers. If any intermediate value is large, gradients
+           can overflow (especially when create_graph=True for second derivatives).
+           
+        3. FIELD EVALUATION AT WRONG POSITIONS: If predicted (x,y) positions are
+           far from physical detector (~±3m), field interpolation may extrapolate
+           or return invalid values.
+           
+        4. DIVISION BY dz: If dz varies (different step sizes), division can
+           amplify errors for small dz values.
+        
+        SOLUTIONS IMPLEMENTED:
+        - Clamp predicted values to physical ranges before field evaluation
+        - Normalize residuals by characteristic scales (mm for position, 1 for slopes)
+        - Return 0 for IC/PDE loss if NaN/Inf detected (skip bad batches)
+        - Use relative error formulation for slopes (which are ~0.1, not ~500mm)
         """
         batch_size = x.shape[0]
         device = x.device
+        dtype = x.dtype
         
         x0 = x[:, :5]
-        initial_state = x[:, :4]
+        initial_state = x[:, :4]  # [x0, y0, tx0, ty0]
         qop = x[:, 4]
         dz = x[:, 5]
         kappa = qop * C_LIGHT
         
-        # Initial condition loss
-        z_zero = torch.zeros((batch_size, 1), device=device)
-        y_at_z0 = self.forward_at_z(x0, z_zero)
-        ic_loss = F.mse_loss(y_at_z0, initial_state)
+        # Characteristic scales for normalization (from LHCb detector geometry)
+        pos_scale = 500.0   # mm - typical position variation
+        slope_scale = 0.1   # typical slope magnitude
         
-        # PDE residual loss at collocation points
-        z_fracs = torch.linspace(0.1, 1.0, self.n_collocation, device=device)
-        total_residual = torch.tensor(0.0, device=device)
+        # =====================================================================
+        # Initial Condition Loss
+        # =====================================================================
+        # Network prediction at z=0 should match initial state
+        z_zero = torch.zeros((batch_size, 1), device=device, dtype=dtype)
+        y_at_z0 = self.forward_at_z(x0, z_zero)
+        
+        # Normalized IC loss: position error / pos_scale, slope error / slope_scale
+        ic_pos_err = ((y_at_z0[:, :2] - initial_state[:, :2]) / pos_scale).pow(2).mean()
+        ic_slope_err = ((y_at_z0[:, 2:] - initial_state[:, 2:]) / slope_scale).pow(2).mean()
+        ic_loss = ic_pos_err + ic_slope_err
+        
+        # Check for NaN/Inf and skip if detected
+        if torch.isnan(ic_loss) or torch.isinf(ic_loss):
+            ic_loss = torch.tensor(0.0, device=device, dtype=dtype, requires_grad=True)
+        
+        # =====================================================================
+        # PDE Residual Loss at Collocation Points
+        # =====================================================================
+        z_fracs = torch.linspace(0.1, 1.0, self.n_collocation, device=device, dtype=dtype)
+        total_residual = torch.tensor(0.0, device=device, dtype=dtype)
+        valid_points = 0
         
         for z_frac in z_fracs:
-            z_tensor = torch.full((batch_size, 1), z_frac.item(), device=device, requires_grad=True)
+            z_tensor = torch.full((batch_size, 1), z_frac.item(), device=device, dtype=dtype, requires_grad=True)
             x_full = torch.cat([x0, z_tensor], dim=1)
             x_full.requires_grad_(True)
             
@@ -618,7 +714,14 @@ class PINN(BaseTrackExtrapolator):
             y_norm = self.network(x_norm)
             y = self.denormalize_output(y_norm)
             
-            # Compute gradients ∂y/∂z
+            # Clamp predictions to physical range to avoid field extrapolation issues
+            y_clamped = y.clone()
+            y_clamped[:, 0] = y[:, 0].clamp(-3000, 3000)  # x position in mm
+            y_clamped[:, 1] = y[:, 1].clamp(-3000, 3000)  # y position in mm  
+            y_clamped[:, 2] = y[:, 2].clamp(-1, 1)        # tx slope
+            y_clamped[:, 3] = y[:, 3].clamp(-1, 1)        # ty slope
+            
+            # Compute gradients ∂y/∂z (with respect to normalized z input)
             dy_dz = []
             for i in range(4):
                 grad = torch.autograd.grad(
@@ -630,18 +733,17 @@ class PINN(BaseTrackExtrapolator):
                 dy_dz.append(grad.squeeze())
             dy_dz = torch.stack(dy_dz, dim=1)
             
-            # Physical position and field
-            # Note: y contains [x_pos, y_pos, tx, ty] - we need x_pos and y_pos for 3D field
+            # Physical z position and field evaluation
             z_physical = self.z_start + z_frac * dz
-            x_pos = y[:, 0]  # x position at this collocation point
-            y_pos = y[:, 1]  # y position at this collocation point
+            x_pos = y_clamped[:, 0]
+            y_pos = y_clamped[:, 1]
             Bx, By, Bz = self.field(x_pos, y_pos, z_physical)
             
-            tx_pred = y[:, 2]
-            ty_pred = y[:, 3]
+            tx_pred = y_clamped[:, 2]
+            ty_pred = y_clamped[:, 3]
             sqrt_term = torch.sqrt(1 + tx_pred**2 + ty_pred**2)
             
-            # Expected derivatives from Lorentz equations
+            # Expected derivatives from Lorentz equations (in physical coordinates)
             dx_dz_expected = tx_pred
             dy_dz_expected = ty_pred
             dtx_dz_expected = kappa * sqrt_term * (
@@ -651,18 +753,37 @@ class PINN(BaseTrackExtrapolator):
                 (1 + ty_pred**2) * Bx - tx_pred * ty_pred * By - tx_pred * Bz
             )
             
-            dy_dz_physical = dy_dz / dz.unsqueeze(1)
+            # Convert autograd gradient to physical units: ∂y/∂z_physical = (∂y/∂z_norm) / dz
+            # Avoid division by very small dz
+            dz_safe = dz.clamp(min=100.0)  # Minimum 100mm step
+            dy_dz_physical = dy_dz / dz_safe.unsqueeze(1)
             
-            residual = (
-                (dy_dz_physical[:, 0] - dx_dz_expected)**2 +
-                (dy_dz_physical[:, 1] - dy_dz_expected)**2 +
-                (dy_dz_physical[:, 2] - dtx_dz_expected)**2 +
-                (dy_dz_physical[:, 3] - dty_dz_expected)**2
-            ).mean()
+            # Normalized residuals (dimensionless)
+            # Position derivatives: scale by 1 (slopes are already ~O(1))
+            # Slope derivatives: scale by typical curvature ~1e-6 to ~1e-4
+            curvature_scale = 1e-5  # Typical dtx/dz magnitude
             
-            total_residual = total_residual + residual
+            residual_x = ((dy_dz_physical[:, 0] - dx_dz_expected)).pow(2)
+            residual_y = ((dy_dz_physical[:, 1] - dy_dz_expected)).pow(2)
+            residual_tx = ((dy_dz_physical[:, 2] - dtx_dz_expected) / curvature_scale).pow(2)
+            residual_ty = ((dy_dz_physical[:, 3] - dty_dz_expected) / curvature_scale).pow(2)
+            
+            residual = (residual_x + residual_y + residual_tx + residual_ty).mean()
+            
+            # Skip this collocation point if NaN/Inf
+            if not (torch.isnan(residual) or torch.isinf(residual)):
+                total_residual = total_residual + residual
+                valid_points += 1
         
-        pde_loss = total_residual / self.n_collocation
+        # Average over valid collocation points
+        if valid_points > 0:
+            pde_loss = total_residual / valid_points
+        else:
+            pde_loss = torch.tensor(0.0, device=device, dtype=dtype, requires_grad=True)
+        
+        # Final NaN check
+        if torch.isnan(pde_loss) or torch.isinf(pde_loss):
+            pde_loss = torch.tensor(0.0, device=device, dtype=dtype, requires_grad=True)
         
         return {
             'ic': self.lambda_ic * ic_loss,
@@ -734,7 +855,13 @@ class RK_PINN(BaseTrackExtrapolator):
         self.lambda_pde = lambda_pde
         self.lambda_ic = lambda_ic
         
-        self.field = field_model if field_model is not None else MagneticField()
+        # Use interpolated field by default to match data generation
+        if field_model is not None:
+            self.field = field_model
+        elif UNIFIED_FIELD_AVAILABLE:
+            self.field = _get_default_field()  # InterpolatedFieldTorch
+        else:
+            self.field = MagneticField()  # Fallback to Gaussian
         
         # Stage positions
         stage_fracs = torch.linspace(1.0/n_stages, 1.0, n_stages)
