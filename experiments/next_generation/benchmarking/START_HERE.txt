@@ -10,36 +10,33 @@
 
 📌 READ THESE FIRST:
 
-1. INDEX.md (3 minutes)
-   └─ Complete map of all files and how to use them
-   └─ Start here if unsure where things are
+1. GUIDE.md (10 minutes)
+   └─ Complete benchmarking guide with all findings
+   └─ Performance rankings and recommendations
+   └─ Analysis workflow and usage instructions
 
-2. BENCHMARK_COMPLETION_REPORT.md (10 minutes)
-   └─ Full project report with all findings
-   └─ Technical details and recommendations
-
-3. QUICK_REFERENCE.md (5 minutes)
-   └─ Performance rankings and quick lookups
-   └─ Usage tips for papers and presentations
+2. analyze_benchmarks.ipynb
+   └─ Jupyter notebook for interactive analysis
+   └─ Generates all figures and exports
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📊 KEY RESULTS:
 
-BEST CHOICE: Verner9
-  • Accuracy: 0.103 mm (0.0025% error over 4km)
-  • Speed: 2.52 μs
-  • Verdict: Excellent balance of speed and accuracy
+BEST OVERALL: BogackiShampine3 ⭐
+  • Accuracy: 0.10 mm mean error
+  • Speed: 9.1 μs per track
+  • Verdict: Recommended for production
 
-RUNNER-UP: BogackiShampine3
-  • Accuracy: 0.101 mm (slightly better)
-  • Speed: 2.40 μs (slightly faster)
-  • Verdict: Nearly identical performance
+FASTEST: Herab
+  • Accuracy: 0.76 mm mean
+  • Speed: 1.95 μs per track
+  • Verdict: Good for track seeding
 
-ALTERNATIVES:
-  • Verner7: 0.237 mm @ 2.65 μs (also excellent)
-  • Tsitouras5: 0.287 mm @ 2.75 μs (also excellent)
-  • Herab: 0.760 mm @ 1.95 μs (fast but less accurate)
+HIGHEST PRECISION: Verner9
+  • Accuracy: 0.08 mm mean error  
+  • Speed: 18.9 μs per track
+  • Verdict: Use for reference/validation
 
 AVOID:
   • Kisel: 39.8 mm @ 1.50 μs (too inaccurate)
@@ -49,25 +46,25 @@ AVOID:
 📦 WHAT YOU GET:
 
 4 Publication-Quality Figures:
-  ✓ fig1_accuracy_comparison.{png,pdf}          (177 KB)
-  ✓ fig2_error_distribution.{png,pdf}           (183 KB)
-  ✓ fig3_accuracy_vs_speed.{png,pdf}            (192 KB)
-  ✓ fig4_performance_summary.{png,pdf}          (252 KB)
+  ✓ fig1_accuracy_comparison.{png,pdf}
+  ✓ fig2_error_distribution.{png,pdf}
+  ✓ fig3_accuracy_vs_speed.{png,pdf}
+  ✓ fig4_performance_summary.{png,pdf}
 
 Data Files:
   ✓ benchmark_summary.csv                       (Quick reference)
   ✓ benchmark_detailed.csv                      (Full metrics)
-  ✓ benchmark_table.tex                        (For LaTeX papers)
-  ✓ benchmark_results.json                     (Source data)
+  ✓ benchmark_table.tex                         (For LaTeX papers)
+  ✓ benchmark_results.json                      (Source data)
 
 Documentation:
-  ✓ INDEX.md                                   (Navigation guide)
-  ✓ BENCHMARK_COMPLETION_REPORT.md             (Full report)
-  ✓ QUICK_REFERENCE.md                         (Quick lookup)
-  ✓ README.md                                  (Overview)
+  ✓ GUIDE.md                                    (Complete reference)
+  ✓ START_HERE.txt                              (This file)
 
 Analysis Code:
-  ✓ analyze_benchmarks.ipynb                   (Reproducible notebook)
+  ✓ analyze_benchmarks.ipynb                    (Reproducible notebook)
+  ✓ benchmark_cpp.py                            (C++ benchmark runner)
+  ✓ parse_benchmark_results.py                  (Results parser)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -81,7 +78,7 @@ FOR USING IN YOUR PAPER:
 FOR UNDERSTANDING THE RESULTS:
   1. Look at fig1_accuracy_comparison.png - shows all results
   2. Check fig3_accuracy_vs_speed.png - see the trade-offs
-  3. Read QUICK_REFERENCE.md for interpretation
+  3. Read GUIDE.md for full details and interpretation
 
 FOR REPRODUCING THE ANALYSIS:
   1. Ensure TE conda environment is installed
@@ -121,32 +118,31 @@ FOR REPRODUCING THE ANALYSIS:
 📍 FILE LOCATIONS:
 
 plots/                          ← All figures here
-├─ fig1_accuracy_comparison.png
-├─ fig2_error_distribution.png
-├─ fig3_accuracy_vs_speed.png
-└─ fig4_performance_summary.png
+├─ fig1_accuracy_comparison.{png,pdf}
+├─ fig2_error_distribution.{png,pdf}
+├─ fig3_accuracy_vs_speed.{png,pdf}
+└─ fig4_performance_summary.{png,pdf}
 
 results/                        ← All data here
 ├─ benchmark_summary.csv
 ├─ benchmark_detailed.csv
 ├─ benchmark_table.tex
 ├─ benchmark_results.json
-└─ README.md
+└─ figures/
 
-./                             ← Documents here
-├─ INDEX.md ⭐ START HERE
-├─ BENCHMARK_COMPLETION_REPORT.md
-├─ QUICK_REFERENCE.md
-├─ README.md
+./                             ← Documents & code here
+├─ GUIDE.md ⭐ MAIN REFERENCE
+├─ START_HERE.txt (this file)
 ├─ analyze_benchmarks.ipynb
-└─ START_HERE.txt (this file)
+├─ benchmark_cpp.py
+└─ parse_benchmark_results.py
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ❓ FAQ:
 
 Q: Which extrapolator should I use?
-A: Verner9 for best overall performance (0.103 mm accuracy @ 2.52 μs)
+A: BogackiShampine3 for best overall performance (0.10 mm accuracy @ 9.1 μs)
 
 Q: Can I include these figures in my paper?
 A: Yes! Use PDFs for LaTeX, or PNGs for other formats. All at 300 DPI.
@@ -160,8 +156,8 @@ A: Yes! Run analyze_benchmarks.ipynb with TE conda environment
 Q: Where is the raw data?
 A: In results/benchmark_results.json - all measurements preserved
 
-Q: What if I want just the summary?
-A: Check QUICK_REFERENCE.md for rankings and key metrics
+Q: Where is the full documentation?
+A: Read GUIDE.md for complete benchmarking reference
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -183,6 +179,6 @@ Ready for academic use: ✓
 
 ═══════════════════════════════════════════════════════════════════════════════
 
-NEXT STEP: Open INDEX.md in your text editor for complete navigation guide
+NEXT STEP: Open GUIDE.md for the complete benchmarking reference
 
 ═══════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,581 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{longtable}
+
+\title{Experimental Protocol:\\Neural Network Track Extrapolators for LHCb}
+\author{G. Scriven}
+\date{January 2026}
+
+\begin{document}
+\maketitle
+
+\tableofcontents
+\newpage
+
+%==============================================================================
+\section{Introduction and Objectives}
+%==============================================================================
+
+This document defines the experimental protocol for evaluating neural network-based track extrapolators as potential replacements or supplements to the classical Runge-Kutta extrapolators used in LHCb track reconstruction.
+
+\subsection{Primary Research Questions}
+
+\begin{enumerate}
+    \item Can neural networks achieve sufficient accuracy (sub-micron position, sub-microradian angle) for LHCb track extrapolation?
+    \item Does physics-informed training (PINN) improve generalization compared to pure data-driven approaches?
+    \item What is the inference speed compared to classical Runge-Kutta integration?
+    \item How does performance vary across the LHCb momentum spectrum (0.5--100 GeV)?
+\end{enumerate}
+
+\subsection{Success Criteria}
+
+\begin{itemize}
+    \item \textbf{Position accuracy}: $\sigma_x, \sigma_y < 10~\mu\text{m}$ (target: $< 1~\mu\text{m}$)
+    \item \textbf{Angular accuracy}: $\sigma_{t_x}, \sigma_{t_y} < 10~\mu\text{rad}$ (target: $< 1~\mu\text{rad}$)
+    \item \textbf{Speed}: $\geq 10\times$ faster than Runge-Kutta extrapolator
+    \item \textbf{Bias}: Mean residuals $< 0.1~\mu\text{m}$ (position), $< 0.1~\mu\text{rad}$ (angle)
+\end{itemize}
+
+%==============================================================================
+\section{Experimental Design}
+%==============================================================================
+
+\subsection{Dataset Specification}
+
+\subsubsection{Training Data}
+
+\begin{table}[h]
+\centering
+\caption{Training dataset specification}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Total samples & 50,000,000 tracks \\
+Generation method & Runge-Kutta integration (ground truth) \\
+Field map & Real LHCb dipole (twodip.rtf, 81$\times$81$\times$146 grid) \\
+Propagation & $z_{\text{start}} = 4000$ mm to $z_{\text{end}} = 12000$ mm \\
+Step size $\Delta z$ & 8000 mm (single-step extrapolation) \\
+\midrule
+\multicolumn{2}{l}{\textbf{Input features} $\mathbf{X} \in \mathbb{R}^6$} \\
+Position & $x, y \in [-4000, 4000]$ mm \\
+Slopes & $t_x, t_y \in [-0.3, 0.3]$ \\
+Charge/momentum & $q/p \in [-2, 2]$ GeV$^{-1}$ (both charges) \\
+Step size & $\Delta z = 8000$ mm \\
+\midrule
+\multicolumn{2}{l}{\textbf{Output targets} $\mathbf{Y} \in \mathbb{R}^4$} \\
+Final position & $x', y'$ (mm) \\
+Final slopes & $t_x', t_y'$ (dimensionless) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Momentum-Specific Datasets}
+
+For momentum-dependent studies, the main dataset is filtered into three ranges:
+
+\begin{table}[h]
+\centering
+\caption{Momentum-split datasets}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Dataset} & \textbf{Range (GeV)} & \textbf{Samples} & \textbf{Mean $p$} & \textbf{Physics Regime} \\
+\midrule
+Low-$p$ & 0.5--5 & 10M & 1.95 GeV & Multiple scattering dominant \\
+Mid-$p$ & 5--20 & 10M & 10.8 GeV & Typical LHCb tracks \\
+High-$p$ & 20--100 & 10M & 49.7 GeV & Minimal bending \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Test/Validation Data}
+
+\begin{itemize}
+    \item 10\% of training data held out for validation during training
+    \item Separate test set generated with different random seed (1M tracks)
+    \item Additional ``stress test'' datasets with extreme parameters
+\end{itemize}
+
+%==============================================================================
+\subsection{Model Architectures}
+%==============================================================================
+
+Three model families are evaluated:
+
+\subsubsection{1. Standard MLP (Baseline)}
+
+Pure feedforward network trained on data loss only:
+\begin{equation}
+    \mathcal{L}_{\text{MLP}} = \frac{1}{N}\sum_{i=1}^{N} \|\mathbf{y}_i - f_\theta(\mathbf{x}_i)\|^2
+\end{equation}
+
+\subsubsection{2. Physics-Informed Neural Network (PINN)}
+
+Incorporates Lorentz force equation as soft constraint:
+\begin{equation}
+    \mathcal{L}_{\text{PINN}} = \mathcal{L}_{\text{data}} + \lambda_{\text{PDE}} \mathcal{L}_{\text{PDE}} + \lambda_{\text{IC}} \mathcal{L}_{\text{IC}}
+\end{equation}
+
+where the PDE loss enforces:
+\begin{align}
+    \frac{d^2x}{dz^2} &= \frac{q}{p} \sqrt{1 + t_x^2 + t_y^2} \left( t_x t_y B_x - (1 + t_x^2) B_y + t_y B_z \right) \\
+    \frac{d^2y}{dz^2} &= \frac{q}{p} \sqrt{1 + t_x^2 + t_y^2} \left( (1 + t_y^2) B_x - t_x t_y B_y - t_x B_z \right)
+\end{align}
+
+\subsubsection{3. RK-PINN (Runge-Kutta Inspired)}
+
+Hybrid architecture that internally performs multiple sub-steps mimicking RK4 integration, with physics-informed loss at each sub-step.
+
+\subsection{Architecture Sizes}
+
+\begin{table}[h]
+\centering
+\caption{Network architecture configurations}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Name} & \textbf{Hidden Layers} & \textbf{Total Params} & \textbf{Purpose} \\
+\midrule
+Tiny & [64, 64] & $\sim$5K & Minimum viable, speed test \\
+Small & [128, 128, 64] & $\sim$20K & Lightweight production \\
+Medium & [256, 256, 128] & $\sim$100K & Baseline comparison \\
+Wide & [512, 512, 256] & $\sim$400K & Maximum accuracy \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%==============================================================================
+\section{Experiment 1: Architecture Comparison}
+%==============================================================================
+
+\subsection{Objective}
+Determine optimal network size balancing accuracy and inference speed.
+
+\subsection{Experiments (12 jobs)}
+
+\begin{table}[h]
+\centering
+\caption{Architecture comparison experiments}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Model} & \textbf{Architecture} & \textbf{$\lambda_{\text{PDE}}$} & \textbf{$\lambda_{\text{IC}}$} \\
+\midrule
+mlp\_tiny & [64, 64] & -- & -- \\
+mlp\_small & [128, 128, 64] & -- & -- \\
+mlp\_medium & [256, 256, 128] & -- & -- \\
+mlp\_wide & [512, 512, 256] & -- & -- \\
+\midrule
+pinn\_tiny & [64, 64] & 1.0 & 1.0 \\
+pinn\_small & [128, 128, 64] & 1.0 & 1.0 \\
+pinn\_medium & [256, 256, 128] & 1.0 & 1.0 \\
+pinn\_wide & [512, 512, 256] & 1.0 & 1.0 \\
+\midrule
+rkpinn\_tiny & [64, 64] & 1.0 & 1.0 \\
+rkpinn\_small & [128, 128, 64] & 1.0 & 1.0 \\
+rkpinn\_medium & [256, 256, 128] & 1.0 & 1.0 \\
+rkpinn\_wide & [512, 512, 256] & 1.0 & 1.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Metrics to Record}
+\begin{itemize}
+    \item Training loss curves (data, PDE, IC components)
+    \item Validation loss at each epoch
+    \item Final test accuracy (MAE, RMSE, max error per output)
+    \item Training time (wall clock and GPU hours)
+    \item Number of parameters
+    \item Inference time (batch sizes: 1, 100, 10000)
+\end{itemize}
+
+\subsection{Analysis}
+\begin{enumerate}
+    \item Plot accuracy vs. model size (Pareto frontier)
+    \item Plot accuracy vs. inference time
+    \item Determine minimum architecture meeting accuracy criteria
+\end{enumerate}
+
+%==============================================================================
+\section{Experiment 2: Physics Loss Ablation}
+%==============================================================================
+
+\subsection{Objective}
+Quantify the impact of physics-informed training on accuracy and generalization.
+
+\subsection{Experiments (8 jobs)}
+
+Using medium architecture [256, 256, 128]:
+
+\begin{table}[h]
+\centering
+\caption{Physics loss ablation experiments}
+\begin{tabular}{lccl}
+\toprule
+\textbf{Name} & \textbf{$\lambda_{\text{PDE}}$} & \textbf{$\lambda_{\text{IC}}$} & \textbf{Description} \\
+\midrule
+pinn\_medium\_data\_only & 0.0 & 0.0 & Pure data-driven (MLP baseline) \\
+pinn\_medium\_pde\_weak & 0.1 & 0.1 & Weak physics regularization \\
+pinn\_medium (default) & 1.0 & 1.0 & Balanced physics/data \\
+pinn\_medium\_pde\_strong & 10.0 & 10.0 & Strong physics emphasis \\
+pinn\_medium\_pde\_dominant & 100.0 & 100.0 & Physics-dominant training \\
+\midrule
+rkpinn\_medium\_data\_only & 0.0 & 0.0 & RK architecture, data only \\
+rkpinn\_medium\_pde\_weak & 0.1 & 0.1 & RK + weak physics \\
+rkpinn\_medium\_pde\_strong & 10.0 & 10.0 & RK + strong physics \\
+rkpinn\_medium\_pde\_dominant & 100.0 & 100.0 & RK + physics dominant \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Metrics to Record}
+\begin{itemize}
+    \item Loss component breakdown (data vs PDE vs IC)
+    \item Convergence speed (epochs to reach threshold)
+    \item Generalization gap (train vs test error)
+    \item Physical consistency metrics (energy conservation, Lorentz force satisfaction)
+\end{itemize}
+
+\subsection{Analysis}
+\begin{enumerate}
+    \item Plot test accuracy vs. $\lambda_{\text{PDE}}$
+    \item Examine learning curves for signs of physics constraint helping/hurting
+    \item Compare generalization: train on mid-$p$, test on low/high-$p$
+\end{enumerate}
+
+%==============================================================================
+\section{Experiment 3: Momentum-Dependent Performance}
+%==============================================================================
+
+\subsection{Objective}
+Characterize model performance across the LHCb momentum spectrum.
+
+\subsection{Experiments (9 jobs)}
+
+Train dedicated models on each momentum range:
+
+\begin{table}[h]
+\centering
+\caption{Momentum-specific experiments}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Model} & \textbf{Momentum Range} & \textbf{Physics Challenge} \\
+\midrule
+mlp\_medium\_low\_p & 0.5--5 GeV & Large bending, multiple scattering \\
+mlp\_medium\_mid\_p & 5--20 GeV & Typical LHCb tracks \\
+mlp\_medium\_high\_p & 20--100 GeV & Small bending angles \\
+\midrule
+pinn\_medium\_low\_p & 0.5--5 GeV & Strong field gradients \\
+pinn\_medium\_mid\_p & 5--20 GeV & Moderate curvature \\
+pinn\_medium\_high\_p & 20--100 GeV & Near-linear trajectories \\
+\midrule
+rkpinn\_medium\_low\_p & 0.5--5 GeV & Sub-stepping benefits? \\
+rkpinn\_medium\_mid\_p & 5--20 GeV & Standard regime \\
+rkpinn\_medium\_high\_p & 20--100 GeV & Overkill for straight tracks? \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Metrics to Record}
+\begin{itemize}
+    \item Accuracy as function of momentum within each range
+    \item Cross-range generalization (train low-$p$, test high-$p$ and vice versa)
+    \item Residual distributions binned by momentum
+\end{itemize}
+
+\subsection{Analysis}
+\begin{enumerate}
+    \item Is a single model sufficient, or do we need momentum-specific models?
+    \item Does PINN help more at low-$p$ where physics is more complex?
+    \item Can high-$p$ model be simpler (fewer parameters)?
+\end{enumerate}
+
+%==============================================================================
+\section{Experiment 4: Timing Benchmarks}
+%==============================================================================
+
+\subsection{Objective}
+Compare inference speed of neural networks vs. classical Runge-Kutta extrapolator.
+
+\subsection{Methodology}
+
+\subsubsection{Neural Network Inference}
+
+\begin{enumerate}
+    \item Load trained model (PyTorch and ONNX versions)
+    \item Warm-up: 100 forward passes (discard)
+    \item Benchmark: 1000 forward passes, record mean and std
+    \item Batch sizes: 1, 10, 100, 1000, 10000, 100000
+    \item Hardware: CPU (single core), CPU (multi-core), GPU (CUDA)
+\end{enumerate}
+
+\subsubsection{Runge-Kutta Baseline}
+
+\begin{enumerate}
+    \item Use existing \texttt{TrackRungeKuttaExtrapolator}
+    \item Same track parameters as NN benchmark
+    \item Record time for equivalent number of extrapolations
+    \item Test different step sizes (adaptive vs fixed)
+\end{enumerate}
+
+\subsection{Metrics to Record}
+\begin{itemize}
+    \item Wall-clock time per extrapolation
+    \item Throughput (tracks/second)
+    \item Memory usage
+    \item Speedup factor vs. RK baseline
+    \item Latency distribution (important for real-time trigger)
+\end{itemize}
+
+\subsection{Hardware Configurations}
+\begin{itemize}
+    \item CPU: Intel Xeon (typical HLT1 node)
+    \item GPU: NVIDIA A100 / V100 (if available in HLT)
+    \item Evaluate ONNX Runtime optimizations
+\end{itemize}
+
+%==============================================================================
+\section{Experiment 5: Generalization and Robustness}
+%==============================================================================
+
+\subsection{Objective}
+Test model robustness to out-of-distribution inputs and edge cases.
+
+\subsection{Test Cases}
+
+\begin{enumerate}
+    \item \textbf{Interpolation test}: Random samples within training domain
+    \item \textbf{Boundary test}: Tracks near edge of acceptance
+    \item \textbf{Extrapolation test}: 
+    \begin{itemize}
+        \item Momentum slightly outside training range (0.4 GeV, 110 GeV)
+        \item Extreme slopes ($|t_x|, |t_y| > 0.3$)
+        \item Unusual starting positions
+    \end{itemize}
+    \item \textbf{Field variation}: Different field map versions (if available)
+    \item \textbf{Step size variation}: $\Delta z \neq 8000$ mm
+\end{enumerate}
+
+\subsection{Metrics}
+\begin{itemize}
+    \item Error degradation outside training domain
+    \item Failure modes (numerical instability, NaN outputs)
+    \item Comparison with RK extrapolator on same edge cases
+\end{itemize}
+
+%==============================================================================
+\section{Experiment 6: Learning Dynamics Analysis}
+%==============================================================================
+
+\subsection{Objective}
+Understand training behavior and optimization landscape.
+
+\subsection{Analyses}
+
+\begin{enumerate}
+    \item \textbf{Loss landscape visualization}
+    \begin{itemize}
+        \item 1D and 2D loss surface plots
+        \item Identify local minima, saddle points
+    \end{itemize}
+    
+    \item \textbf{Gradient flow analysis}
+    \begin{itemize}
+        \item Gradient norms per layer during training
+        \item Detect vanishing/exploding gradients
+        \item Compare MLP vs PINN gradient dynamics
+    \end{itemize}
+    
+    \item \textbf{Loss component evolution}
+    \begin{itemize}
+        \item Plot $\mathcal{L}_{\text{data}}$, $\mathcal{L}_{\text{PDE}}$, $\mathcal{L}_{\text{IC}}$ separately
+        \item Identify competition between objectives
+        \item Optimal $\lambda$ scheduling?
+    \end{itemize}
+    
+    \item \textbf{Feature importance}
+    \begin{itemize}
+        \item Which inputs most affect outputs?
+        \item Sensitivity to $q/p$ vs position vs slopes
+    \end{itemize}
+\end{enumerate}
+
+%==============================================================================
+\section{Additional Suggested Experiments}
+%==============================================================================
+
+Based on typical challenges in physics-informed machine learning:
+
+\subsection{A. Activation Function Study}
+Compare ReLU, Tanh, SiLU (Swish), GELU. Physics-informed networks often benefit from smooth activations (Tanh, SiLU) due to gradient requirements.
+
+\subsection{B. Normalization Strategy}
+\begin{itemize}
+    \item Input normalization: Z-score vs min-max vs physics-based
+    \item Output scaling: Direct mm/$\mu$rad vs normalized residuals
+    \item Batch normalization: May interfere with physics loss
+\end{itemize}
+
+\subsection{C. Training Data Volume Study}
+Train on 1M, 5M, 10M, 25M, 50M samples. Determine data efficiency and whether PINN requires less data than pure MLP.
+
+\subsection{D. Multi-Step Extrapolation}
+Train single model, apply recursively:
+\begin{itemize}
+    \item Train on $\Delta z = 1000$ mm
+    \item Apply 8$\times$ for full 8000 mm extrapolation
+    \item Compare accuracy vs single-step model
+    \item Error accumulation analysis
+\end{itemize}
+
+\subsection{E. Uncertainty Quantification}
+\begin{itemize}
+    \item Ensemble methods (multiple models)
+    \item MC Dropout for epistemic uncertainty
+    \item Heteroscedastic outputs (predict mean + variance)
+    \item Important for downstream track fitting
+\end{itemize}
+
+\subsection{F. Transfer Learning}
+\begin{itemize}
+    \item Train on simplified field, fine-tune on real field
+    \item Train on one $z$-region, transfer to another
+    \item Pre-train on simulation, fine-tune on data (if available)
+\end{itemize}
+
+\subsection{G. Integration with Track Reconstruction}
+\begin{itemize}
+    \item Replace RK extrapolator in full reconstruction chain
+    \item Measure impact on track finding efficiency
+    \item Measure impact on momentum resolution
+    \item End-to-end physics performance (mass resolution, etc.)
+\end{itemize}
+
+%==============================================================================
+\section{Data Analysis and Visualization}
+%==============================================================================
+
+\subsection{Standard Plots for Each Experiment}
+
+\begin{enumerate}
+    \item \textbf{Training curves}: Loss vs epoch (train and validation)
+    \item \textbf{Residual distributions}: Histograms of $(y_{\text{pred}} - y_{\text{true}})$ for each output
+    \item \textbf{2D residual maps}: Residuals vs input variables (identify systematic patterns)
+    \item \textbf{Pull distributions}: $(y_{\text{pred}} - y_{\text{true}})/\sigma$ should be Gaussian
+    \item \textbf{Momentum dependence}: Accuracy metrics binned by momentum
+    \item \textbf{Correlation plots}: Predicted vs true for each output
+\end{enumerate}
+
+\subsection{Summary Tables}
+
+Each experiment produces a row in the master results table with columns:
+\begin{itemize}
+    \item Model name, architecture, parameters
+    \item Training time (GPU-hours)
+    \item Final train/val/test loss
+    \item MAE and RMSE for $x$, $y$, $t_x$, $t_y$
+    \item Max absolute error
+    \item Inference time (various batch sizes)
+    \item Notes and observations
+\end{itemize}
+
+%==============================================================================
+\section{Timeline and Resources}
+%==============================================================================
+
+\subsection{Computational Requirements}
+
+\begin{table}[h]
+\centering
+\caption{Estimated computational requirements}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Experiment Set} & \textbf{Jobs} & \textbf{Est. GPU-hours/job} & \textbf{Total GPU-hours} \\
+\midrule
+Architecture comparison & 12 & 2--8 & 60 \\
+Physics ablation & 8 & 4 & 32 \\
+Momentum studies & 9 & 4 & 36 \\
+\midrule
+\textbf{Total core experiments} & \textbf{29} & -- & \textbf{$\sim$130} \\
+\midrule
+Additional experiments & 20--30 & varies & $\sim$100 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{HTCondor Job Status}
+
+\textbf{Submitted}: January 22, 2026
+
+\begin{itemize}
+    \item Core + ablation experiments: Clusters 3880122--3880142 (20 jobs)
+    \item Momentum studies: Clusters 3880158--3880166 (9 jobs)
+\end{itemize}
+
+\subsection{Post-Training Workflow}
+
+\begin{enumerate}
+    \item Collect results from \texttt{trained\_models/<exp\_name>/}
+    \item Extract metrics from \texttt{history.json} files
+    \item Run unified analysis notebook
+    \item Generate paper figures
+    \item Update model registry with best configurations
+\end{enumerate}
+
+%==============================================================================
+\section{Model Registry Protocol}
+%==============================================================================
+
+After training completes, update the model registry:
+
+\begin{enumerate}
+    \item \textbf{Location}: \texttt{trained\_models/registry.json}
+    \item \textbf{Fields per model}:
+    \begin{itemize}
+        \item Unique identifier (experiment name)
+        \item Path to saved weights
+        \item Architecture specification
+        \item Training hyperparameters
+        \item Performance metrics (test loss, accuracy)
+        \item Timestamp and git commit
+    \end{itemize}
+    \item \textbf{Best model selection}:
+    \begin{itemize}
+        \item Mark best overall model
+        \item Mark best per category (fastest, most accurate, best generalization)
+    \end{itemize}
+\end{enumerate}
+
+%==============================================================================
+\section{Appendix: File Locations}
+%==============================================================================
+
+\begin{verbatim}
+experiments/next_generation/
++-- data_generation/
+|   +-- data/
+|       +-- training_50M.npz      # Main training data (50M tracks)
+|       +-- training_low_p.npz    # Low momentum (10M, 0.5-5 GeV)
+|       +-- training_mid_p.npz    # Mid momentum (10M, 5-20 GeV)
+|       +-- training_high_p.npz   # High momentum (10M, 20-100 GeV)
++-- training/
+|   +-- jobs/                     # HTCondor .sub files (29 experiments)
+|   +-- logs/                     # Job output/error logs
+|   +-- train_wrapper.sh          # HTCondor execution wrapper
++-- trained_models/
+|   +-- <exp_name>/
+|       +-- model.pt              # PyTorch weights
+|       +-- config.json           # Architecture + hyperparameters
+|       +-- history.json          # Training loss history
++-- analysis/
+|   +-- analyze_results.ipynb     # Post-training analysis
++-- notes/
+    +-- experimental_protocol.tex # This document
+\end{verbatim}
+
+\end{document}

@@ -1,0 +1,22 @@
+mlp tiny mlp_v2_single_256 --epochs 20 --batch_size 8192 --hidden_dims 256
+mlp tiny mlp_v2_single_512 --epochs 20 --batch_size 8192 --hidden_dims 512
+mlp tiny mlp_v2_single_1024 --epochs 20 --batch_size 8192 --hidden_dims 1024
+mlp tiny mlp_v2_shallow_256 --epochs 20 --batch_size 8192 --hidden_dims 256 256
+mlp tiny mlp_v2_shallow_512_256 --epochs 20 --batch_size 8192 --hidden_dims 512 256
+mlp tiny mlp_v2_shallow_512 --epochs 20 --batch_size 8192 --hidden_dims 512 512
+mlp tiny mlp_v2_shallow_1024_256 --epochs 20 --batch_size 8192 --hidden_dims 1024 256
+mlp tiny mlp_v2_shallow_1024_512 --epochs 20 --batch_size 8192 --hidden_dims 1024 512
+pinn tiny pinn_v2_single_256 --epochs 20 --batch_size 8192 --hidden_dims 256 --lambda_pde 1.0
+pinn tiny pinn_v2_single_512 --epochs 20 --batch_size 8192 --hidden_dims 512 --lambda_pde 1.0
+pinn tiny pinn_v2_single_1024 --epochs 20 --batch_size 8192 --hidden_dims 1024 --lambda_pde 1.0
+pinn tiny pinn_v2_shallow_256 --epochs 20 --batch_size 8192 --hidden_dims 256 256 --lambda_pde 1.0
+pinn tiny pinn_v2_shallow_512_256 --epochs 20 --batch_size 8192 --hidden_dims 512 256 --lambda_pde 1.0
+pinn tiny pinn_v2_shallow_512 --epochs 20 --batch_size 8192 --hidden_dims 512 512 --lambda_pde 1.0
+pinn tiny pinn_v2_shallow_1024_256 --epochs 20 --batch_size 8192 --hidden_dims 1024 256 --lambda_pde 1.0
+pinn tiny pinn_v2_shallow_1024_512 --epochs 20 --batch_size 8192 --hidden_dims 1024 512 --lambda_pde 1.0
+rk_pinn tiny rkpinn_v2_single_256 --epochs 20 --batch_size 4096 --hidden_dims 256 --lambda_pde 1.0
+rk_pinn tiny rkpinn_v2_single_512 --epochs 20 --batch_size 4096 --hidden_dims 512 --lambda_pde 1.0
+rk_pinn tiny rkpinn_v2_shallow_256 --epochs 20 --batch_size 4096 --hidden_dims 256 256 --lambda_pde 1.0
+rk_pinn tiny rkpinn_v2_shallow_512_256 --epochs 20 --batch_size 4096 --hidden_dims 512 256 --lambda_pde 1.0
+rk_pinn tiny rkpinn_v2_shallow_512 --epochs 20 --batch_size 4096 --hidden_dims 512 512 --lambda_pde 1.0
+rk_pinn tiny rkpinn_v2_shallow_1024_256 --epochs 20 --batch_size 4096 --hidden_dims 1024 256 --lambda_pde 1.0

@@ -1,0 +1,23 @@
+# HTCondor submission for rkpinn_medium_pde_dominant (physics-dominated)
+universe = vanilla
+executable = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/training/train_wrapper.sh
+arguments = rk_pinn rkpinn_medium_pde_dominant 256,256,128 1.0 1.0
+
+output = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/training/logs/rkpinn_medium_pde_dominant.out
+error = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/training/logs/rkpinn_medium_pde_dominant.err
+log = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/training/logs/rkpinn_medium_pde_dominant.log
+
+# Note: This experiment uses lambda_data=0.1 which requires modifying the wrapper
+# For now we use balanced, but mark this for special handling
+
+request_cpus = 4
+request_memory = 8GB
+request_gpus = 1
+
+
++JobFlavour = "long"
++MaxRunTime = 86400
++UseOS = "el9"
++JobCategory = "long"
+
+queue 1

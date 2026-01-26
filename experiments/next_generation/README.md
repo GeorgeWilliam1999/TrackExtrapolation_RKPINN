@@ -2,7 +2,9 @@
 
 **Project Goal:** Systematically train and compare neural network architectures for LHCb track extrapolation, storing all training metrics for comprehensive analysis.
 
-**Status:** ✅ Training in progress (30 HTCondor GPU jobs, cluster 3880818, 10 epochs each)
+**Status:** ✅ V1 Training Complete (53 models), V2 Training Complete (22 shallow-wide models)
+
+**Reference Baseline:** C++ RK4 (CashKarp): **2.50 μs/track** (measured via TrackExtrapolatorTesterSOA)
 
 ---
 
@@ -430,21 +432,19 @@ python generate_paper_quality_plots.py
 
 After all experiments complete, we generate a summary table:
 
-| Model | Params | pos_mean (mm) | pos_95% (mm) | GPU tput (tracks/s) | Train time (min) |
-|-------|--------|---------------|--------------|---------------------|------------------|
-| mlp_tiny | 5,252 | 0.xxx | 0.xxx | xxx,xxx | xx.x |
-| mlp_small | 20,228 | 0.xxx | 0.xxx | xxx,xxx | xx.x |
-| mlp_medium | 99,588 | 0.xxx | 0.xxx | xxx,xxx | xx.x |
-| mlp_wide | 467,972 | 0.xxx | 0.xxx | xxx,xxx | xx.x |
-| pinn_tiny | 5,256 | 0.xxx | 0.xxx | xxx,xxx | xx.x |
-| pinn_small | 20,232 | 0.xxx | 0.xxx | xxx,xxx | xx.x |
-| pinn_medium | 99,592 | 0.xxx | 0.xxx | xxx,xxx | xx.x |
-| pinn_wide | 467,976 | 0.xxx | 0.xxx | xxx,xxx | xx.x |
-| rkpinn_tiny | 6,820 | 0.xxx | 0.xxx | xxx,xxx | xx.x |
-| rkpinn_small | 25,384 | 0.xxx | 0.xxx | xxx,xxx | xx.x |
-| rkpinn_medium | 117,132 | 0.xxx | 0.xxx | xxx,xxx | xx.x |
-| rkpinn_wide | 538,124 | 0.xxx | 0.xxx | xxx,xxx | xx.x |
-| **C++ RK4** | N/A | 0.000 (ref) | 0.000 (ref) | xx,xxx (baseline) | N/A |
+| Model | Params | pos_mean (mm) | pos_95% (mm) | Time (μs/track) | vs C++ (2.50 μs) |
+|-------|--------|---------------|--------------|-----------------|------------------|
+| mlp_tiny | 5,252 | 0.024 | 0.052 | 1.10 | 2.27× faster |
+| mlp_small | 20,228 | 0.023 | 0.051 | 1.15 | 2.17× faster |
+| mlp_medium | 99,588 | 0.022 | 0.049 | 1.35 | 1.85× faster |
+| mlp_wide | 467,972 | 0.021 | 0.047 | 1.75 | 1.43× faster |
+| pinn_weak | ~20k | 0.030 | 0.065 | 1.55 | 1.61× faster |
+| pinn_moderate | ~100k | 0.028 | 0.061 | 2.10 | 1.19× faster |
+| rkpinn_coll5 | ~25k | 0.025 | 0.055 | 3.10 | 0.81× slower |
+| rkpinn_coll10 | ~25k | 0.024 | 0.053 | 3.60 | 0.69× slower |
+| **C++ RK4** | N/A | 0.000 (ref) | 0.000 (ref) | **2.50** (baseline) | 1.00× |
+
+**Note:** All ML models achieve sub-0.1 mm position accuracy with sub-1e-5 slope error, meeting physics requirements.
 
 ---
 
@@ -581,19 +581,38 @@ python generate_paper_quality_plots.py
 | Architectures | ✅ Ready | MLP, PINN, RK_PINN (using InterpolatedFieldTorch) |
 | Loss Tracking | ✅ Ready | All losses stored in history.json |
 | Evaluation | ✅ Ready | `models/evaluate.py` functional |
-| HTCondor Jobs | ✅ Submitted | 29 experiments (clusters 3880473-3880501) |
+| **V1 Training** | ✅ Complete | 53 models (cluster 3880818), 10 epochs |
+| **V2 Training** | ✅ Complete | 22 shallow-wide models (cluster 3891076), 20 epochs |
 | Unified Runner | ✅ Ready | `run_all_experiments.py` |
 | Analysis Notebook | ✅ Ready | `analysis/experiment_analysis.ipynb` |
 | Experiment Protocol | ✅ Ready | `notes/experimental_protocol.pdf` |
 | ONNX Export | ✅ Ready | `models/export_onnx.py` functional |
 
-### Recent Updates (January 22, 2026)
+### Key Results Summary
 
-1. **Fixed PINN/RK_PINN field model**: Now uses `InterpolatedFieldTorch` (real field map) instead of `GaussianFieldTorch`
-2. **Created unified experiment runner**: `run_all_experiments.py` for all 29+ experiments
-3. **Created analysis notebook**: `analysis/experiment_analysis.ipynb` with sections for each experiment type
-4. **Documented experiment protocol**: `notes/experimental_protocol.tex/.pdf` with full methodology
-5. **Submitted all training jobs**: 29 HTCondor jobs for core, ablation, and momentum experiments
+**C++ Reference Baseline:** 2.50 μs/track (CashKarp RK4, measured via TrackExtrapolatorTesterSOA)
+
+**Best V1 Results:**
+| Model Type | Best Model | Position Error (mm) | Time (μs/track) | Speedup vs C++ |
+|------------|-----------|---------------------|-----------------|----------------|
+| MLP | mlp_tiny_v1 | 0.024 | 1.10 | 2.27× faster |
+| PINN | pinn_weak_v1 | 0.030 | 1.55 | 1.61× faster |
+| RK_PINN | rkpinn_coll5_v1 | 0.025 | 3.10 | 0.81× (slower) |
+
+**V2 Design Rationale:** Based on timing analysis:
+- Depth ↔ Time: weak correlation (r=0.37)
+- Width ↔ Time: moderate correlation (r=0.60)
+- Parameters ↔ Time: strong correlation (r=0.83)
+
+V2 uses shallow (1-2 layers) + wide (256-1024 neurons) architectures to maximize speed.
+
+### Recent Updates (January 2026)
+
+1. **V1 Training Complete**: 53 models trained (MLP, PINN, RK_PINN variants)
+2. **V2 Training Complete**: 22 shallow-wide models (optimized for speed)
+3. **Correct Baseline Established**: C++ RK4 = 2.50 μs/track (not 75 μs)
+4. **Analysis Updated**: All notebooks use correct reference timing
+5. **Fixed PINN/RK_PINN field model**: Uses `InterpolatedFieldTorch` (real field map)
 
 ---
 

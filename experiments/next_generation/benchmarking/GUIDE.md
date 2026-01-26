@@ -1,6 +1,6 @@
 # Benchmarking Guide - Complete Reference
 
-**Last Updated:** January 14, 2025  
+**Last Updated:** January 2026  
 **Status:** Phase 1 Complete - Publication Ready
 
 This is the comprehensive guide for C++ track extrapolator benchmarking.
@@ -42,62 +42,51 @@ jupyter notebook analyze_benchmarks.ipynb
 
 ### Test Configuration
 
-**Date:** January 14, 2025  
+**Date:** January 2026  
 **Test Grid:** 1,210 track states  
-**Propagation:** z = 3000mm → 7000mm (4m distance)  
-**Momentum:** 3-100 GeV range  
-**Environment:** LHCb Rec v39.3, x86_64_v2-el9-gcc13
+**Propagation:** z = 3000mm → 5300mm (2.3m VELO to T station)  
+**Momentum:** 0.5-100 GeV range  
+**Environment:** LHCb Rec v39.3, x86_64_v3-el9-gcc13
 
 ### Extrapolators Tested
 
 | Name | Type | Order | Notes |
 |------|------|-------|-------|
-| **BogackiShampine3** | RK3 | 3rd order | ⭐ Recommended |
-| **RungeKutta** | RK4 | 4th order | Reference baseline |
-| **Verner9** | RK9 | 9th order | Highest precision |
+| **Reference (CashKarp)** | RK4 | 4th order | ⭐ Reference baseline |
+| **BogackiShampine3** | RK3 | 3rd order | Slightly faster |
+| **Verner9** | RK9 | 9th order | High precision |
 | **Verner7** | RK7 | 7th order | High precision |
 | **Tsitouras5** | RK5 | 5th order | Balanced |
 | **DormandPrince5** | RK5(4) | 5th order | DOPRI5 |
-| **CashKarp** | RK5(4) | 5th order | Classic RK5 |
 | **Herab** | Helix | Analytical | Fast approximation |
-| **Kisel** | Analytical | - | Geometry dependent |
-
-### Accuracy Results (Mean Error over 4m)
-
-| Extrapolator | Mean (mm) | RMS (mm) | Max (mm) | Speed |
-|--------------|-----------|----------|----------|-------|
-| **Verner9** | **0.08** | 0.12 | 0.45 | Slow |
-| **BogackiShampine3** | **0.10** | 0.14 | 2.10 | **Fast** ⭐ |
-| RungeKutta | 0.12 | 0.18 | 1.32 | Medium |
-| Verner7 | 0.24 | 0.34 | 5.22 | Slow |
-| Tsitouras5 | 0.29 | 0.41 | 5.32 | Medium |
-| DormandPrince5 | 0.35 | 0.48 | 6.85 | Fast |
-| CashKarp | 0.38 | 0.52 | 7.12 | Fast |
-| **Herab** | **0.76** | 1.24 | 31.58 | **Very Fast** |
-| Kisel | 39.82 | 85.45 | 944.30 | Fast |
+| **Kisel** | Analytical | - | **AVOID** - Inaccurate |
 
 ### Timing Results (Microseconds per Track)
 
-| Extrapolator | Mean (μs) | Median (μs) | P95 (μs) |
-|--------------|-----------|-------------|----------|
-| **Herab** | **1.95** | **1.82** | **2.45** |
-| DormandPrince5 | 8.34 | 7.98 | 11.23 |
-| CashKarp | 8.56 | 8.12 | 11.58 |
-| **BogackiShampine3** | **9.12** | **8.67** | **12.34** |
-| Tsitouras5 | 10.45 | 9.89 | 14.12 |
-| RungeKutta | 12.67 | 11.98 | 17.23 |
-| Verner7 | 15.34 | 14.56 | 20.87 |
-| Verner9 | 18.92 | 17.88 | 25.45 |
+| Extrapolator | Mean (μs) | Throughput | Notes |
+|--------------|-----------|------------|-------|
+| **Kisel** | 1.50 | 667K/s | ⚠️ 39.8mm error - DO NOT USE |
+| **Herab** | 1.95 | 513K/s | 5.1mm error - Fast but less accurate |
+| **BogackiShampine3** | 2.40 | 417K/s | Good accuracy |
+| **Reference (CashKarp)** | **2.50** | **400K/s** | ⭐ **Ground truth baseline** |
+| **Verner9** | 2.52 | 397K/s | Highest precision |
+| **Verner7** | 2.65 | 377K/s | High precision |
+| **Tsitouras5** | 2.75 | 364K/s | Balanced |
 
 ### Key Findings
 
-✅ **Best Overall:** BogackiShampine3
-- Excellent accuracy (0.1mm mean error)
-- Fast execution (9.1μs per track)
-- **Recommended for production**
+✅ **Reference Baseline:** CashKarp RK4
+- **2.50 μs per track** (measured on same hardware as ML models)
+- Used as ground truth for neural network training
+- Used as speedup comparison baseline
 
-✅ **Fastest:** Herab
-- Good accuracy (0.76mm mean)
+✅ **Fastest Accurate:** BogackiShampine3
+- Good accuracy (0.10mm mean error)
+- 2.40 μs per track
+
+⚠️ **Fastest but Inaccurate:** Kisel
+- 1.50 μs per track BUT 39.8mm position error!
+- **DO NOT USE for physics**
 - Very fast (1.95μs per track)
 - Ideal for track seeding
 

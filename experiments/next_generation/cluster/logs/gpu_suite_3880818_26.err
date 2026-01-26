@@ -1,0 +1,12 @@
+usage: train.py [-h] [--data_path DATA_PATH] [--max_samples MAX_SAMPLES]
+                [--model {mlp,pinn,rk_pinn}]
+                [--preset {tiny,small,medium,large,wide}]
+                [--hidden_dims HIDDEN_DIMS [HIDDEN_DIMS ...]]
+                [--activation ACTIVATION] [--dropout DROPOUT]
+                [--lambda_pde LAMBDA_PDE] [--lambda_ic LAMBDA_IC]
+                [--n_collocation N_COLLOCATION] [--batch_size BATCH_SIZE]
+                [--epochs EPOCHS] [--lr LR] [--weight_decay WEIGHT_DECAY]
+                [--patience PATIENCE] [--min_delta MIN_DELTA] [--name NAME]
+                [--checkpoint_dir CHECKPOINT_DIR] [--tensorboard]
+                [--device DEVICE] [--num_workers NUM_WORKERS]
+train.py: error: argument --preset: invalid choice: 'xlarge' (choose from 'tiny', 'small', 'medium', 'large', 'wide')

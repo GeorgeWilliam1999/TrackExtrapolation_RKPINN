@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/models/export_onnx.py", line 422, in <module>
+    main()
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/models/export_onnx.py", line 399, in main
+    paths = full_export(
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/models/export_onnx.py", line 266, in full_export
+    model, config = load_checkpoint(checkpoint_path)
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/models/export_onnx.py", line 226, in load_checkpoint
+    model = create_model(config['model_type'], **model_kwargs)
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/models/architectures.py", line 1041, in create_model
+    return MODEL_REGISTRY[model_type](**kwargs)
+TypeError: RK_PINN.__init__() got an unexpected keyword argument 'n_collocation'

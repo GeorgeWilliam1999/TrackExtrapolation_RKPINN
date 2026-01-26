@@ -1,0 +1,20 @@
+# HTCondor submission for mlp_medium_low_p (0.5-5 GeV momentum range)
+universe = vanilla
+executable = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/training/train_wrapper.sh
+arguments = mlp mlp_medium_low_p 256,256,128 1.0 1.0 /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/data_generation/data/training_low_p.npz
+
+output = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/training/logs/mlp_medium_low_p.out
+error = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/training/logs/mlp_medium_low_p.err
+log = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/training/logs/mlp_medium_low_p.log
+
+request_cpus = 4
+request_memory = 8GB
+request_gpus = 1
+
+
++JobFlavour = "long"
++MaxRunTime = 86400
++UseOS = "el9"
++JobCategory = "long"
+
+queue 1

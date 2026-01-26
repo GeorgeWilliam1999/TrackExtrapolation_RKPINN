@@ -1,0 +1,72 @@
+% =============================================================================
+% Physics-Informed Neural Networks for Track Extrapolation in LHCb
+% =============================================================================
+\documentclass[11pt,a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{siunitx}
+\usepackage{subcaption}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage[margin=2.5cm]{geometry}
+
+% Custom commands
+\newcommand{\qop}{q/p}
+\newcommand{\GeV}{\ensuremath{\,\text{GeV}}}
+\newcommand{\MeV}{\ensuremath{\,\text{MeV}}}
+\newcommand{\Tesla}{\ensuremath{\,\text{T}}}
+\newcommand{\mm}{\ensuremath{\,\text{mm}}}
+\newcommand{\mrad}{\ensuremath{\,\text{mrad}}}
+\newcommand{\mus}{\ensuremath{\,\mu\text{s}}}
+\newcommand{\ns}{\ensuremath{\,\text{ns}}}
+
+% Title
+\title{Physics-Informed Neural Networks for Fast and Accurate\\
+Track Extrapolation in the LHCb Detector}
+
+\author{G.~Scriven\textsuperscript{1}\\
+\small \textsuperscript{1}Nikhef, Amsterdam, The Netherlands}
+
+\date{\today}
+
+% =============================================================================
+\begin{document}
+% =============================================================================
+
+\maketitle
+
+\begin{abstract}
+Track extrapolation through the magnetic field is a computationally intensive 
+component of high-energy physics reconstruction. Traditional methods like 
+Runge-Kutta integration provide high accuracy but are limited by computational 
+cost in high-rate environments. We present a systematic study of neural network 
+approaches for track extrapolation in the LHCb detector, comparing standard 
+Multi-Layer Perceptrons (MLP), Physics-Informed Neural Networks (PINN), and a 
+novel Runge-Kutta-inspired Physics-Informed architecture (RK-PINN). Using 50 
+million tracks generated with the true LHCb magnetic field map, we demonstrate 
+that physics-informed approaches achieve [X]\% improvement in accuracy while 
+maintaining inference speeds of [Y]$\mus$ per track. The RK-PINN architecture 
+shows particular promise for low-momentum tracks where physics constraints are 
+most important.
+\end{abstract}
+
+% Include sections
+\input{sections/introduction}
+\input{sections/data}
+\input{sections/experimental_design}
+% \input{sections/results}
+% \input{sections/conclusion}
+
+% Bibliography
+\bibliographystyle{unsrt}
+% \bibliography{references}
+
+\end{document}

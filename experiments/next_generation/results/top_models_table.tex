@@ -1,0 +1,19 @@
+\begin{table}
+\caption{Top 10 models by validation loss}
+\begin{tabular}{lllr}
+\toprule
+name & model_type & n_params & best_val_loss \\
+\midrule
+mlp_large_v1 & MLP & 398,596 & 4.45e-04 \\
+mlp_medium & MLP & 100,996 & 5.83e-04 \\
+rkpinn_medium_data_only & RK_PINN & 100,996 & 6.71e-04 \\
+mlp_wide & MLP & 430,980 & 9.51e-04 \\
+mlp_medium_v1 & MLP & 100,996 & 1.02e-03 \\
+mlp_wide_v1 & MLP & 430,980 & 1.17e-03 \\
+rkpinn_medium_pde_weak & RK_PINN & 100,996 & 1.31e-03 \\
+mlp_small & MLP & 17,924 & 1.34e-03 \\
+mlp_balanced_v1 & MLP & 57,316 & 2.09e-03 \\
+mlp_wide_shallow_v1 & MLP & 35,204 & 2.21e-03 \\
+\bottomrule
+\end{tabular}
+\end{table}

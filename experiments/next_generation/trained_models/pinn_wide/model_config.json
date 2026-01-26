@@ -1,0 +1,15 @@
+{
+  "model_type": "PINN",
+  "hidden_dims": [
+    512,
+    512,
+    256,
+    128
+  ],
+  "activation": "silu",
+  "dropout": 0.0,
+  "lambda_pde": 1.0,
+  "lambda_ic": 1.0,
+  "n_collocation": 10,
+  "parameters": 430980
+}

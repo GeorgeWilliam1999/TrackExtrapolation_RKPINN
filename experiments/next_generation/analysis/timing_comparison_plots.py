@@ -85,7 +85,7 @@ def prepare_combined_data(nn_timing, nn_accuracy, cpp_benchmarks):
         pos_error_um = pos_error_mm * 1000  # Convert to micrometers
         
         # Determine category
-        if model_type == 'rk_pinn' or 'rkpinn' in name:
+        if model_type == 'rk_pinn' or 'rk_pinn' in name or 'rkpinn' in name:
             category = 'RK-PINN'
         elif model_type == 'pinn' or 'pinn' in name:
             category = 'PINN'

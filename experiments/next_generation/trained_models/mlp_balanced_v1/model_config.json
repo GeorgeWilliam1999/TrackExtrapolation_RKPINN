@@ -1,0 +1,11 @@
+{
+  "model_type": "MLP",
+  "hidden_dims": [
+    192,
+    192,
+    96
+  ],
+  "activation": "silu",
+  "dropout": 0.0,
+  "parameters": 57316
+}

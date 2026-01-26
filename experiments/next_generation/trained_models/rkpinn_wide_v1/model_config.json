@@ -1,0 +1,26 @@
+{
+  "model_type": "RK_PINN",
+  "hidden_dims": [
+    512,
+    512,
+    256,
+    128
+  ],
+  "activation": "silu",
+  "n_stages": 4,
+  "lambda_pde": 0.001,
+  "lambda_ic": 1.0,
+  "stage_fractions": [
+    0.25,
+    0.5,
+    0.75,
+    1.0
+  ],
+  "stage_weights": [
+    0.15516021847724915,
+    0.3472689390182495,
+    0.34180545806884766,
+    0.15576539933681488
+  ],
+  "parameters": 531732
+}

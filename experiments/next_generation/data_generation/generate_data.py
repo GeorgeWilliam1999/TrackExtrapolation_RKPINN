@@ -5,6 +5,9 @@ Generate Training Data for Track Extrapolation
 Uses pure Python RK4 integrator to generate ground truth extrapolations.
 This script creates datasets for training ML models.
 
+IMPORTANT: Uses the REAL FIELD MAP (twodip.rtf) by default for accuracy.
+This ensures consistency between data generation and PINN training.
+
 Supports two output modes:
 1. Endpoint only: X (input state) → Y (final state) - compact for MLP/PINN training
 2. Full trajectory: T (all states along path) - for analysis and visualization
@@ -12,7 +15,7 @@ Supports two output modes:
 Based on: legacy code but cleaned up for next-generation experiments
 Author: G. Scriven
 Date: 2025-01-14
-Updated: 2026-01-19 (added trajectory saving option)
+Updated: 2026-01-19 (unified field module with real field map support)
 """
 
 import numpy as np
@@ -23,9 +26,22 @@ from typing import Tuple, List, Optional
 import sys
 import time
 
-# Add utils to path
-sys.path.insert(0, str(Path(__file__).parent.parent / 'utils' / 'archived'))
-from rk4_propagator import LHCbMagneticField, RK4Integrator, generate_random_track
+# Add utils to path (use new unified module, not archived)
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
+from rk4_propagator import RK4Integrator, generate_random_track
+from magnetic_field import get_field_numpy, InterpolatedFieldNumpy
+
+
+# Global variables for worker process (avoid reloading field map for every track)
+_WORKER_FIELD = None
+_WORKER_INTEGRATOR = None
+
+
+def _init_worker(use_real_field: bool, polarity: int, step_size: float):
+    """Initialize field and integrator once per worker process."""
+    global _WORKER_FIELD, _WORKER_INTEGRATOR
+    _WORKER_FIELD = get_field_numpy(use_interpolated=use_real_field, polarity=polarity)
+    _WORKER_INTEGRATOR = RK4Integrator(field=_WORKER_FIELD, step_size=step_size)
 
 
 def generate_single_track(args: Tuple) -> Tuple[np.ndarray, np.ndarray, float, Optional[np.ndarray]]:
@@ -33,7 +49,7 @@ def generate_single_track(args: Tuple) -> Tuple[np.ndarray, np.ndarray, float, O
     Generate single track propagation (for parallel processing).
     
     Args:
-        args: (track_id, z_start, z_end, p_range, step_size, polarity, save_trajectory)
+        args: (track_id, z_start, z_end, p_range, save_trajectory)
         
     Returns:
         input_state: [x, y, tx, ty, qop, dz] at z_start
@@ -42,12 +58,12 @@ def generate_single_track(args: Tuple) -> Tuple[np.ndarray, np.ndarray, float, O
         trajectory: If save_trajectory=True, array of shape (n_steps, 6) = [z, x, y, tx, ty, qop]
                    If save_trajectory=False, None
     """
-    track_id, z_start, z_end, p_range, step_size, polarity, save_trajectory = args
+    global _WORKER_INTEGRATOR
     
-    # Setup field and integrator
-    field = LHCbMagneticField()
-    field.params.polarity = polarity
-    integrator = RK4Integrator(field, step_size=step_size)
+    track_id, z_start, z_end, p_range, save_trajectory = args
+    
+    # Use pre-initialized integrator from worker process
+    integrator = _WORKER_INTEGRATOR
     
     # Generate random initial state
     state_initial, momentum = generate_random_track(p_range=p_range, z_start=z_start)
@@ -116,7 +132,8 @@ def generate_dataset(n_tracks: int,
                      step_size: float = 5.0,
                      polarity: int = 1,
                      n_workers: int = 8,
-                     save_trajectories: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[List[np.ndarray]]]:
+                     save_trajectories: bool = False,
+                     use_real_field: bool = True) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[List[np.ndarray]]]:
     """
     Generate dataset of track propagations in parallel.
     
@@ -129,6 +146,8 @@ def generate_dataset(n_tracks: int,
         polarity: Magnet polarity (+1 MagUp, -1 MagDown)
         n_workers: Number of parallel workers
         save_trajectories: If True, save full trajectory for each track
+        use_real_field: If True (default), use interpolated field map (twodip.rtf).
+                       If False, use Gaussian approximation (~1.3% error).
         
     Returns:
         X: Input states [n_tracks, 6] = [x, y, tx, ty, qop, dz]
@@ -137,23 +156,26 @@ def generate_dataset(n_tracks: int,
         T: List of trajectories (if save_trajectories=True), each is array of shape (n_steps, 6)
            where columns are [z, x, y, tx, ty, qop]. None if save_trajectories=False.
     """
+    field_type = "REAL FIELD MAP (interpolated)" if use_real_field else "GAUSSIAN APPROXIMATION"
     print(f"\nGenerating {n_tracks} tracks...")
     print(f"  z: {z_start}mm → {z_end}mm (Δz = {z_end - z_start}mm)")
     print(f"  Momentum range: {p_range[0]}-{p_range[1]} GeV")
     print(f"  RK4 step size: {step_size}mm")
     print(f"  Field polarity: {'MagUp' if polarity > 0 else 'MagDown'}")
+    print(f"  Field model: {field_type}")
     print(f"  Parallel workers: {n_workers}")
     print(f"  Save trajectories: {save_trajectories}")
     
-    # Prepare arguments for parallel processing
+    # Prepare arguments for parallel processing (simplified - field params passed via initializer)
     args_list = [
-        (i, z_start, z_end, p_range, step_size, polarity, save_trajectories)
+        (i, z_start, z_end, p_range, save_trajectories)
         for i in range(n_tracks)
     ]
     
-    # Generate in parallel
+    # Generate in parallel with worker initialization (field loaded once per worker)
     start_time = time.time()
-    with mp.Pool(n_workers) as pool:
+    with mp.Pool(n_workers, initializer=_init_worker, 
+                 initargs=(use_real_field, polarity, step_size)) as pool:
         results = pool.map(generate_single_track, args_list)
     elapsed = time.time() - start_time
     
@@ -270,6 +292,10 @@ def main():
     parser.add_argument('--polarity', type=int, choices=[-1, 1], default=-1,
                        help='Magnet polarity: +1=MagUp, -1=MagDown (default: -1 from fit)')
     
+    # Field map options
+    parser.add_argument('--use-gaussian-field', action='store_true',
+                       help='Use Gaussian approximation instead of real field map (NOT RECOMMENDED)')
+    
     # Trajectory saving
     parser.add_argument('--save-trajectories', action='store_true',
                        help='Save full trajectories (all intermediate states)')
@@ -285,6 +311,9 @@ def main():
     # Set random seed
     np.random.seed(args.seed)
     
+    # Determine field type
+    use_real_field = not args.use_gaussian_field
+    
     print("=" * 70)
     print("Track Extrapolation Data Generation")
     print("=" * 70)
@@ -293,6 +322,13 @@ def main():
     print(f"  Output: {args.output_dir}")
     print(f"  Random seed: {args.seed}")
     print(f"  Save trajectories: {args.save_trajectories}")
+    
+    if not use_real_field:
+        print("\n  ⚠️  WARNING: Using GAUSSIAN APPROXIMATION for field!")
+        print("      This has ~1.3% error compared to the real field map.")
+        print("      Data generated this way will NOT be consistent with PINN training!")
+    else:
+        print(f"\n  ✓ Using REAL FIELD MAP (twodip.rtf)")
     
     # Generate dataset
     X, Y, P, T = generate_dataset(
@@ -303,7 +339,8 @@ def main():
         step_size=args.step_size,
         polarity=args.polarity,
         n_workers=args.workers,
-        save_trajectories=args.save_trajectories
+        save_trajectories=args.save_trajectories,
+        use_real_field=use_real_field
     )
     
     # Save

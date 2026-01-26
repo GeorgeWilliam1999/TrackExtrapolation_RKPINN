@@ -5,8 +5,11 @@ Guide for training neural network track extrapolators on the NIKHEF stoomboot cl
 ## Quick Start
 
 ```bash
-# Submit all training jobs (30 models)
+# Submit V1 training jobs (30 models, 10 epochs)
 condor_submit submit_full_suite_gpu.sub
+
+# Submit V2 shallow-wide models (22 models, 20 epochs)
+condor_submit submit_v2_shallow_wide.sub
 
 # Monitor jobs
 condor_q
@@ -14,6 +17,13 @@ condor_q
 # Check specific job
 condor_q -analyze <JOB_ID>
 ```
+
+## Training Status
+
+| Submission | Cluster | Models | Epochs | Status |
+|------------|---------|--------|--------|--------|
+| V1 (full suite) | 3880818 | 30 | 10 | ✅ Complete |
+| V2 (shallow-wide) | 3891076 | 22 | 20 | ✅ Complete |
 
 ## GPU Resources
 
@@ -31,17 +41,28 @@ NIKHEF has excellent GPU resources available:
 
 We train **three** distinct architectures:
 
+### V1 Models (submit_full_suite_gpu.sub)
 | Model | Jobs | Description | Key Parameter |
 |-------|------|-------------|---------------|
 | **MLP** | 10 | Pure data loss, architecture sweep | N/A |
 | **PINN** | 10 | Autodiff PDE residual loss | `--lambda_pde` |
 | **RK-PINN** | 10 | Collocation-based physics | `--n_collocation`, `--lambda_pde` |
 
-**Total: 30 jobs**
+### V2 Models (submit_v2_shallow_wide.sub)
+Based on timing analysis showing **width impacts speed more than depth**:
+
+| Model | Jobs | Architecture | Rationale |
+|-------|------|--------------|-----------|
+| **MLP V2** | 8 | 1-2 layers, 256-1024 wide | Fastest inference |
+| **PINN V2** | 8 | 1-2 layers, 256-1024 wide | Physics with speed |
+| **RK-PINN V2** | 6 | 1-2 layers, 256-1024 wide | RK structure + speed |
+
+V2 uses `+JobCategory = "long"` with 12-hour time limit for 20 epochs.
 
 ## Files
 
-- `submit_full_suite_gpu.sub` - Main HTCondor job definitions (30 jobs)
+- `submit_full_suite_gpu.sub` - V1 HTCondor job definitions (30 jobs, 10 epochs)
+- `submit_v2_shallow_wide.sub` - V2 shallow-wide models (22 jobs, 20 epochs)
 - `submit_training.sub` - Single job template
 - `submit_training_gpu.sub` - GPU job template  
 - `run_training.sh` - Script executed on worker nodes

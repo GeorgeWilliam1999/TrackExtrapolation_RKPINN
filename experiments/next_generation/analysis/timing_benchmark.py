@@ -90,15 +90,15 @@ class TimingBenchmark:
         Benchmark reference using C++ RK extrapolator.
         
         Note: Calls C++ executable for timing comparison.
+        Reference: CashKarp RK4 = 2.50 μs/track (measured via TrackExtrapolatorTesterSOA)
         """
         print("\n" + "="*70)
         print("C++ RUNGE-KUTTA REFERENCE (via subprocess)")
         print("="*70)
         
-        # For now, use a reference timing from prior benchmarks
-        # The C++ RK4 extrapolator runs at approximately:
-        # - ~100-200 μs per track (depends on step size and hardware)
-        # - ~5,000-10,000 tracks/second single threaded
+        # Reference timing from TrackExtrapolatorTesterSOA benchmark:
+        # CashKarp RK4 extrapolator: 2.50 μs per track
+        # This is the accurate reference baseline
         
         # We'll measure actual timing by calling the C++ executable
         import subprocess
@@ -107,28 +107,28 @@ class TimingBenchmark:
         
         if not cpp_exe.exists():
             print(f"  ⚠ C++ executable not found: {cpp_exe}")
-            print(f"  Using reference estimate: ~150 μs/track, ~6,600 tracks/s")
+            print(f"  Using measured reference: 2.50 μs/track, 400K tracks/s")
             
             self.results['runge_kutta_cpp'] = {
-                'method': 'C++ RK4',
+                'method': 'C++ RK4 (CashKarp)',
                 'device': 'CPU',
-                'time_per_track_us': 150.0,
-                'throughput_hz': 6666.0,
+                'time_per_track_us': 2.50,
+                'throughput_hz': 400000.0,
                 'position_error_mm': 0.0,  # Ground truth
                 'speedup_vs_rk': 1.0,
                 'parameters': 0,
-                'note': 'Reference estimate - C++ exe not benchmarked'
+                'note': 'Measured reference from TrackExtrapolatorTesterSOA'
             }
             
-            return 150.0, 6666.0
+            return 2.50, 400000.0
         
         # TODO: Actually run C++ timing benchmark
-        # For now, use reference values
-        time_per_track = 150.0  # μs
-        throughput = 6666.0  # tracks/s
+        # For now, use measured reference values
+        time_per_track = 2.50  # μs (CashKarp RK4)
+        throughput = 400000.0  # tracks/s
         
         self.results['runge_kutta_cpp'] = {
-            'method': 'C++ RK4',
+            'method': 'C++ RK4 (CashKarp)',
             'device': 'CPU',
             'time_per_track_us': time_per_track,
             'throughput_hz': throughput,
@@ -137,8 +137,8 @@ class TimingBenchmark:
             'parameters': 0
         }
         
-        print(f"  Time per track: {time_per_track:.1f} μs (reference)")
-        print(f"  Throughput: {throughput:.0f} tracks/s (reference)")
+        print(f"  Time per track: {time_per_track:.2f} μs (CashKarp reference)")
+        print(f"  Throughput: {throughput:.0f} tracks/s")
         print(f"  Position error: 0.000 mm (ground truth)")
         
         return time_per_track, throughput
@@ -190,8 +190,8 @@ class TimingBenchmark:
                                activation=config.get('activation', 'relu'),
                                dropout=config.get('dropout', 0.0),
                                input_dim=6, output_dim=4)
-        elif model_type == 'rkpinn':
-            model = create_model('rkpinn',
+        elif model_type == 'rk_pinn':
+            model = create_model('rk_pinn',
                                hidden_dims=config['hidden_dims'],
                                activation=config.get('activation', 'relu'),
                                input_dim=6, output_dim=4,
@@ -360,7 +360,7 @@ class TimingBenchmark:
             
             if 'runge_kutta' in name:
                 types.append('RK4')
-            elif 'rkpinn' in name:
+            elif 'rk_pinn' in name:
                 types.append('RK-PINN')
             elif 'mlp' in name:
                 types.append('MLP')

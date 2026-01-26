@@ -253,7 +253,7 @@ ax.legend(ncol=2, fontsize=9)
 
 # 1c. Position vs Slope Errors
 ax = fig.add_subplot(gs[1, 1])
-for mtype in ['rkpinn', 'mlp', 'cpp']:
+for mtype in ['rk_pinn', 'mlp', 'cpp']:
     mask = [m['type'] == mtype for m in models_data]
     pos_err = [models_data[i]['pos_mean']*1000 for i in range(len(models_data)) if mask[i]]
     slope_err = [models_data[i]['slope_mean'] for i in range(len(models_data)) if mask[i]]
@@ -294,7 +294,7 @@ ax.set_title('Error Distribution by Type', fontweight='bold')
 
 # 1e. Component Errors (X, Y) - Top 12 neural nets only
 ax = fig.add_subplot(gs[2, 0])
-nn_models = [m for m in models_data if m['type'] in ['rkpinn', 'mlp']][:12]
+nn_models = [m for m in models_data if m['type'] in ['rk_pinn', 'mlp']][:12]
 x_pos = np.arange(len(nn_models))
 width = 0.35
 
@@ -537,7 +537,7 @@ fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
 # 2a. Accuracy vs Parameters
 ax = axes[0, 0]
-for mtype in ['rkpinn', 'mlp', 'cpp']:
+for mtype in ['rk_pinn', 'mlp', 'cpp']:
     mask = [m['type'] == mtype for m in models_data]
     params = [models_data[i]['params'] if models_data[i]['params'] > 0 else 1000 for i in range(len(models_data)) if mask[i]]
     errors = [models_data[i]['pos_mean']*1000 for i in range(len(models_data)) if mask[i]]
@@ -566,7 +566,7 @@ ax.legend(fontsize=9)
 # 2b. Architecture Type Statistics
 ax = axes[0, 1]
 type_stats = {}
-for mtype in ['rkpinn', 'mlp', 'cpp']:
+for mtype in ['rk_pinn', 'mlp', 'cpp']:
     type_models = [m for m in models_data if m['type']==mtype]
     if type_models:
         type_stats[mtype] = {
@@ -711,7 +711,7 @@ if models_with_timing:
     
     # 3b. Speed vs Accuracy Tradeoff
     ax = fig.add_subplot(gs[1, 0])
-    for mtype in ['rkpinn', 'mlp', 'cpp']:
+    for mtype in ['rk_pinn', 'mlp', 'cpp']:
         mask = [m['type'] == mtype for m in models_with_timing]
         tp = [models_with_timing[i]['throughput_hz'] for i in range(len(models_with_timing)) if mask[i]]
         err = [models_with_timing[i]['pos_mean']*1000 for i in range(len(models_with_timing)) if mask[i]]
@@ -843,7 +843,7 @@ ax.axis('off')
 summary_text = "PERFORMANCE SUMMARY\n" + "="*45 + "\n\n"
 summary_text += f"Total Models Analyzed: {len(models_data)}\n\n"
 
-for mtype in ['rkpinn', 'mlp', 'cpp']:
+for mtype in ['rk_pinn', 'mlp', 'cpp']:
     type_models = [m for m in models_data if m['type']==mtype]
     if type_models:
         errors = [m['pos_mean']*1000 for m in type_models]
@@ -880,10 +880,10 @@ rkpinn_counts = [0] * len(bin_labels)
 mlp_counts = [0] * len(bin_labels)
 
 for m in models_data:
-    if m['type'] in ['rkpinn', 'mlp']:
+    if m['type'] in ['rk_pinn', 'mlp']:
         for i, (low, high) in enumerate(zip(param_bins[:-1], param_bins[1:])):
             if low <= m['params']/1000 < high:
-                if m['type'] == 'rkpinn':
+                if m['type'] == 'rk_pinn':
                     rkpinn_counts[i] += 1
                 else:
                     mlp_counts[i] += 1
@@ -904,7 +904,7 @@ ax.legend(fontsize=9)
 
 # 4e. Error Components (top 10 neural nets, normalized)
 ax = fig.add_subplot(gs[2, 1:])
-top10_nn = [m for m in models_data if m['type'] in ['rkpinn', 'mlp']][:10]
+top10_nn = [m for m in models_data if m['type'] in ['rk_pinn', 'mlp']][:10]
 x = np.arange(len(top10_nn))
 
 components = {
