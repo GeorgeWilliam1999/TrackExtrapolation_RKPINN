@@ -1,0 +1,91 @@
+#===============================================================================
+# HTCondor GPU Training - V2 RETRY (Failed Jobs)
+#
+# Resubmitting failed V2 models with 24 hour walltime
+# These models were killed mid-training due to walltime limits
+#
+# Failed models:
+#   - mlp_v2_shallow_512_256 (12/20 epochs)
+#   - pinn_v2_single_512 (6/20 epochs)
+#   - pinn_v2_single_1024 (5/20 epochs)
+#   - rkpinn_v2_shallow_512 (7/20 epochs)
+#   - rkpinn_v2_shallow_512_256 (0/20 epochs)
+#   - rkpinn_v2_shallow_1024_256 (2/20 epochs)
+#
+# Usage:
+#   condor_submit submit_v2_retry.sub
+#===============================================================================
+
+universe = vanilla
+executable = run_training.sh
+
+# GPU REQUIREMENTS
+request_gpus = 1
+
+# Job requirements - EXTRA LONG time limit
++UseOS = "el9"
++JobCategory = "long"
+
+# Resources
+request_cpus = 4
+request_memory = 32GB
+request_disk = 10GB
+
+# Maximum runtime: 24 hours
++MaxRuntime = 86400
+
+# Working directory
+should_transfer_files = NO
+initialdir = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/cluster
+
+# Logs
+log = logs/v2_retry_$(Cluster)_$(Process).log
+output = logs/v2_retry_$(Cluster)_$(Process).out
+error = logs/v2_retry_$(Cluster)_$(Process).err
+
+# Notification
+notification = Complete
+notify_user = gscriven@nikhef.nl
+
+# Limit concurrent jobs to avoid overwhelming GPUs
+concurrency_limits = NIKHEF_GPU:10
+
+#===============================================================================
+# FAILED MLP MODELS
+#===============================================================================
+
+# MLP V2-5: Shallow 2-layer (512-256) - was at 12/20 epochs
+arguments = mlp tiny mlp_v2_shallow_512_256 --epochs 20 --batch_size 8192 --hidden_dims 512 256
+queue 1
+
+#===============================================================================
+# FAILED PINN MODELS
+#===============================================================================
+
+# PINN V2-2: Single layer (512) - was at 6/20 epochs
+arguments = pinn tiny pinn_v2_single_512 --epochs 20 --batch_size 8192 --hidden_dims 512 --lambda_pde 1.0
+queue 1
+
+# PINN V2-3: Single layer (1024) - was at 5/20 epochs
+arguments = pinn tiny pinn_v2_single_1024 --epochs 20 --batch_size 8192 --hidden_dims 1024 --lambda_pde 1.0
+queue 1
+
+#===============================================================================
+# FAILED RK_PINN MODELS (smaller batch size for memory)
+#===============================================================================
+
+# RK_PINN V2-5: Shallow 2-layer (512-512) - was at 7/20 epochs
+arguments = rk_pinn tiny rkpinn_v2_shallow_512 --epochs 20 --batch_size 2048 --hidden_dims 512 512 --lambda_pde 1.0
+queue 1
+
+# RK_PINN V2-4: Shallow 2-layer (512-256) - was at 0/20 epochs
+arguments = rk_pinn tiny rkpinn_v2_shallow_512_256 --epochs 20 --batch_size 2048 --hidden_dims 512 256 --lambda_pde 1.0
+queue 1
+
+# RK_PINN V2-6: Shallow 2-layer (1024-256) - was at 2/20 epochs
+arguments = rk_pinn tiny rkpinn_v2_shallow_1024_256 --epochs 20 --batch_size 2048 --hidden_dims 1024 256 --lambda_pde 1.0
+queue 1
+
+#===============================================================================
+# TOTAL: 6 retry jobs
+#===============================================================================

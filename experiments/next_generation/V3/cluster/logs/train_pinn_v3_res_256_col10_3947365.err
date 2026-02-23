@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_pinn.py", line 459, in <module>
+    main()
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_pinn.py", line 455, in main
+    train(config)
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_pinn.py", line 311, in train
+    architecture=config['model']['type'],
+KeyError: 'type'

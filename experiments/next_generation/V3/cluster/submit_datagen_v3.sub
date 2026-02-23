@@ -1,0 +1,35 @@
+# V3 Data Generation - Condor Submission
+# Generates training data with variable dz for V3 models
+#
+# Usage:
+#   condor_submit submit_datagen_v3.sub
+#
+# This generates 100M samples with variable dz in [500, 12000] mm
+
+universe = vanilla
+executable = /usr/bin/bash
+arguments = -c "cd /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/data_generation && source /data/bfys/gscriven/miniconda3/etc/profile.d/conda.sh && conda activate TE && python generate_variable_dz.py --n_samples $(N_SAMPLES) --output $(OUTPUT_PATH) --dz_min $(DZ_MIN) --dz_max $(DZ_MAX) --n_workers 8 --batch_size 10000000"
+
+# Environment
+getenv = True
+environment = "HOME=/data/bfys/gscriven"
+
+# Resources
+request_cpus = 8
+request_memory = 32GB
+request_disk = 100GB
+
+# Output
+output = logs/datagen_v3_$(Cluster)_$(Process).out
+error = logs/datagen_v3_$(Cluster)_$(Process).err
+log = logs/datagen_v3_$(Cluster).log
+
+# Job configuration
+# Full 100M dataset for production
+N_SAMPLES = 100000000
+OUTPUT_PATH = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/data_generation/data/training_v3_100M.npz
+DZ_MIN = 500
+DZ_MAX = 12000
+
+# Queue the job
+queue 1

@@ -1,0 +1,39 @@
+{
+    "name": "pinn_v3_res_256_col20",
+    "description": "PINN Residual with 20 collocation points (dense)",
+    
+    "model": {
+        "architecture": "residual",
+        "hidden_dims": [256, 256],
+        "activation": "silu",
+        "dropout": 0.0
+    },
+    
+    "data": {
+        "train_path": "V3/data/training_pinn_v3_col20_v2.npz",
+        "val_split": 0.1,
+        "n_collocation": 20
+    },
+    
+    "training": {
+        "batch_size": 2048,
+        "epochs": 50,
+        "learning_rate": 0.001,
+        "weight_decay": 0.0001,
+        "scheduler": "cosine",
+        "warmup_epochs": 5,
+        "grad_clip": 1.0
+    },
+    
+    "loss": {
+        "lambda_ic": 10.0,
+        "lambda_endpoint": 1.0,
+        "lambda_collocation": 1.0
+    },
+    
+    "output": {
+        "dir": "V3/trained_models/pinn_v3_res_256_col20",
+        "save_best": true,
+        "save_every": 10
+    }
+}

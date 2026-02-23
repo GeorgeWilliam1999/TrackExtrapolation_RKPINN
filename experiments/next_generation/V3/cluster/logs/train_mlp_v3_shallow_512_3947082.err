@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_mlp.py", line 865, in <module>
+    main()
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_mlp.py", line 857, in main
+    model, history, exp_dir = train(config)
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_mlp.py", line 525, in train
+    X, Y, P = load_data(config)
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_mlp.py", line 126, in load_data
+    P = data['P']  # [N] - momentum
+  File "/data/bfys/gscriven/conda/envs/TE/lib/python3.10/site-packages/numpy/lib/_npyio_impl.py", line 261, in __getitem__
+    raise KeyError(f"{key} is not a file in the archive")
+KeyError: 'P is not a file in the archive'

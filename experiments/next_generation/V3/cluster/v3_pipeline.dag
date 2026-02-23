@@ -1,0 +1,20 @@
+# V3 Complete Pipeline DAG
+# Runs data generation, then all training jobs in parallel
+#
+# Submit with: condor_submit_dag v3_pipeline.dag
+
+# Data generation must complete first
+JOB  DataGen  submit_data_gen.sub
+
+# Training jobs depend on data generation
+JOB  MLP_shallow_256  submit_mlp_shallow_256.sub
+JOB  MLP_shallow_512  submit_mlp_shallow_512.sub
+JOB  MLP_deep_128     submit_mlp_deep_128.sub
+JOB  MLP_deep_256     submit_mlp_deep_256.sub
+JOB  PINN_col5        submit_pinn_col5.sub
+JOB  PINN_col10       submit_pinn_col10.sub
+JOB  PINN_col20       submit_pinn_col20.sub
+JOB  PINN_col50       submit_pinn_col50.sub
+
+# Dependencies: all training starts after data generation
+PARENT DataGen CHILD MLP_shallow_256 MLP_shallow_512 MLP_deep_128 MLP_deep_256 PINN_col5 PINN_col10 PINN_col20 PINN_col50

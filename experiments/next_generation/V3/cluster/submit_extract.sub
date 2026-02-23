@@ -1,0 +1,17 @@
+universe = vanilla
+executable = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/cluster/run_extract_only.sh
+
+output = V3/cluster/logs/extract_$(Cluster).out
+error = V3/cluster/logs/extract_$(Cluster).err
+log = V3/cluster/logs/extract_$(Cluster).log
+
+request_cpus = 8
+request_memory = 64GB
+request_disk = 50GB
+
++UseOS = "el9"
++JobCategory = "long"
+
+should_transfer_files = NO
+
+queue 1

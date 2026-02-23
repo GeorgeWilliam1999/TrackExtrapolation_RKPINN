@@ -1,0 +1,28 @@
+#!/bin/bash
+# V3 Segment Extraction for PINN with Supervised Collocation
+#
+# Extracts PINN training samples with different collocation counts.
+# Each job extracts 10M samples with different number of collocation points.
+
+universe = vanilla
+executable = /bin/bash
+getenv = False
++UseOS = "el9"
++JobCategory = "short"
+
+request_CPUs = 1
+request_memory = 16G
+request_disk = 30G
+
+log = V3/cluster/logs/pinn_extract_$(Cluster)_$(Process).log
+output = V3/cluster/logs/pinn_extract_$(Cluster)_$(Process).out
+error = V3/cluster/logs/pinn_extract_$(Cluster)_$(Process).err
+
+initialdir = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation
+
+# Collocation point study: 5, 10, 20, 50
+# Process 0 → col5, Process 1 → col10, Process 2 → col20, Process 3 → col50
+N_COL = $INT(5 * (2^$(Process)))
+arguments = "-c 'export HOME=/data/bfys/gscriven && source /data/bfys/gscriven/conda/etc/profile.d/conda.sh && conda activate TE && COL_VALS=(5 10 20 50) && COL=\$${COL_VALS[$(Process)]} && cd /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/data_generation && python extract_segments.py --input ../data/trajectories_10k.npz --n_samples 10000000 --dz_min 500 --dz_max 12000 --collocation_points \$$COL --seed 42 --output ../data/training_pinn_v3_col\$$COL.npz'"
+
+queue 4

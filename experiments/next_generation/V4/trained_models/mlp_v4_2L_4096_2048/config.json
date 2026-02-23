@@ -1,0 +1,30 @@
+{
+  "description": "V4 MLP, 2 hidden layers [4096, 2048], variable dz",
+  "model": {
+    "type": "mlp",
+    "hidden_dims": [
+      4096,
+      2048
+    ],
+    "activation": "silu"
+  },
+  "data": {
+    "train_path": "V3/data/training_mlp_v3_100M_v2.npz",
+    "val_split": 0.1
+  },
+  "training": {
+    "batch_size": 4096,
+    "epochs": 100,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "warmup_epochs": 5,
+    "grad_clip": 1.0,
+    "patience": 20
+  },
+  "output": {
+    "dir": "V4/trained_models/mlp_v4_2L_4096_2048",
+    "save_every": 10,
+    "tensorboard": true
+  },
+  "seed": 42
+}

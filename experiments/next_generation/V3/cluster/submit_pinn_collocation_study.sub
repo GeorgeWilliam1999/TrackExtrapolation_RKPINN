@@ -1,0 +1,36 @@
+#!/bin/bash
+# V3 PINN Collocation Study - Condor Submission
+#
+# Trains PINN models with varying numbers of collocation points
+# to determine the optimal number for training efficiency vs accuracy.
+
+universe = vanilla
+executable = /bin/bash
+getenv = True
++UseOS = "el9"
++JobCategory = "short"
+
+# Request GPU
+request_GPUs = 1
+request_CPUs = 4
+request_memory = 16G
+request_disk = 50G
+
+# Logs
+log = V3/cluster/logs/pinn_collocation_$(Cluster)_$(Process).log
+output = V3/cluster/logs/pinn_collocation_$(Cluster)_$(Process).out
+error = V3/cluster/logs/pinn_collocation_$(Cluster)_$(Process).err
+
+# Working directory
+initialdir = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation
+
+# Arguments: config file path
+arguments = "-c 'source ~/.bashrc && conda activate TE && cd V3/training && python train_pinn.py --config $(config_file)'"
+
+# Job definitions
+queue config_file from (
+    configs/pinn_v3_res_256_col5.json
+    configs/pinn_v3_res_256_col10.json
+    configs/pinn_v3_res_256_col20.json
+    configs/pinn_v3_res_256_col50.json
+)

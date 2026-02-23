@@ -1,0 +1,46 @@
+#!/bin/bash
+# V3 Data Generation Pipeline - Condor Submission
+#
+# Two-step process:
+# 1. Generate full trajectories (5mm resolution)
+# 2. Extract training samples with variable dz
+#
+# Submit this file to run the complete data generation pipeline.
+
+universe = vanilla
+executable = /bin/bash
+getenv = True
+
+request_CPUs = 16
+request_memory = 32G
+request_disk = 100G
+
+log = logs/datagen_$(Cluster)_$(Process).log
+output = logs/datagen_$(Cluster)_$(Process).out
+error = logs/datagen_$(Cluster)_$(Process).err
+
+initialdir = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation
+
+# ============================================================================
+# Job 0: Generate trajectories
+# ============================================================================
+arguments = "-c 'source ~/.bashrc && conda activate TE && cd V3/data_generation && python generate_trajectories.py --n_trajectories 10000 --z_start 0 --z_end 15000 --step_size 5 --workers 16 --output ../data/trajectories_10k.npz'"
+queue 1
+
+# ============================================================================
+# Job 1: Extract MLP samples (100M)
+# ============================================================================
+# Note: Run after Job 0 completes
+# arguments = "-c 'source ~/.bashrc && conda activate TE && cd V3/data_generation && python extract_segments.py --input ../data/trajectories_10k.npz --n_samples 100000000 --dz_min 500 --dz_max 12000 --output ../data/training_mlp_v3.npz'"
+# queue 1
+
+# ============================================================================
+# Job 2-5: Extract PINN samples with different collocation points
+# ============================================================================
+# Note: Run after Job 0 completes
+# queue n_col, output_suffix from (
+#     5, col5
+#     10, col10
+#     20, col20
+#     50, col50
+# )

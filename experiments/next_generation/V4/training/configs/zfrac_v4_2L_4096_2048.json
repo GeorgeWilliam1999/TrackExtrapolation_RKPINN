@@ -1,0 +1,33 @@
+{
+    "description": "V4 ZFrac PINN, 2 hidden layers [4096, 2048], variable dz",
+    "model": {
+        "type": "zfrac",
+        "hidden_dims": [4096, 2048],
+        "activation": "silu"
+    },
+    "data": {
+        "train_path": "V3/data/training_pinn_v3_col10_v2.npz",
+        "val_split": 0.1,
+        "n_collocation": 10
+    },
+    "loss": {
+        "lambda_ic": 10.0,
+        "lambda_endpoint": 1.0,
+        "lambda_collocation": 1.0
+    },
+    "training": {
+        "batch_size": 4096,
+        "epochs": 100,
+        "learning_rate": 0.001,
+        "weight_decay": 0.0001,
+        "warmup_epochs": 5,
+        "grad_clip": 1.0,
+        "patience": 20
+    },
+    "output": {
+        "dir": "V4/trained_models/zfrac_v4_2L_4096_2048",
+        "save_every": 10,
+        "tensorboard": true
+    },
+    "seed": 42
+}

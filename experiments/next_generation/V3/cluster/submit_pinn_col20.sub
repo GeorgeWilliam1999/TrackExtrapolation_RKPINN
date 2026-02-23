@@ -1,0 +1,19 @@
+universe = vanilla
+executable = /bin/bash
+arguments = run_train_pinn.sh pinn_v3_res_256_col20
+
+output = logs/train_pinn_col20_$(Cluster).$(Process).out
+error = logs/train_pinn_col20_$(Cluster).$(Process).err
+log = logs/train_pinn_col20_$(Cluster).$(Process).log
+
+request_gpus = 1
+request_cpus = 4
+request_memory = 16G
+
++UseOS = "debian12"
++JobCategory = "long"
+
+should_transfer_files = NO
+getenv = True
+
+queue 1

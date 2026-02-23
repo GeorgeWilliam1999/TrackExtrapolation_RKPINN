@@ -1,0 +1,19 @@
+# V3 Training Jobs
+# Format: MODEL_NAME,CONFIG,CUDA_DEVICE
+#
+# Models to train with variable dz support
+# Each uses config from V3/training/configs/
+
+# MLP models - varying depths and widths
+mlp_v3_shallow_256,mlp_v3_shallow_256,0
+mlp_v3_shallow_512,mlp_v3_shallow_512,0
+mlp_v3_deep_128,mlp_v3_deep_128,0
+mlp_v3_deep_256,mlp_v3_deep_256,0
+
+# PINN models - physics-informed with residual architecture
+pinn_v3_shallow_256,pinn_v3_shallow_256,1
+pinn_v3_deep_128,pinn_v3_deep_128,1
+
+# RK-PINN models - integration-aware architecture
+rkpinn_v3_shallow_256,rkpinn_v3_shallow_256,1
+rkpinn_v3_deep_128,rkpinn_v3_deep_128,1

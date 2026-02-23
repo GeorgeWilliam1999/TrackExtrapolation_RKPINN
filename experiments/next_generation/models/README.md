@@ -2,6 +2,22 @@
 
 This directory contains the complete training infrastructure for ML-based track extrapolation in LHCb.
 
+## ⚠️ Version Notes
+
+| Version | Architecture Changes | Data |
+|---------|---------------------|------|
+| **V1** | Standard MLP/PINN/RK-PINN | Fixed dz=8000mm |
+| **V2** | PINN residual: `Output = IC + z_frac × NetworkCorrection` | Fixed dz=8000mm |
+| **V3** | Same as V2 | **Variable dz ∈ [500, 12000] mm** |
+
+**Input Format (all versions):**
+```
+Input:  [x, y, tx, ty, q/p, dz] -> 6 features
+Output: [x_out, y_out, tx_out, ty_out] -> 4 features
+```
+
+**Key Issue (V1/V2):** Models trained with fixed dz=8000mm have `input_std[dz] ≈ 0`, causing normalization explosion for other step sizes. V3 fixes this.
+
 ## Quick Start
 
 ```bash

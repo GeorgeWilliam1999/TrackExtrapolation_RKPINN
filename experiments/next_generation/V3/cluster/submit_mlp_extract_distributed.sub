@@ -1,0 +1,27 @@
+#!/bin/bash
+# V3 Distributed Segment Extraction for MLP
+#
+# Extracts MLP training samples in parallel.
+# Each job extracts 10M samples, then we merge to get 100M.
+
+universe = vanilla
+executable = /bin/bash
+getenv = True
++UseOS = "el9"
++JobCategory = "short"
+
+request_CPUs = 4
+request_memory = 16G
+request_disk = 20G
+
+log = V3/cluster/logs/mlp_extract_$(Cluster)_$(Process).log
+output = V3/cluster/logs/mlp_extract_$(Cluster)_$(Process).out
+error = V3/cluster/logs/mlp_extract_$(Cluster)_$(Process).err
+
+initialdir = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation
+
+# Each job extracts 10M samples with unique seed
+arguments = "-c 'source ~/.bashrc && conda activate TE && cd V3/data_generation && python extract_segments.py --input ../data/trajectories_10k.npz --n_samples 10000000 --dz_min 500 --dz_max 12000 --seed $(Process) --output ../data/chunks/mlp_samples_$(Process).npz'"
+
+# Submit 10 jobs (10 × 10M = 100M samples)
+queue 10

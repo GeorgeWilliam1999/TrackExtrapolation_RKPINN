@@ -2,23 +2,120 @@
 
 **Project Goal:** Systematically train and compare neural network architectures for LHCb track extrapolation, storing all training metrics for comprehensive analysis.
 
-**Status:** ✅ V1 Training Complete (53 models), V2 Training Complete (22 shallow-wide models)
+**Status:** ✅ V1 Training Complete (53 models), ✅ V2 Training Complete (22 shallow-wide models), 🔧 V3 Variable dz In Development
 
 **Reference Baseline:** C++ RK4 (CashKarp): **2.50 μs/track** (measured via TrackExtrapolatorTesterSOA)
+
+---
+
+## Directory Structure
+
+```
+next_generation/
+├── README.md              # This file
+├── DEPENDENCY_GRAPH.md    # Project dependencies
+├── V1/                    # V1 experiments (deprecated)
+│   ├── analysis/          # Analysis scripts and notebooks
+│   ├── benchmarking/      # C++ benchmarks
+│   ├── cluster/           # HTCondor jobs
+│   ├── data_generation/   # Data generation scripts
+│   ├── models/            # Neural network code
+│   ├── notes/             # Documentation
+│   ├── paper/             # Paper drafts
+│   ├── results/           # CSV results
+│   ├── trained_models/    # Symlinks to models
+│   ├── training/          # Training job scripts
+│   └── utils/             # Utility modules
+├── V2/                    # V2 experiments (shallow-wide)
+│   ├── analysis/          # V2-specific analysis
+│   ├── cluster/           # V2 HTCondor jobs
+│   ├── data_generation/   # Same data as V1
+│   ├── models/            # Includes residual PINN
+│   ├── results/           # V2 results
+│   ├── trained_models/    # Symlinks to V2 models
+│   ├── training/          # V2 training configs
+│   └── utils/             # Utility modules
+├── V3/                    # V3 experiments (variable dz) - ACTIVE
+│   ├── cluster/           # V3 HTCondor jobs
+│   ├── data_generation/   # Variable dz data gen
+│   └── training/          # V3 training configs
+├── deployment/            # Export models to C++
+├── trained_models/        # All trained model checkpoints
+├── archive/               # Historical experiments
+└── explore_field_map.ipynb # Field map visualization
+```
+
+---
+
+## ⚠️ VERSION HISTORY
+
+| Version | Status | Key Change | Limitation |
+|---------|--------|------------|------------|
+| **V1** | Deprecated | Initial experiments (53 models) | PINN IC failure, fixed dz=8000mm |
+| **V2** | Deprecated | PINN residual fix, shallow-wide (22 models) | Still fixed dz=8000mm |
+| **V3** | **Active** | Variable dz training (500-12000mm) | In development |
+
+See version-specific documentation:
+- [V1/README.md](V1/README.md) - Original experiments (deprecated)
+- [V2/README.md](V2/README.md) - PINN residual architecture (partially functional)
+- [V3/README.md](V3/README.md) - Variable dz support (current development)
+
+---
+
+## 🏆 Current State of the Art (January 2026)
+
+### Best Models
+
+| Model | Position Error | Timing | Speedup vs C++ | Recommendation |
+|-------|---------------|--------|----------------|----------------|
+| `mlp_v2_single_256` | 0.065 mm | 0.83 μs | **3.0×** | ⭐ Best for speed |
+| `mlp_v2_shallow_256` | 0.044 mm | 1.50 μs | 1.7× | Balanced |
+| `mlp_v2_shallow_512_256` | **0.028 mm** | 1.93 μs | 1.3× | ⭐ Best accuracy |
+
+### Key Findings
+
+1. **MLP outperforms PINN/RK_PINN** - Simple MLPs achieve 0.03-0.07 mm accuracy, 10-100× better than physics-informed models in V1/V2.
+
+2. **Shallow-wide beats deep-narrow** - 1-2 layer networks with 256-1024 neurons outperform deeper architectures for both accuracy AND speed.
+
+3. **10 models faster than C++ RK4** - The fastest (mlp_v2_single_256) achieves 3× speedup with acceptable accuracy.
+
+### ⚠️ PINN/RK_PINN Failure Analysis
+
+**Problem Discovered:** The original PINN and RK_PINN architectures have a fundamental flaw - they fail to satisfy the Initial Condition (IC) constraint:
+
+| z_frac | PINN Output | Expected |
+|--------|-------------|----------|
+| 0.0 (IC) | x=2768 mm | x=207 mm |
+| 1.0 | x=2752 mm | x=1039 mm |
+
+The physics loss stays constant (~1.7) throughout training while data loss decreases. This means the network learned to **ignore z_frac entirely** and outputs nearly constant values.
+
+**Root Cause:** The PINN forward pass sets `x[:, 5] = 1.0` for all inputs during training. The network can minimize data_loss at z=1 without learning the trajectory - it just learns a direct mapping from initial state to final state, ignoring the z_frac input.
+
+**Solution: PINN_v3 Architecture** - Uses explicit skip connections that make z_frac impossible to ignore:
+```
+Output = InitialState + z_frac × NetworkCorrection
+```
+At z=0, output = initial state (IC automatically satisfied!)
+
+See [PINN_v3 Training](#pinn_v3-training) for details.
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Experiment Design](#experiment-design)
-3. [Model Architectures](#model-architectures)
-4. [Training Configurations](#training-configurations)
-5. [Running Experiments](#running-experiments)
-6. [Loss Tracking & Convergence Analysis](#loss-tracking--convergence-analysis)
-7. [Performance Benchmarking](#performance-benchmarking)
-8. [Directory Structure](#directory-structure)
-9. [Quick Reference](#quick-reference)
+2. [Current State of the Art](#-current-state-of-the-art-january-2026)
+3. [Experiment Design](#experiment-design)
+4. [Model Architectures](#model-architectures)
+5. [PINN_v3 Training](#pinn_v3-training)
+6. [Training Configurations](#training-configurations)
+7. [Running Experiments](#running-experiments)
+8. [Loss Tracking & Convergence Analysis](#loss-tracking--convergence-analysis)
+9. [Performance Benchmarking](#performance-benchmarking)
+10. [Directory Structure](#directory-structure)
+11. [Quick Reference](#quick-reference)
 
 ---
 
@@ -193,6 +290,109 @@ Physics behavior varies with momentum (low-p tracks bend more):
 
 **Advantages:** Interpretable stages, natural multi-scale learning  
 **Disadvantages:** More complex architecture, 4× head computations
+
+---
+
+### 4. PINN_v3 (Physics-Informed with Skip Connections) ⭐ NEW
+
+**Philosophy:** Fix the IC constraint problem with residual formulation.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      PINN_v3 Architecture                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   Input [5]                                  Output [4]         │
+│  ┌─────────┐    Encoder     Correction                          │
+│  │ x₀      │   ┌───────┐    ┌───────┐                          │
+│  │ y₀      │──►│ FC    │───►│ Head  │──► [Δtx, Δty, Δx, Δy]    │
+│  │ tx₀     │   │ FC    │    └───┬───┘                          │
+│  │ ty₀     │   └───────┘        │                              │
+│  │ q/p     │                    │ Correction                   │
+│  └─────────┘                    ▼                              │
+│       │                   ╔═══════════════════════════════╗    │
+│       │  z_frac ──────────║  Output = Initial +           ║    │
+│       │    │              ║          z_frac × Correction  ║    │
+│       │    │              ╚═══════════════════════════════╝    │
+│       │    │                    │                              │
+│       │    └────────────────────┤                              │
+│       │                         │                              │
+│       │   ┌─────────────────────┴─────────────────────┐        │
+│       │   │  x_out = x₀ + tx₀×z×dz + z×Δx            │        │
+│       │   │  y_out = y₀ + ty₀×z×dz + z×Δy            │        │
+│       │   │  tx_out = tx₀ + z×Δtx                     │        │
+│       │   │  ty_out = ty₀ + z×Δty                     │        │
+│       └───►│                                          │        │
+│           └───────────────────────────────────────────┘        │
+│                                                                 │
+│   KEY: At z=0, Output = Initial State (IC GUARANTEED!)         │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Innovation:**
+- **Residual formulation:** Output = InitialState + z_frac × NetworkCorrection
+- At z=0: Output exactly equals initial state (IC is **automatically satisfied**)
+- At z=1: Network learns the full displacement
+- **z_frac modulation:** Network CANNOT ignore z_frac because correction is multiplied by it
+
+**Losses:**
+- `data_loss = MSE(y(z=1), ground_truth)` — endpoint match
+- `ic_loss = ~0` — automatically satisfied by construction!
+- `pde_loss = Σ ||dy/dz - Lorentz(y, B)||²` — PDE residual
+
+**Advantages:**
+- IC constraint satisfied by design (no optimization needed)
+- Physics loss actually contributes to gradient
+- Network learns corrections, not raw outputs (easier task)
+
+**Disadvantages:** Slightly more complex architecture, assumes straight-line baseline
+
+---
+
+## PINN_v3 Training
+
+### Why PINN_v3?
+
+The original PINN/RK_PINN architectures failed because:
+1. Network could minimize data_loss without learning physics
+2. IC constraint not enforced in network structure
+3. z_frac input was effectively ignored
+
+PINN_v3 fixes this with a residual formulation that **guarantees** IC satisfaction.
+
+### Training PINN_v3 Models
+
+```bash
+# Train single model
+cd experiments/next_generation
+python training/train_pinn_v3.py --preset pinn_v3_shallow_256
+
+# Submit all V3 configurations to cluster
+condor_submit cluster/submit_pinn_v3.sub
+
+# Submit specific configuration
+condor_submit cluster/submit_pinn_v3.sub -append "Queue experiment_name from (pinn_v3_shallow_512)"
+```
+
+### V3 Configurations
+
+| Model | Hidden Dims | Expected Timing | Purpose |
+|-------|-------------|-----------------|---------|
+| `pinn_v3_single_256` | [256] | ~1 μs | Fastest physics-informed |
+| `pinn_v3_single_512` | [512] | ~1.5 μs | Balance |
+| `pinn_v3_shallow_256` | [256, 256] | ~2 μs | Baseline |
+| `pinn_v3_shallow_512` | [512, 512] | ~3 μs | High capacity |
+| `pinn_v3_shallow_512_256` | [512, 256] | ~2.5 μs | Tapered |
+| `pinn_v3_shallow_1024_256` | [1024, 256] | ~4 μs | Maximum capacity |
+
+### Expected Outcomes
+
+With PINN_v3:
+- IC error should be **exactly 0** (by construction)
+- PDE loss should decrease during training (unlike original PINN)
+- Final accuracy may be similar to MLP but with physics guarantees
+- Useful for extrapolation beyond training domain
 
 ---
 

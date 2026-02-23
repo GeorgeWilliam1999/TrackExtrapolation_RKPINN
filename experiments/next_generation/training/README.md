@@ -1,6 +1,8 @@
 # Training Jobs for Track Extrapolation Neural Networks
 
-This directory contains HTCondor submission scripts for all experiments.
+This directory contains HTCondor submission scripts for V1/V2 experiments.
+
+**⚠️ NOTE**: V1/V2 models were trained with **fixed dz=8000mm** and cannot generalize to variable step sizes. For V3 training with variable dz, see [V3/training/README.md](../V3/training/README.md).
 
 ## Quick Start
 

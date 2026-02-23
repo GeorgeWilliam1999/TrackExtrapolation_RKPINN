@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/data/bfys/gscriven/TE_stack/Gaudi/InstallArea/x86_64_v2-el9-gcc13+detdesc-opt/bin/gaudirun.py", line 587, in <module>
+    exec(o, g, l)
+  File "<string>", line 1, in <module>
+  File "/data/bfys/gscriven/TE_stack/Gaudi/InstallArea/x86_64_v2-el9-gcc13+detdesc-opt/bin/gaudirun.py", line 546, in __call__
+    importOptions(arg)
+  File "/data/bfys/gscriven/TE_stack/Gaudi/InstallArea/x86_64_v2-el9-gcc13+detdesc-opt/python/GaudiKernel/ProcessJobOptions.py", line 552, in importOptions
+    _import_function_mapping[ext](optsfile)
+  File "/data/bfys/gscriven/TE_stack/Gaudi/InstallArea/x86_64_v2-el9-gcc13+detdesc-opt/python/GaudiKernel/ProcessJobOptions.py", line 486, in _import_python
+    exec(code, {"__file__": file})
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/tests/options/test_extrapolators.py", line 11, in <module>
+    from Configurables import (
+ImportError: cannot import name 'TrackMLPExtrapolator' from 'Gaudi.Configurables' (unknown location)

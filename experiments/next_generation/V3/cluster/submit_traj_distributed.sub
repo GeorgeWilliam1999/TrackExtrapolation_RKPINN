@@ -1,0 +1,33 @@
+#!/bin/bash
+# V3 Distributed Trajectory Generation
+#
+# Generates trajectories in parallel across many Condor jobs.
+# Each job generates a subset of trajectories, then we merge.
+#
+# Split: 10,000 trajectories → 100 jobs × 100 trajectories each
+
+universe = vanilla
+executable = /bin/bash
+
+# DO NOT inherit environment - it conflicts with conda
+getenv = False
+
++UseOS = "el9"
++JobCategory = "short"
+
+request_CPUs = 4
+request_memory = 8G
+request_disk = 10G
+
+log = V3/cluster/logs/traj_$(Cluster)_$(Process).log
+output = V3/cluster/logs/traj_$(Cluster)_$(Process).out
+error = V3/cluster/logs/traj_$(Cluster)_$(Process).err
+
+initialdir = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation
+
+# Each job generates 100 trajectories with unique seed
+# Clean environment setup: only use conda, no LHCb env
+arguments = "-c 'export HOME=/data/bfys/gscriven && source /data/bfys/gscriven/conda/etc/profile.d/conda.sh && conda activate TE && cd /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/data_generation && python generate_trajectories.py --n_trajectories 100 --z_start 0 --z_end 15000 --step_size 5 --workers 4 --seed $(Process) --output ../data/chunks/trajectories_$(Process).npz'"
+
+# Submit 100 jobs (100 × 100 = 10,000 trajectories)
+queue 100

@@ -6,6 +6,17 @@ Generate high-quality training data for ML track extrapolators using either:
 
 ---
 
+## ⚠️ Version-Specific Notes
+
+| Version | Data Characteristics | Issue |
+|---------|---------------------|-------|
+| **V1/V2** | Fixed dz=8000mm | Cannot generalize to variable step sizes |
+| **V3** | Variable dz ∈ [500, 12000] mm | ✅ Proper normalization, full flexibility |
+
+**V3 data generation scripts are in [V3/data_generation/](../V3/data_generation/)** with variable dz support.
+
+---
+
 ## Table of Contents
 
 1. [LHCb Magnetic Field Map](#lhcb-magnetic-field-map)

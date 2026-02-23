@@ -1,0 +1,26 @@
+#!/bin/bash
+# V3 Segment Extraction for MLP
+#
+# Extracts MLP training samples. Single job, 100M samples.
+# Takes ~10-20 minutes.
+
+universe = vanilla
+executable = /bin/bash
+getenv = False
++UseOS = "el9"
++JobCategory = "short"
+
+request_CPUs = 1
+request_memory = 16G
+request_disk = 30G
+
+log = V3/cluster/logs/mlp_extract_$(Cluster).log
+output = V3/cluster/logs/mlp_extract_$(Cluster).out
+error = V3/cluster/logs/mlp_extract_$(Cluster).err
+
+initialdir = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation
+
+# Extract 100M samples
+arguments = "-c 'export HOME=/data/bfys/gscriven && source /data/bfys/gscriven/conda/etc/profile.d/conda.sh && conda activate TE && cd /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/data_generation && python extract_segments.py --input ../data/trajectories_10k.npz --n_samples 100000000 --dz_min 500 --dz_max 12000 --seed 42 --output ../data/training_mlp_v3.npz'"
+
+queue 1

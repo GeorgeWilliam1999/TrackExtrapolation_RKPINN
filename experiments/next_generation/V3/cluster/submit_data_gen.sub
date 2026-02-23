@@ -1,0 +1,24 @@
+# Condor submission for V3 data generation
+# Uses CPU nodes for parallel trajectory generation
+
+universe = vanilla
+executable = /bin/bash
+arguments = run_data_generation.sh 16
+
+output = logs/data_gen_$(Cluster).$(Process).out
+error = logs/data_gen_$(Cluster).$(Process).err
+log = logs/data_gen_$(Cluster).$(Process).log
+
+# CPU requirements for parallel generation
+request_cpus = 16
+request_memory = 32G
+request_disk = 50G
+
+# Use EL9 nodes
++UseOS = "el9"
++JobCategory = "long"
+
+should_transfer_files = NO
+getenv = True
+
+queue 1

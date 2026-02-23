@@ -1,0 +1,63 @@
+# Condor submission for ALL V3 training jobs (after data generation)
+# Submits MLP and PINN training jobs to GPU nodes
+
+universe = vanilla
+executable = /bin/bash
+
+output = logs/train_$(config)_$(Cluster).$(Process).out
+error = logs/train_$(config)_$(Cluster).$(Process).err
+log = logs/train_$(config)_$(Cluster).$(Process).log
+
+# GPU requirements
+request_gpus = 1
+request_cpus = 4
+request_memory = 16G
+
+# Use Debian12 for GPU nodes
++UseOS = "debian12"
++JobCategory = "long"
+
+should_transfer_files = NO
+getenv = True
+
+#===============================================================================
+# MLP Training Jobs (4 configurations)
+#===============================================================================
+
+arguments = run_train_mlp.sh mlp_v3_shallow_256
+config = mlp_v3_shallow_256
+queue 1
+
+arguments = run_train_mlp.sh mlp_v3_shallow_512
+config = mlp_v3_shallow_512
+queue 1
+
+arguments = run_train_mlp.sh mlp_v3_deep_128
+config = mlp_v3_deep_128
+queue 1
+
+arguments = run_train_mlp.sh mlp_v3_deep_256
+config = mlp_v3_deep_256
+queue 1
+
+#===============================================================================
+# PINN Training Jobs (4 configurations)
+#===============================================================================
+
+arguments = run_train_pinn.sh pinn_v3_res_256_col5
+config = pinn_v3_res_256_col5
+queue 1
+
+arguments = run_train_pinn.sh pinn_v3_res_256_col10
+config = pinn_v3_res_256_col10
+queue 1
+
+arguments = run_train_pinn.sh pinn_v3_res_256_col20
+config = pinn_v3_res_256_col20
+queue 1
+
+# col50 needs more memory
+arguments = run_train_pinn.sh pinn_v3_res_256_col50
+config = pinn_v3_res_256_col50
+request_memory = 48G
+queue 1

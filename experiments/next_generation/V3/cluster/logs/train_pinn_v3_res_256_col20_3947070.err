@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_pinn.py", line 459, in <module>
+    main()
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_pinn.py", line 455, in main
+    train(config)
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_pinn.py", line 261, in train
+    X, Y, z_frac, Y_col = load_data(config['data']['train_path'])
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_pinn.py", line 110, in load_data
+    data = np.load(path)
+  File "/data/bfys/gscriven/conda/envs/TE/lib/python3.10/site-packages/numpy/lib/_npyio_impl.py", line 451, in load
+    fid = stack.enter_context(open(os.fspath(file), "rb"))
+FileNotFoundError: [Errno 2] No such file or directory: 'data/training_pinn_v3_col20.npz'

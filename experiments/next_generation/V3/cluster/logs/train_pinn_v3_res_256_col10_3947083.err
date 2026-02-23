@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_pinn.py", line 459, in <module>
+    main()
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_pinn.py", line 455, in main
+    train(config)
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_pinn.py", line 310, in train
+    model = create_pinn(
+  File "/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/models/pinn_residual.py", line 245, in create_pinn
+    raise ValueError(f"Unknown architecture: {architecture}")
+ValueError: Unknown architecture: pinn_residual

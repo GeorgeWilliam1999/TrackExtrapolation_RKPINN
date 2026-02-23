@@ -15,6 +15,7 @@ from Configurables import (
     TrackRungeKuttaExtrapolator,
     TrackSimpleExtraSelector,
 )
+from TrackExtrapolators.TrackExtrapolatorsConf import TrackMLPExtrapolator
 from DDDB.CheckDD4Hep import UseDD4Hep
 from PyConf.Algorithms import ExtrapolatorTester
 from PyConf.application import ApplicationOptions, configure, configure_input
@@ -48,10 +49,16 @@ extrapolators += [
     TrackRungeKuttaExtrapolator("Tsitouras5", RKScheme="Tsitouras5", OutputLevel=1),
     TrackKiselExtrapolator("Kisel"),
     TrackHerabExtrapolator("Herab"),
-    # TrackRKPINNExtrapolator temporarily disabled - needs Gaudi component registration
-    # TrackRKPINNExtrapolator("PINN", 
-    #                          ModelPath="/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/pinn_model_cpp.bin",
-    #                          HiddenLayers=[128, 128, 64]),
+    TrackMLPExtrapolator("MLP_v2_shallow_256",
+                         ModelPath="/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/ml_models/models/mlp_v2_shallow_256.bin",
+                         Activation="silu"),
+    # V3 PINN Residual Models (trained with collocation points)
+    TrackMLPExtrapolator("PINN_v3_col10",
+                         ModelPath="/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/ml_models/models/pinn_v3_res_256_col10.bin",
+                         Activation="silu"),
+    TrackMLPExtrapolator("PINN_v3_col20",
+                         ModelPath="/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/ml_models/models/pinn_v3_res_256_col20.bin",
+                         Activation="silu"),
 ]
 
 config.update(configure(options, CompositeNode("TopSeq", [ex])))

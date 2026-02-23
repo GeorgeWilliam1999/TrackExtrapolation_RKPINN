@@ -1,0 +1,29 @@
+# V3 Training Job Submission
+# Trains models with variable dz support
+#
+# Usage:
+#   condor_submit submit_v3_training.sub
+#
+# Jobs are defined in v3_jobs.txt
+
+universe = vanilla
+executable = /usr/bin/bash
+arguments = -c "cd /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation && source /data/bfys/gscriven/miniconda3/etc/profile.d/conda.sh && conda activate TE && python models/train.py --config V3/training/configs/$(CONFIG).json --data_path V3/data_generation/data/training_v3_100M.npz --output_dir trained_models/$(MODEL_NAME)"
+
+# Environment
+getenv = True
+environment = "HOME=/data/bfys/gscriven CUDA_VISIBLE_DEVICES=$(CUDA_DEVICE)"
+
+# Resources - GPU
+request_cpus = 4
+request_memory = 32GB
+request_disk = 50GB
+request_gpus = 1
+
+# Output
+output = V3/cluster/logs/train_$(MODEL_NAME)_$(Cluster).out
+error = V3/cluster/logs/train_$(MODEL_NAME)_$(Cluster).err
+log = V3/cluster/logs/train_v3_$(Cluster).log
+
+# Queue from job file
+queue MODEL_NAME,CONFIG,CUDA_DEVICE from V3/cluster/v3_jobs.txt

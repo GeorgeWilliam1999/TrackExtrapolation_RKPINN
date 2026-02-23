@@ -1,0 +1,19 @@
+universe = vanilla
+executable = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/V3/training/train_v3_wrapper.sh
+arguments = pinn_v3_col20 pinn_v3_col20
+
+output = logs/train_pinn_col20_$(Cluster).$(Process).out
+error = logs/train_pinn_col20_$(Cluster).$(Process).err
+log = logs/train_pinn_col20_$(Cluster).$(Process).log
+
+request_gpus = 1
+request_cpus = 4
+request_memory = 32G
+
++UseOS = "el9"
++JobCategory = "long"
+
+should_transfer_files = NO
+getenv = True
+
+queue 1

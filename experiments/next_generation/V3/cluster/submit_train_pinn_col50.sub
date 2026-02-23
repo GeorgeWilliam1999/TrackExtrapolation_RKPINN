@@ -1,0 +1,22 @@
+# V3 PINN col50 - Reduced batch size for memory
+universe = vanilla
+executable = /bin/bash
+getenv = False
++UseOS = "el9"
++JobCategory = "long"
+
+# GPU nodes - extra memory for col50
+request_GPUs = 1
+request_CPUs = 1
+request_memory = 32G
+request_disk = 20G
+
+log = V3/cluster/logs/train_$(name)_$(Cluster).log
+output = V3/cluster/logs/train_$(name)_$(Cluster).out
+error = V3/cluster/logs/train_$(name)_$(Cluster).err
+
+initialdir = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation
+
+name = pinn_v3_res_256_col50
+arguments = "-c 'export HOME=/data/bfys/gscriven && source /data/bfys/gscriven/conda/etc/profile.d/conda.sh && conda activate TE && cd /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation && python V3/training/train_pinn.py --config V3/training/configs/pinn_v3_res_256_col50.json'"
+queue 1

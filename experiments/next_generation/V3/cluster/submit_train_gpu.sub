@@ -1,0 +1,59 @@
+#!/bin/bash
+# V3 GPU Training Jobs
+#
+# Trains MLP and PINN models on GPU nodes.
+
+universe = vanilla
+executable = /bin/bash
+getenv = False
++UseOS = "el9"
++JobCategory = "short"
+
+# Request GPU
+request_GPUs = 1
+request_CPUs = 4
+request_memory = 16G
+request_disk = 20G
+
+log = V3/cluster/logs/train_$(name)_$(Cluster).log
+output = V3/cluster/logs/train_$(name)_$(Cluster).out
+error = V3/cluster/logs/train_$(name)_$(Cluster).err
+
+initialdir = /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation
+
+# Training command
+arguments = "-c 'export HOME=/data/bfys/gscriven && source /data/bfys/gscriven/conda/etc/profile.d/conda.sh && conda activate TE && cd /data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation && python V3/training/train_pinn.py --config V3/training/configs/$(config)'"
+
+# MLP models
+name = mlp_v3_shallow_256
+config = mlp_v3_shallow_256.json
+queue 1
+
+name = mlp_v3_shallow_512
+config = mlp_v3_shallow_512.json
+queue 1
+
+name = mlp_v3_deep_128
+config = mlp_v3_deep_128.json
+queue 1
+
+name = mlp_v3_deep_256
+config = mlp_v3_deep_256.json
+queue 1
+
+# PINN collocation study
+name = pinn_v3_res_256_col5
+config = pinn_v3_res_256_col5.json
+queue 1
+
+name = pinn_v3_res_256_col10
+config = pinn_v3_res_256_col10.json
+queue 1
+
+name = pinn_v3_res_256_col20
+config = pinn_v3_res_256_col20.json
+queue 1
+
+name = pinn_v3_res_256_col50
+config = pinn_v3_res_256_col50.json
+queue 1
