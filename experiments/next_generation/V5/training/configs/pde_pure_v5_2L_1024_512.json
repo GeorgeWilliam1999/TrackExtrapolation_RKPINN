@@ -1,0 +1,35 @@
+{
+    "description": "V5 PDE-Residual PINN (pure mode), 2 hidden layers [1024, 512]. Physics loss via autograd + Lorentz force, no supervised collocation.",
+    "model": {
+        "type": "pde",
+        "hidden_dims": [1024, 512],
+        "activation": "silu"
+    },
+    "pde_mode": "pure",
+    "polarity": 1,
+    "data": {
+        "train_path": "V3/data/training_mlp_v3_100M_v2.npz",
+        "val_split": 0.1
+    },
+    "loss": {
+        "lambda_ic": 10.0,
+        "lambda_endpoint": 1.0,
+        "lambda_pde": 1.0,
+        "n_pde_points": 8
+    },
+    "training": {
+        "batch_size": 2048,
+        "epochs": 100,
+        "learning_rate": 0.001,
+        "weight_decay": 0.0001,
+        "warmup_epochs": 5,
+        "grad_clip": 1.0,
+        "patience": 20
+    },
+    "output": {
+        "dir": "V5/trained_models/pde_pure_v5_2L_1024_512",
+        "save_every": 10,
+        "tensorboard": true
+    },
+    "seed": 42
+}

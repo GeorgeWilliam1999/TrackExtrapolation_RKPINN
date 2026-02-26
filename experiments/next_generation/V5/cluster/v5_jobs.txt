@@ -1,0 +1,7 @@
+mlp_v5_2L_1024_512
+quad_v5_2L_1024_512
+zfrac_v5_2L_1024_512
+pde_pure_v5_2L_1024_512
+pde_hybrid_v5_2L_1024_512
+comp_v5_2L_1024_512_N8
+comp_v5_2L_1024_512_N16

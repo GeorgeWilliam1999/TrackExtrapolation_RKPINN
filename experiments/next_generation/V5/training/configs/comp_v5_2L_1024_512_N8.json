@@ -1,0 +1,28 @@
+{
+    "description": "V5 Compositional PINN, 2 hidden layers [1024, 512], N=8 sub-steps",
+    "model": {
+        "type": "compositional",
+        "hidden_dims": [1024, 512],
+        "activation": "silu",
+        "n_steps": 8
+    },
+    "data": {
+        "train_path": "V3/data/training_mlp_v3_100M_v2.npz",
+        "val_split": 0.1
+    },
+    "training": {
+        "batch_size": 4096,
+        "epochs": 100,
+        "learning_rate": 0.001,
+        "weight_decay": 0.0001,
+        "warmup_epochs": 5,
+        "grad_clip": 1.0,
+        "patience": 20
+    },
+    "output": {
+        "dir": "V5/trained_models/comp_v5_2L_1024_512_N8",
+        "save_every": 10,
+        "tensorboard": true
+    },
+    "seed": 42
+}
