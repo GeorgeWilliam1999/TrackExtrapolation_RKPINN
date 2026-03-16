@@ -1,0 +1,21 @@
+{
+  "name": "loss_mixed",
+  "hidden_dims": [
+    128,
+    128
+  ],
+  "activation": "silu",
+  "lr": 0.001,
+  "epochs": 300,
+  "batch_size": 4096,
+  "patience": 30,
+  "n_val": 100000,
+  "val_seed": 42,
+  "field_map_path": "/data/bfys/gscriven/TrackExtrapolation/experiments/field_maps/twodip.rtf",
+  "output_dir": "/data/bfys/gscriven/TrackExtrapolation/experiments/field_maps/field_nn/trained_models_v2/loss_mixed",
+  "strategy_cfg": {
+    "strategy": "mixed_loss",
+    "eps": 1.0,
+    "mix_alpha": 0.5
+  }
+}

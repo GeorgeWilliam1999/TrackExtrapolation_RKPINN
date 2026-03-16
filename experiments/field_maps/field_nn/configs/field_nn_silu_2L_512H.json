@@ -1,0 +1,16 @@
+{
+  "name": "field_nn_silu_2L_512H",
+  "hidden_dims": [
+    512,
+    512
+  ],
+  "activation": "silu",
+  "lr": 0.001,
+  "epochs": 200,
+  "batch_size": 4096,
+  "patience": 20,
+  "n_val": 100000,
+  "val_seed": 42,
+  "field_map_path": "/data/bfys/gscriven/TrackExtrapolation/experiments/field_maps/twodip.rtf",
+  "output_dir": "/data/bfys/gscriven/TrackExtrapolation/experiments/field_maps/field_nn/trained_models/field_nn_silu_2L_512H"
+}

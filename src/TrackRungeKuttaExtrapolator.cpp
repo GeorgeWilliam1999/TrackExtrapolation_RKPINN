@@ -13,6 +13,7 @@
 #include "LHCbMath/EigenTypes.h"
 #include "LHCbMath/FastRoots.h"
 #include "TrackFieldExtrapolatorBase.h"
+#include "ExtrapolatorSubTimers.h"
 #include <array>
 #include <atomic>
 #include <execution>
@@ -21,6 +22,10 @@
 #include <optional>
 #include <stdexcept>
 #include <vector>
+
+#ifdef __x86_64__
+#include <x86intrin.h>
+#endif
 
 #include "Event/States.h"
 
@@ -214,6 +219,9 @@ namespace RK {
     size_t          numincreasedstep{ 0 };
     details::Vec4<> err;
   };
+
+  /// Per-propagation sub-operation timing breakdown (RDTSC cycles, converted to ns)
+  using SubTimers = ExtrapolatorSubTimers;
 
   // *********************************************************************************************************
   // Butcher tables for various adaptive Runge Kutta methods. These are all taken from wikipedia.
@@ -936,8 +944,9 @@ namespace RK {
     } // namespace
 
     template <unsigned NStages, bool firstSameAsLast, typename FieldVector>
-    RK::ErrorCode evaluateStep( const ButcherTableau<NStages, firstSameAsLast>& table, double dz, details::State<>& pin,
-                                details::Vec4<>& err, details::Cache<NStages>& cache, FieldVector fieldVector ) {
+    RK::ErrorCode evaluateStep( const ButcherTableau<NStages, firstSameAsLast>& table, doublcontinue, details::State<>& pin,
+                                details::Vec4<>& err, details::Cache<NStages>& cache, FieldVector fieldVector,
+                                ExtrapolatorSubTimers* subtimers = nullptr ) {
 
       std::array<details::Vec4<>, NStages> k;
       int                                  firststage( 0 );
@@ -958,7 +967,10 @@ namespace RK {
 
       for ( int m = firststage; m != NStages; ++m ) {
         auto& stage = cache.stage[m];
-        // evaluate the state
+        // evaluate the state (Butcher accumulation)
+#ifdef __x86_64__
+        auto t_butcher = subtimers ? __rdtsc() : 0ULL;
+#endif
         stage.state = std::transform_reduce(
             std::execution::unseq, begin( k ), std::next( begin( k ), m ),
             std::next( begin( table.a ), m * ( m - 1 ) / 2 ), pin,
@@ -971,14 +983,27 @@ namespace RK {
             [dz]( const details::Vec4<>& rhs, double a ) -> details::State<> {
               return { a * rhs, 0, a * dz };
             } );
+#ifdef __x86_64__
+        if ( subtimers ) subtimers->butcher_cycles += __rdtsc() - t_butcher;
+#endif
         constexpr auto bad_distance = 100 * Gaudi::Units::meter;
         if ( std::abs( stage.state.x() ) > bad_distance || std::abs( stage.state.y() ) > bad_distance ||
              std::abs( stage.state.z ) > bad_distance ) {
           return RK::ErrorCode::BadDistance;
         }
         // evaluate the derivatives
+#ifdef __x86_64__
+        auto t_field = subtimers ? __rdtsc() : 0ULL;
+#endif
         stage.Bfield     = fieldVector( { stage.state.x(), stage.state.y(), stage.state.z } );
+#ifdef __x86_64__
+        if ( subtimers ) subtimers->field_cycles += __rdtsc() - t_field;
+        auto t_deriv = subtimers ? __rdtsc() : 0ULL;
+#endif
         stage.derivative = evaluateDerivatives( stage.state, stage.Bfield );
+#ifdef __x86_64__
+        if ( subtimers ) subtimers->deriv_cycles += __rdtsc() - t_deriv;
+#endif
         k[m]             = dz * stage.derivative.parameters;
       }
 
@@ -1110,6 +1135,8 @@ private:
   Gaudi::Property<bool>         m_numericalJacobian{ this, "NumericalJacobian", false };
   Gaudi::Property<double>       m_maxSlope{ this, "MaxSlope", 10. };
   Gaudi::Property<double>       m_maxCurvature{ this, "MaxCurvature", 1 / Gaudi::Units::m };
+  Gaudi::Property<bool>          m_enableSubTimers{ this, "EnableSubTimers", false,
+                                                    "Enable per-propagation RDTSC sub-operation timing" };
 
   // keep statistics for monitoring
   mutable std::atomic<unsigned long long>               m_numcalls{ 0 };
@@ -1117,6 +1144,23 @@ private:
   mutable RK::ErrorCounters                             m_errors{ this, "RungeKuttaExtrapolator failed with code: " };
   mutable Gaudi::Accumulators::MsgCounter<MSG::WARNING> m_numerical_integration_problem{
       this, "problem in numerical integration" };
+
+  // Sub-operation timing support
+  static thread_local ExtrapolatorSubTimers s_lastSubTimers;
+
+public:
+  /// Retrieve the sub-operation timing breakdown from the last propagate() call on this thread
+  const ExtrapolatorSubTimers& lastSubTimers() const override { return s_lastSubTimers; }
+  bool                         subTimersEnabled() const override { return m_enableSubTimers; }
+
+  // Gaudi counters for event-averaged sub-operation timing
+  mutable Gaudi::Accumulators::AveragingCounter<> m_ctr_field_cycles{ this, "SubTimer_field_cycles" };
+  mutable Gaudi::Accumulators::AveragingCounter<> m_ctr_deriv_cycles{ this, "SubTimer_deriv_cycles" };
+  mutable Gaudi::Accumulators::AveragingCounter<> m_ctr_butcher_cycles{ this, "SubTimer_butcher_cycles" };
+  mutable Gaudi::Accumulators::AveragingCounter<> m_ctr_jacobian_cycles{ this, "SubTimer_jacobian_cycles" };
+  mutable Gaudi::Accumulators::AveragingCounter<> m_ctr_stepsize_cycles{ this, "SubTimer_stepsize_cycles" };
+  mutable Gaudi::Accumulators::AveragingCounter<> m_ctr_total_cycles{ this, "SubTimer_total_cycles" };
+  mutable Gaudi::Accumulators::AveragingCounter<> m_ctr_nsteps{ this, "SubTimer_nsteps" };
 };
 
 //
@@ -1142,6 +1186,8 @@ namespace {
 // *********************************************************************************************************
 
 DECLARE_COMPONENT( TrackRungeKuttaExtrapolator )
+
+thread_local ExtrapolatorSubTimers TrackRungeKuttaExtrapolator::s_lastSubTimers{};
 
 StatusCode TrackRungeKuttaExtrapolator::finalize() {
   if ( msgLevel( MSG::DEBUG ) ) {
@@ -1235,6 +1281,16 @@ RK::ErrorCode TrackRungeKuttaExtrapolator::extrapolate( const LHCb::Magnet::Magn
   // count calls
   ++m_numcalls;
 
+  // Sub-operation timing
+  ExtrapolatorSubTimers* subtimers = nullptr;
+#ifdef __x86_64__
+  ExtrapolatorSubTimers  local_subtimers{};
+  if ( m_enableSubTimers ) {
+    subtimers = &local_subtimers;
+  }
+  auto t_total = subtimers ? __rdtsc() : 0ULL;
+#endif
+
   // initialize the jacobian
   if ( jacobian ) {
     jacobian->dTxdTx0() = 1;
@@ -1262,7 +1318,8 @@ RK::ErrorCode TrackRungeKuttaExtrapolator::extrapolate( const LHCb::Magnet::Magn
     // make a single range-kutta step
     auto prevstate = state;
     if ( rc = evaluateStep( table, absstep * direction, state, err, rkcache,
-                            [&]( const Gaudi::XYZPoint& position ) { return this->fieldVector( grid, position ); } );
+                            [&]( const Gaudi::XYZPoint& position ) { return this->fieldVector( grid, position ); },
+                            subtimers );
          rc != RK::ErrorCode::Success ) {
       break;
     }
@@ -1271,6 +1328,9 @@ RK::ErrorCode TrackRungeKuttaExtrapolator::extrapolate( const LHCb::Magnet::Magn
 
     // always accept the step if it is smaller than the minimum step size
     bool success = ( absstep <= m_minRKStep );
+#ifdef __x86_64__
+    auto t_stepsize = subtimers ? __rdtsc() : 0ULL;
+#endif
     if ( !success ) {
       if ( m_correctNumSteps ) {
         const auto estimatedN = std::abs( totalStep ) / absstep;
@@ -1323,12 +1383,21 @@ RK::ErrorCode TrackRungeKuttaExtrapolator::extrapolate( const LHCb::Magnet::Magn
       // apply another limitation criterion
       absstep = std::max( m_minRKStep.value(), std::min( absstep * stepfactor, m_maxRKStep.value() ) );
     }
+#ifdef __x86_64__
+    if ( subtimers ) subtimers->stepsize_cycles += __rdtsc() - t_stepsize;
+#endif
 
     // info() << "Success = " << success << endmsg;
     if ( success ) {
       // if we need the jacobian, evaluate it only for successful steps
       auto thisstep = state.z - prevstate.z; // absstep has already been changed!
+#ifdef __x86_64__
+      auto t_jac = subtimers ? __rdtsc() : 0ULL;
+#endif
       if ( jacobian ) evaluateStepJacobian( table, thisstep, *jacobian, rkcache );
+#ifdef __x86_64__
+      if ( subtimers ) subtimers->jacobian_cycles += __rdtsc() - t_jac;
+#endif
       // update the step, to invalidate the cache (or reuse the last stage)
       ++rkcache.step;
       stepObserver( thisstep );
@@ -1364,6 +1433,25 @@ RK::ErrorCode TrackRungeKuttaExtrapolator::extrapolate( const LHCb::Magnet::Magn
   if ( msgLevel( MSG::DEBUG ) ) {
     m_totalstats.with_lock( [&]( RK::Statistics& s ) { s += stats; } );
   }
+
+#ifdef __x86_64__
+  // Finalize sub-operation timers
+  if ( subtimers ) {
+    subtimers->total_cycles = __rdtsc() - t_total;
+    subtimers->nsteps       = static_cast<int>( stats.numstep - stats.numfailedstep );
+    subtimers->nrejected    = static_cast<int>( stats.numfailedstep );
+    s_lastSubTimers         = *subtimers;
+    // Update Gaudi averaging counters
+    m_ctr_field_cycles    += static_cast<double>( subtimers->field_cycles );
+    m_ctr_deriv_cycles    += static_cast<double>( subtimers->deriv_cycles );
+    m_ctr_butcher_cycles  += static_cast<double>( subtimers->butcher_cycles );
+    m_ctr_jacobian_cycles += static_cast<double>( subtimers->jacobian_cycles );
+    m_ctr_stepsize_cycles += static_cast<double>( subtimers->stepsize_cycles );
+    m_ctr_total_cycles    += static_cast<double>( subtimers->total_cycles );
+    m_ctr_nsteps          += static_cast<double>( subtimers->nsteps );
+  }
+#endif
+
   return rc;
 }
 

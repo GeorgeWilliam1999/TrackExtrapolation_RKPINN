@@ -13,6 +13,8 @@
 // from Gaudi
 
 #include "TrackFieldExtrapolatorBase.h"
+#include "FieldMapNNWeights.h"
+#include "FieldMapNNReLUWeights.h"
 
 //=============================================================================
 // Initialization
@@ -24,7 +26,29 @@ StatusCode TrackFieldExtrapolatorBase::initialize() {
 #endif
   return ConditionAccessorHolder::initialize().andThen( [&] {
     using FGrid = LHCb::Magnet::MagneticFieldGrid;
-    if ( m_useGridInterpolation ) {
+    const auto& nn = m_nnFieldMap.value();
+    if ( nn == "scalar_silu" ) {
+      m_fieldFunction = []( const FGrid*, const Gaudi::XYZPoint& p ) {
+        float bx, by, bz;
+        LHCb::FieldNN::evaluate( float( p.x() ), float( p.y() ), float( p.z() ), bx, by, bz );
+        return Gaudi::XYZVector{ bx, by, bz };
+      };
+      info() << "Using NN field map: scalar_silu" << endmsg;
+    } else if ( nn == "scalar_relu" ) {
+      m_fieldFunction = []( const FGrid*, const Gaudi::XYZPoint& p ) {
+        float bx, by, bz;
+        LHCb::FieldNNReLU::evaluate_relu( float( p.x() ), float( p.y() ), float( p.z() ), bx, by, bz );
+        return Gaudi::XYZVector{ bx, by, bz };
+      };
+      info() << "Using NN field map: scalar_relu" << endmsg;
+    } else if ( nn == "avx2_relu" ) {
+      m_fieldFunction = []( const FGrid*, const Gaudi::XYZPoint& p ) {
+        float bx, by, bz;
+        LHCb::FieldNNReLU::evaluate_relu_avx2( float( p.x() ), float( p.y() ), float( p.z() ), bx, by, bz );
+        return Gaudi::XYZVector{ bx, by, bz };
+      };
+      info() << "Using NN field map: avx2_relu" << endmsg;
+    } else if ( m_useGridInterpolation ) {
       m_fieldFunction = []( const FGrid* grid, const Gaudi::XYZPoint& p ) {
         return grid->fieldVectorLinearInterpolation( p );
       };
@@ -33,6 +57,9 @@ StatusCode TrackFieldExtrapolatorBase::initialize() {
         return grid->fieldVectorClosestPoint( p );
       };
     }
-    if ( msgLevel( MSG::DEBUG ) ) { debug() << "UseGridInterpolation: " << m_useGridInterpolation << endmsg; }
+    if ( msgLevel( MSG::DEBUG ) ) {
+      debug() << "UseGridInterpolation: " << m_useGridInterpolation
+              << " UseNNFieldMap: " << m_nnFieldMap << endmsg;
+    }
   } );
 }

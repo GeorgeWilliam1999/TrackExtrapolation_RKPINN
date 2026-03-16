@@ -1,0 +1,30 @@
+# =============================================================================
+# Field Map NN Grid Search -- HTCondor Submission
+# Trains 30 FieldMLP models (5 widths x 3 depths x 2 activations)
+#
+# Usage:
+#   condor_submit cluster/submit_field_nn.sub
+# =============================================================================
+
+universe = vanilla
+executable = /data/bfys/gscriven/TrackExtrapolation/experiments/field_maps/field_nn/training/train_field_nn_wrapper.sh
+arguments = $(CONFIG_NAME)
+
+output = /data/bfys/gscriven/TrackExtrapolation/experiments/field_maps/field_nn/cluster/logs/$(CONFIG_NAME)_$(Cluster).$(Process).out
+error  = /data/bfys/gscriven/TrackExtrapolation/experiments/field_maps/field_nn/cluster/logs/$(CONFIG_NAME)_$(Cluster).$(Process).err
+log    = /data/bfys/gscriven/TrackExtrapolation/experiments/field_maps/field_nn/cluster/logs/field_nn_$(Cluster).log
+
+request_gpus   = 1
+request_cpus   = 1
+request_memory = 16G
+request_disk   = 10G
+
++UseOS       = "el9"
++JobCategory = "medium"
+should_transfer_files = NO
+getenv = False
+
+notification = Error
+notify_user  = gscriven@nikhef.nl
+
+queue CONFIG_NAME from /data/bfys/gscriven/TrackExtrapolation/experiments/field_maps/field_nn/cluster/field_nn_jobs.txt

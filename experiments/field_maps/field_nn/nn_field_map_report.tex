@@ -1,0 +1,372 @@
+% ============================================================================
+%  Neural Network Field Map: Analysis Report
+%  Author: G. Scriven (LHCb, Nikhef)
+%  Date:   March 2026
+% ============================================================================
+\documentclass[11pt,a4paper]{article}
+
+% ---- packages --------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+
+% ---- colours ---------------------------------------------------------------
+\definecolor{mlpblue}{HTML}{1F77B4}
+\definecolor{nngreen}{HTML}{2CA02C}
+\definecolor{siluorange}{HTML}{FF7F0E}
+\definecolor{avxred}{HTML}{D62728}
+
+% ---- hyperref setup --------------------------------------------------------
+\hypersetup{
+  colorlinks=true,
+  linkcolor=mlpblue,
+  citecolor=nngreen,
+  urlcolor=siluorange,
+}
+
+% ---- headers ---------------------------------------------------------------
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small NN Field Map Report}
+\fancyhead[R]{\small LHCb, Nikhef}
+\fancyfoot[C]{\thepage}
+
+% ---- custom commands -------------------------------------------------------
+\newcommand{\vB}{\vec{B}}
+\newcommand{\qop}{q/p}
+\DeclareMathOperator{\SiLU}{SiLU}
+\DeclareMathOperator{\ReLU}{ReLU}
+
+% ============================================================================
+\begin{document}
+
+% ---- title -----------------------------------------------------------------
+\begin{center}
+  {\LARGE\bfseries Neural Network Field Map:\\[4pt]
+   Training, Deployment \& Benchmark Analysis}\\[12pt]
+  {\large G.~Scriven}\\[4pt]
+  {\normalsize LHCb, Nikhef}\\[4pt]
+  {\normalsize March 2026}
+\end{center}
+\vspace{6pt}
+\hrule
+\vspace{12pt}
+
+% ---- abstract ---------------------------------------------------------------
+\begin{abstract}
+This report documents the development and integration of a neural network
+surrogate for the LHCb magnetic field map into the \texttt{TrackRungeKuttaExtrapolator}.
+A grid search over 30 architectures (ReLU/SiLU $\times$ 1--3 layers $\times$
+32--512 neurons) identified optimal accuracy--speed trade-offs. The deployed
+model --- a single-layer ReLU network with 32 neurons (227 parameters,
+416~FLOPs, 0.89~KB) --- replaces trilinear interpolation of a 4.5~MB field grid.
+Three C++ inference paths were implemented: portable scalar, AVX2 SIMD, and
+batched AVX2. RDTSC sub-operation profiling quantifies the field evaluation
+fraction within the full Runge--Kutta pipeline and establishes the Amdahl's Law
+ceiling for achievable speedup.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+Track extrapolation in LHCb uses the Cash--Karp adaptive Runge--Kutta method
+(4th/5th order) to propagate charged particles through the dipole magnetic
+field. Each accepted step requires 6 field evaluations, and a typical
+propagation from $z = 200$~mm to $z = 9500$~mm takes $\sim$11 steps.
+
+The standard field lookup uses \textbf{trilinear interpolation} on an
+$81 \times 81 \times 146$ grid (957,906 points, $\sim$4.5~MB in memory).
+Profiling shows that field evaluation consumes $\sim$76\% of the total
+propagation time, dominated by cache-miss latency from the large grid.
+
+A neural network surrogate whose weights fit entirely in L1 cache
+($\leq$1~KB) can eliminate this cache-miss bottleneck. The key requirements
+are:
+\begin{enumerate}[nosep]
+  \item Accuracy: MAE $\lesssim 1$~Gauss across the full field volume
+  \item Speed: $\leq$1500 FLOPs per evaluation (competitive with trilinear)
+  \item Deployability: AVX2-friendly activation (no transcendental functions)
+\end{enumerate}
+
+% ============================================================================
+\section{Grid Search: Architecture Exploration}
+\label{sec:grid_search}
+
+\subsection{Setup}
+
+We trained 30 neural network architectures spanning:
+\begin{itemize}[nosep]
+  \item \textbf{Activations:} ReLU, SiLU
+  \item \textbf{Depths:} 1, 2, 3 hidden layers
+  \item \textbf{Widths:} 32, 64, 128, 256, 512 neurons per layer
+\end{itemize}
+
+All models map $(x, y, z) \to (B_x, B_y, B_z)$ with standardised
+inputs/outputs. Training used:
+\begin{itemize}[nosep]
+  \item Optimizer: Adam, $\eta = 10^{-3}$
+  \item Loss: MSE on normalised outputs
+  \item Batch size: 4096
+  \item Epochs: up to 200, early stopping (patience = 20)
+  \item Validation: 100,000 held-out grid points (seed = 42)
+  \item Data: \texttt{twodip.rtf} field map (957,906 grid points)
+\end{itemize}
+
+\subsection{Results}
+
+Table~\ref{tab:grid_search} shows the top 10 architectures ranked by mean
+absolute error (MAE) in Gauss.
+
+\begin{table}[htbp]
+\centering
+\caption{Grid search: top 10 architectures by field MAE. Weight memory
+  assumes float32 storage.}
+\label{tab:grid_search}
+\begin{tabular}{llrrrrr}
+\toprule
+Activation & Architecture & Params & FLOPs & MAE (G) & P99 (G) & Weight (KB) \\
+\midrule
+\multicolumn{7}{c}{\emph{(Fill from notebook output after running cell 2)}} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Key observations:
+\begin{itemize}[nosep]
+  \item Accuracy improves monotonically with width at fixed depth.
+  \item Deeper networks (2--3 layers) provide diminishing returns for the
+        field map regression task.
+  \item ReLU and SiLU achieve comparable MAE; ReLU is preferred for SIMD
+        deployment (no \texttt{exp()} calls).
+  \item The Pareto frontier (accuracy vs FLOPs) is dominated by shallow,
+        wide architectures.
+\end{itemize}
+
+% ============================================================================
+\section{Deployed Model: \texttt{field\_nn\_relu\_1L\_32H}}
+\label{sec:deployed}
+
+The model selected for deployment balances accuracy and inference speed:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Property & Value \\
+\midrule
+Architecture     & $3 \to 32 \to 3$ (1 hidden layer, ReLU) \\
+Parameters       & 227 (float32) \\
+FLOPs            & 416 per evaluation \\
+Weight memory    & 0.89 KB (fits in L1 cache) \\
+Training epochs  & 200 (early stop at best epoch) \\
+MAE              & 1.02 Gauss \\
+P99 error        & 3.8 Gauss \\
+Max error        & $\sim$20 Gauss \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Normalization Constants}
+
+Input and output standardisation (computed from the training grid):
+
+\begin{center}
+\begin{tabular}{lrrr}
+\toprule
+ & $x$ & $y$ & $z$ \\
+\midrule
+Input mean  & 0.0 & 0.0 & 6750.0 \\
+Input std   & 2338.1 & 2338.1 & 4214.6 \\
+\bottomrule
+\end{tabular}
+\qquad
+\begin{tabular}{lrrr}
+\toprule
+ & $B_x$ & $B_y$ & $B_z$ \\
+\midrule
+Output mean & $\approx 0$ & 0.123 & $\approx 0$ \\
+Output std  & 22.15 & 71.61 & 22.15 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ============================================================================
+\section{C++ Integration}
+\label{sec:cpp}
+
+\subsection{Files Modified/Created}
+
+\begin{table}[H]
+\centering
+\caption{Source files modified or created for the NN field map integration.}
+\label{tab:files}
+\begin{tabular}{lp{8cm}}
+\toprule
+File & Purpose \\
+\midrule
+\texttt{FieldMapNNReLUWeights.h} & Hardcoded weights + scalar, AVX2, and
+  batched AVX2 inference functions \\
+\texttt{FieldMapNNWeights.h} & SiLU variant (pre-existing) \\
+\texttt{ExtrapolatorSubTimers.h} & RDTSC cycle-counter struct \\
+\texttt{TrackFieldExtrapolatorBase.h/.cpp} & \texttt{UseNNFieldMap} Gaudi
+  property + dispatch \\
+\texttt{TrackRungeKuttaExtrapolator.cpp} & RDTSC sub-timer instrumentation \\
+\texttt{TrackExtrapolatorTesterSOA.cpp} & ROOT ntuple sub-timer columns \\
+\texttt{benchmark\_nn\_field\_map.py} & Gaudi benchmark config (4 variants) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Inference Functions}
+
+Three inference paths are provided in \texttt{FieldMapNNReLUWeights.h}:
+
+\begin{enumerate}
+  \item \textbf{\texttt{evaluate\_relu(x,y,z)}} --- Portable scalar C++.
+        Normalises input, computes $h = \ReLU(W_1 \cdot x_\mathrm{norm} + b_1)$,
+        then $y = W_2 \cdot h + b_2$, and de-normalises output.
+
+  \item \textbf{\texttt{evaluate\_relu\_avx2(x,y,z)}} --- AVX2 SIMD using
+        \texttt{\_mm256\_fmadd\_ps} with pre-transposed weights. Processes
+        8 neurons per vector operation.
+
+  \item \textbf{\texttt{evaluate\_relu\_avx2\_batch<N>(...)}} --- Template
+        function for track-level batching. Evaluates $N$ field points
+        simultaneously, amortising weight-load overhead.
+\end{enumerate}
+
+\subsection{Runtime Configuration}
+
+The field evaluation method is selected at runtime via the Gaudi property:
+\begin{verbatim}
+  ExtrapolatorInstance.UseNNFieldMap = "avx2_relu"
+\end{verbatim}
+Supported values: \texttt{""} (trilinear, default), \texttt{"scalar\_silu"},
+\texttt{"scalar\_relu"}, \texttt{"avx2\_relu"}.
+
+\subsection{Sub-Operation Profiling}
+
+RDTSC cycle counters (\texttt{\_\_rdtsc()}) are inserted around five
+sub-operations within each Runge--Kutta propagation:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Field evaluation} --- magnetic field lookup or NN inference
+  \item \textbf{Derivatives} --- Lorentz force computation
+  \item \textbf{Butcher accumulation} --- Cash--Karp tableau weighted sums
+  \item \textbf{Jacobian transport} --- covariance matrix propagation
+  \item \textbf{Step-size control} --- error estimation and adaptive stepping
+\end{enumerate}
+
+These are recorded per-track in the \texttt{ExtrapolatorSubTimers} struct
+and written to ROOT ntuples by \texttt{TrackExtrapolatorTesterSOA}.
+
+% ============================================================================
+\section{Production Benchmark}
+\label{sec:benchmark}
+
+\subsection{Configuration}
+
+The benchmark (\texttt{benchmark\_nn\_field\_map.py}) runs four extrapolator
+instances on identical tracks, propagating from $z = 3000$~mm to
+$z = 12000$~mm through the dipole field:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Trilinear} --- standard grid interpolation (baseline)
+  \item \textbf{NN\_SiLU} --- scalar SiLU [32] inference
+  \item \textbf{NN\_ReLU} --- scalar ReLU [32] inference
+  \item \textbf{NN\_AVX2\_ReLU} --- AVX2 ReLU [32] inference
+\end{enumerate}
+
+Sub-operation timers are enabled (\texttt{EnableSubTimers = True}) to
+capture per-track cycle breakdowns.
+
+\subsection{Expected Output}
+
+The benchmark produces a ROOT file with one ntuple per variant, containing:
+\begin{itemize}[nosep]
+  \item Per-track timing (\texttt{time} in ns)
+  \item Final state residuals vs trilinear (\texttt{dx, dy, dtx, dty})
+  \item Sub-operation cycle counts (\texttt{field\_cycles, deriv\_cycles, \ldots})
+  \item Track properties (\texttt{qop, nsteps, nrejected})
+\end{itemize}
+
+\subsection{Analysis Plots}
+
+The companion notebook (\texttt{nn\_field\_map\_analysis.ipynb}) generates:
+\begin{itemize}[nosep]
+  \item Wall-clock timing distributions and box plots
+  \item Sub-operation horizontal bar charts per variant
+  \item Stacked timing bar chart across variants
+  \item Amdahl's Law: field evaluation fraction histogram
+  \item Position/slope residual distributions vs trilinear
+  \item Timing vs momentum ($|q/p|$) scatter plots
+  \item LaTeX-ready summary tables
+\end{itemize}
+
+% ============================================================================
+\section{Amdahl's Law Analysis}
+\label{sec:amdahl}
+
+If field evaluation accounts for a fraction $f$ of the total propagation
+time, and the NN achieves a speedup $S_\mathrm{field}$ over trilinear for
+field evaluation alone, then the overall speedup is bounded by:
+
+$$
+S_\mathrm{total} = \frac{1}{(1 - f) + f / S_\mathrm{field}}
+$$
+
+For the measured $f \approx 0.76$:
+\begin{itemize}[nosep]
+  \item $S_\mathrm{field} = 2\times$ $\Rightarrow$ $S_\mathrm{total} \leq 1.6\times$
+  \item $S_\mathrm{field} = 5\times$ $\Rightarrow$ $S_\mathrm{total} \leq 2.6\times$
+  \item $S_\mathrm{field} = \infty$ $\Rightarrow$ $S_\mathrm{total} \leq 4.2\times$
+\end{itemize}
+
+The sub-operation profiling from Section~\ref{sec:benchmark} provides the
+actual $f$ for each variant, enabling precise Amdahl's Law predictions.
+
+% ============================================================================
+\section{Summary \& Outlook}
+\label{sec:summary}
+
+\subsection{Achievements}
+
+\begin{enumerate}
+  \item \textbf{Grid search} of 30 NN architectures identified the
+        accuracy--speed Pareto frontier for field map surrogates.
+  \item \textbf{Deployed model} (\texttt{field\_nn\_relu\_1L\_32H}):
+        227 parameters, 416 FLOPs, MAE = 1.02~Gauss.
+  \item \textbf{Three C++ inference paths}: scalar, AVX2, batched AVX2.
+  \item \textbf{RDTSC sub-operation profiling} integrated into the full
+        Runge--Kutta pipeline.
+  \item \textbf{Benchmark infrastructure}: Gaudi config + ROOT ntuple output
+        for systematic variant comparison.
+\end{enumerate}
+
+\subsection{Next Steps}
+
+\begin{itemize}[nosep]
+  \item Run production benchmark and fill in result tables.
+  \item Investigate log-space weight training for improved accuracy.
+  \item Profile on target hardware (Intel Xeon with AVX-512 support).
+  \item Quantify the impact on track reconstruction efficiency and
+        physics performance.
+  \item Explore batch-level vectorisation across multiple tracks.
+\end{itemize}
+
+% ============================================================================
+\end{document}

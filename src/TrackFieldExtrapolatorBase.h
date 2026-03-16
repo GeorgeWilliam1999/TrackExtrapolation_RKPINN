@@ -12,6 +12,7 @@
 #define TRACKEXTRAPOLATORS_TRFIELDEXTRAPOLATORBASE_H
 
 #include "TrackExtrapolator.h"
+#include "ExtrapolatorSubTimers.h"
 #include <Core/MagneticFieldGrid.h>
 #include <DetDesc/GenericConditionAccessorHolder.h>
 #include <GaudiKernel/DataObjectHandle.h>
@@ -52,6 +53,13 @@ public:
 
   bool usesGridInterpolation() const override { return m_useGridInterpolation; }
 
+  /// Sub-operation timing: overridden by TrackRungeKuttaExtrapolator when EnableSubTimers is set
+  virtual const ExtrapolatorSubTimers& lastSubTimers() const {
+    static const ExtrapolatorSubTimers empty{};
+    return empty;
+  }
+  virtual bool subTimersEnabled() const { return false; }
+
 private:
   const LHCb::Magnet::MagneticFieldGrid* currentGrid() const {
     static thread_local struct {
@@ -73,6 +81,9 @@ private:
 
   Gaudi::Property<bool> m_useGridInterpolation{ this, "UseGridInterpolation",
                                                 true }; ///< Flag whether to interpolate on the grid or not
+
+  Gaudi::Property<std::string> m_nnFieldMap{ this, "UseNNFieldMap", "none",
+    "NN field map variant: none, scalar_silu, scalar_relu, avx2_relu" };
 };
 
 #endif // TRACKEXTRAPOLATORS_TRLINEAREXTRAPOLATOR_H

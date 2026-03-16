@@ -1,315 +1,225 @@
-# TrackExtrapolators - Neural Network Track Extrapolation
+# TrackExtrapolators — Neural Network Track Extrapolation for LHCb
 
-**Clean repository for next-generation track extrapolation experiments**
+**Replacing expensive Runge-Kutta track propagation with neural networks**
 
-Reorganized: January 14, 2025  
-**Major Update:** January 22, 2026  
+Reorganized: January 14, 2025 | Last Updated: March 2026  
 Previous work archived in: `legacy/`
 
 ---
 
-## 🎯 Project Status
+## Project Status
 
-**Current Phase:** ✅ **Model Training in Progress**  
-**Goal:** Train physics-informed neural network track extrapolators for LHCb
+**Current Phase:** V5 architecture comparison in progress  
+**Best Result:** **0.028 mm** position error at **1.3× faster** than C++ RK4 (fixed dz)  
+**Variable dz:** ~1 mm accuracy achieved (V3/V4), architectures under improvement (V5)
 
-**Completed:**
-- ✅ LHCb software stack properly configured (DetDesc mode)
-- ✅ C++ extrapolator tests running successfully  
-- ✅ All 9 extrapolators benchmarked across 1210 track states
-- ✅ 50M track training dataset generated (`training_50M.npz`)
-- ✅ Momentum-split datasets: low/mid/high-p (10M each)
-- ✅ MLP, PINN, RK_PINN architectures implemented
-- ✅ Real field map integration (`InterpolatedFieldTorch`)
-- ✅ PINN training stability fixes applied (see `notes/PINN_STABILITY_FIXES.md`)
-- ✅ 30 HTCondor training jobs submitted (cluster 3880818)
+### Completed
 
-**Current Work:**
-- 🔄 Training 10 MLP variants (architecture sweep)
-- 🔄 Training 10 PINN variants (λ_pde sweep: 1e-5 to 0.1)
-- 🔄 Training 10 RK-PINN variants (collocation point sweep)
+- LHCb software stack configured (DetDesc mode)
+- All 9 C++ extrapolators benchmarked across 1210 track states
+- 50M + 100M track training datasets generated
+- V1: 53 models trained — MLP, PINN, RK_PINN architecture sweep (cluster 3880818)
+- V2: 22 shallow-wide models — speed-optimized architectures (cluster 3891076)
+- V3: Variable dz training framework (500–12000 mm step sizes)
+- V4: PINN architecture root-cause diagnosis — fundamental IC flaw identified
+- V5: 5 new PINN fix architectures designed (QuadraticResidual, ZFrac, PDE-Residual, Compositional)
+- C++ `TrackMLPExtrapolator` integrated into LHCb framework with Eigen-based inference
 
-**See Active Development:** [experiments/next_generation/README.md](experiments/next_generation/README.md)
+### Key Findings
+
+1. **MLP outperforms PINN** — simple feedforward networks achieve 0.03–0.07 mm accuracy, 10–100× better than physics-informed models
+2. **Shallow-wide beats deep-narrow** — 1–2 layer networks with 256–1024 neurons outperform deeper architectures for both accuracy and speed
+3. **PINN IC failure diagnosed** — original PINN/RK_PINN architectures ignore `z_frac` input entirely; the network learns a constant mapping (see [V4 diagnosis](experiments/gen_1/V4/PINN_ARCHITECTURE_DIAGNOSIS.md))
+4. **10 models faster than C++ RK4** — the fastest (`mlp_v2_single_256`) achieves 3× speedup with 0.065 mm accuracy
 
 ---
 
-## 📂 Repository Structure
+## Repository Structure
 
 ```
 TrackExtrapolators/
 ├── README.md                          # This file
-├── CMakeLists.txt                     # C++ build system
+├── CMakeLists.txt                     # Gaudi build configuration
 │
-├── src/                               # C++ Production Code (LHCb framework)
-│   ├── TrackRungeKuttaExtrapolator.cpp    # RK4 baseline (to benchmark)
-│   ├── TrackKiselExtrapolator.cpp         # Fast analytic method
-│   ├── TrackSTEPExtrapolator.cpp          # Reference (highest accuracy)
-│   └── TrackExtrapolatorTesterSOA.cpp     # Full benchmark with timing
+├── src/                               # C++ production code (LHCb framework)
+│   ├── README.md                      # Component reference
+│   ├── TrackRungeKuttaExtrapolator.cpp    # Adaptive RK4 (CashKarp/Verner)
+│   ├── TrackSTEPExtrapolator.cpp          # RKN (ATLAS STEP algorithm)
+│   ├── TrackKiselExtrapolator.cpp         # Kisel polynomial (CBM origin)
+│   ├── TrackHerabExtrapolator.cpp         # Hera-B RK5
+│   ├── TrackLinearExtrapolator.cpp        # Straight-line (no field)
+│   ├── TrackParabolicExtrapolator.cpp     # 2nd-order parabolic
+│   ├── TrackParametrizedExtrapolator.cpp  # Basis-function parametrization
+│   ├── TrackMasterExtrapolator.cpp        # Orchestrator (delegates)
+│   ├── TrackExtrapolatorTesterSOA.cpp     # SOA benchmark with timing
+│   └── ...                                # Base classes, material locators, selectors
 │
-├── tests/                             # LHCb framework tests
-│   ├── options/                       # Gaudi configuration files
-│   └── qmtest/                        # LHCb test descriptors
+├── ml_models/                         # Deployed neural network models
+│   ├── README.md                      # Model inventory & usage
+│   ├── models/                        # Binary model files (.bin)
+│   └── src/
+│       └── TrackMLPExtrapolator.cpp   # Eigen-based NN inference (571 lines)
 │
 ├── experiments/
-│   ├── next_generation/               # 🔥 ACTIVE DEVELOPMENT
-│   │   ├── README.md                  # Project status & quick start
-│   │   ├── run_all_experiments.py     # Unified experiment runner (NEW)
-│   │   │
-│   │   ├── models/                    # Model training
-│   │   │   ├── train.py               # Main training script
-│   │   │   ├── architectures.py       # MLP, PINN, RK_PINN
-│   │   │   ├── evaluate.py            # Model evaluation
-│   │   │   └── checkpoints/           # Trained models
-│   │   │
-│   │   ├── data_generation/           # Training data
-│   │   │   ├── data/                  # Dataset files
-│   │   │   │   ├── training_50M.npz   # 50M tracks (3.7GB)
-│   │   │   │   ├── training_low_p.npz # p < 5 GeV
-│   │   │   │   ├── training_mid_p.npz # 5 ≤ p < 20 GeV
-│   │   │   │   └── training_high_p.npz # p ≥ 20 GeV
-│   │   │   └── generate_data.py       # Data generation script
-│   │   │
-│   │   ├── training/                  # HTCondor job files
-│   │   │   └── jobs/                  # .sub files for all experiments
-│   │   │
-│   │   ├── analysis/                  # Results analysis
-│   │   │   └── experiment_analysis.ipynb  # Comprehensive analysis (NEW)
-│   │   │
-│   │   ├── utils/                     # Utilities
-│   │   │   └── magnetic_field.py      # Field map interpolation
-│   │   │
-│   │   └── notes/                     # Documentation
-│   │       └── experimental_protocol.pdf  # Full experiment design
-│   │
-│   ├── experiment_log.csv             # Experiment tracking
-│   └── README.md                      # Historical experiment summary
+│   ├── README.md                      # Experiment overview
+│   ├── gen_1/                         # Active ML experiments
+│   │   ├── README.md                  # Master experiment README
+│   │   ├── MASTER_RESULTS.md          # Comprehensive V1–V4 results
+│   │   ├── MASTER_RESULTS.tex         # LaTeX version
+│   │   ├── LHCB_STACK_MANUAL.md       # LHCb stack setup guide
+│   │   ├── DEPENDENCY_GRAPH.md        # Python module dependencies
+│   │   ├── V1/                        # 53 models (deprecated)
+│   │   ├── V2/                        # 22 shallow-wide (deprecated)
+│   │   ├── V3/                        # Variable dz (active)
+│   │   ├── V4/                        # PINN diagnosis + width sweep
+│   │   ├── V5/                        # PINN architecture fixes (active)
+│   │   ├── deployment/                # C++ model export tools
+│   │   └── trained_models/            # All trained checkpoints
+│   ├── gen_2/                         # Reference papers for future work
+│   └── field_maps/                    # Magnetic field map experiments
 │
-└── legacy/                            # 📦 ARCHIVED (previous work)
-    ├── old_notebooks/                 # Analysis notebooks
-    ├── old_experiments/               # All previous experiments
-    └── OLD_README.md                  # Previous README
+├── tests/                             # LHCb framework tests
+│   ├── options/                       # Gaudi configuration scripts
+│   │   ├── benchmark_extrapolators.py
+│   │   ├── benchmark_extrapolators_v2.py
+│   │   ├── benchmark_many_events.py
+│   │   └── test_extrapolators.py
+│   ├── qmtest/                        # QMTest descriptors
+│   └── refs/                          # Reference output files
+│
+├── play_time/                         # Scratch / exploration area
+│   └── rk_extrapolators_explained.ipynb
+│
+├── legacy/                            # Archived previous work (pre-2025)
+│   ├── old_notebooks/
+│   ├── old_experiments/
+│   ├── old_python_scripts/
+│   ├── plots/
+│   └── report/
+│
+└── doc/
+    └── release.notes                  # Official LHCb release notes (through 2016)
 ```
 
 ---
 
-## 🚀 Quick Start
+## Results Summary
 
-### For Active Development
+### Best Models (Fixed dz = 8000 mm, V1/V2)
 
-The main development is in `experiments/next_generation/`. See that README for details.
+| Model | Position Error | Timing (μs) | Speedup vs C++ RK4 | Recommendation |
+|-------|---------------|-------------|---------------------|----------------|
+| `mlp_v2_single_256` | 0.065 mm | 0.83 μs | **3.0×** | Best for speed |
+| `mlp_v2_shallow_256` | 0.044 mm | 1.50 μs | 1.7× | Balanced |
+| `mlp_v2_shallow_512_256` | **0.028 mm** | 1.93 μs | 1.3× | Best accuracy |
+| C++ RK4 (CashKarp) | 0 (reference) | 2.50 μs | 1.0× | Baseline |
+
+### Variable dz Models (500–12000 mm, V3/V4)
+
+| Model | Position RMSE | Slope RMSE | Timing (μs) | Notes |
+|-------|--------------|------------|-------------|-------|
+| MLP shallow_256 | ~1.0 mm | 0.009 | 116.2 | Best V3 variable dz |
+| PINN col10 | ~54 mm | 0.00025 | 79.3 | IC flaw — slopes only |
+
+**Reference:** C++ RK4 = 85.2 μs/track for variable dz benchmarks.
+
+### V5 Architectures Under Evaluation
+
+| Architecture | Key Idea | Expected Improvement |
+|-------------|----------|---------------------|
+| QuadraticResidual | IC + z·c₁ + z²·c₂ polynomial basis | Better trajectory shape |
+| PINNZFracInput | z_frac as 7th encoder input | Nonlinear z-dependence |
+| PDE-Residual | Autograd Lorentz force loss | Physics consistency |
+| CompositionalPINN | Chained short-step predictions | Field-constant regime |
+
+For detailed results across all 75+ models, see [experiments/gen_1/MASTER_RESULTS.md](experiments/gen_1/MASTER_RESULTS.md).
+
+---
+
+## Model Architectures
+
+| Model | Physics | Description | Status |
+|-------|---------|-------------|--------|
+| **MLP** | Implicit (data) | Standard feedforward, fastest inference | Production-ready |
+| **PINN** | Explicit (PDE) | Physics-informed with Lorentz force | IC flaw identified (V4) |
+| **RK_PINN** | Explicit (staged) | RK4-inspired multi-stage structure | IC flaw identified (V4) |
+| **QuadraticResidual** | Explicit (polynomial) | Quadratic z-dependent correction | V5 — under evaluation |
+| **PINNZFracInput** | Explicit (input) | z_frac visible to encoder | V5 — under evaluation |
+| **PDE-Residual** | Explicit (autograd) | Lorentz force ODE residual loss | V5 — under evaluation |
+| **CompositionalPINN** | Implicit (chained) | N short-step predictions composed | V5 — under evaluation |
+
+---
+
+## Quick Start
+
+### Active Development
+
+All ML experiment work is in `experiments/gen_1/`:
 
 ```bash
-cd experiments/next_generation
+cd experiments/gen_1
 
-# Check HTCondor job status
-condor_q gscriven
+# See the experiment README for full details
+cat README.md
 
-# Run all experiments (local or HTCondor)
-python run_all_experiments.py --list        # List available experiments
-python run_all_experiments.py --all         # Submit all to HTCondor
-python run_all_experiments.py --local       # Run locally (interactive)
+# Train a V5 model locally
+python V5/training/train_v5.py --config V5/training/configs/mlp_v5_2L_1024_512.json
 
-# Analyze results after training completes
-jupyter notebook analysis/experiment_analysis.ipynb
+# Submit V5 jobs to HTCondor
+bash V5/cluster/submit_all_v5.sh --submit
 ```
 
-### Training a Single Model
+### Running C++ Extrapolator Tests
 
-```bash
-cd experiments/next_generation/models
-conda activate TE
-
-# Train MLP baseline
-python train.py --model mlp --preset medium --epochs 100
-
-# Train PINN with physics loss
-python train.py --model pinn --preset medium --lambda-pde 1.0 --epochs 100
-
-# Train RK-PINN
-python train.py --model rk_pinn --preset medium --epochs 100
-```
-
-### Running C++ Tests
-
-This project uses the LHCb software stack. Prerequisites:
-- Access to CVMFS (e.g., Nikhef STBC cluster)
-- LHCb stack built with DetDesc geometry backend
-- Environment: `x86_64_v2-el9-gcc13+detdesc-opt`
+Prerequisites: CVMFS access, LHCb stack with DetDesc, `x86_64_v2-el9-gcc13+detdesc-opt`
 
 ```bash
 cd /data/bfys/gscriven/TE_stack
-Rec/run gaudirun.py Rec/Tr/TrackExtrapolators/tests/qmtest/test_extrapolators.qmt
+Rec/run gaudirun.py Rec/Tr/TrackExtrapolators/tests/options/test_extrapolators.py
 ```
 
----
-
-## 📊 Model Architectures
-
-| Model | Physics | Description |
-|-------|---------|-------------|
-| **MLP** | Implicit (data) | Standard feedforward, fastest inference |
-| **PINN** | Explicit (PDE) | Physics-informed with Lorentz force |
-| **RK_PINN** | Explicit (staged) | RK4-inspired multi-stage structure |
-
-**Presets:** `tiny` (5k), `small` (20k), `medium` (100k), `wide` (500k params)
+See [experiments/gen_1/LHCB_STACK_MANUAL.md](experiments/gen_1/LHCB_STACK_MANUAL.md) for detailed setup instructions.
 
 ---
 
-## 📊 Historical Results (Legacy)
+## Key Documentation
 
-Previous experiments (in `legacy/`) achieved:
-
-| Model | Activation | Mean Error | Dataset | Notes |
-|-------|------------|------------|---------|-------|
-| MLP (SiLU) | SiLU | **0.21 mm** | 50K tracks | Best from legacy |
-| MLP (Tanh) | Tanh | 0.63 mm | 50K tracks | Baseline |
-| PINN | Various | 18-329 mm | 50K tracks | ❌ Failed (wrong field) |
-
-**Note:** Legacy PINN failures were due to using Gaussian field approximation instead of the real
-interpolated field map. Current PINN/RK_PINN models use `InterpolatedFieldTorch`.
-
----
-
-## 🔬 Current Work (January 2026)
-
-### Training Experiments in Progress
-
-**30 HTCondor GPU jobs submitted (cluster 3880818):**
-
-1. **MLP Architecture Sweep** (10 experiments):
-   - Presets: tiny, small, medium, large, xlarge, wide, deep
-   - Custom: narrow_deep, wide_shallow, balanced
-
-2. **PINN Physics Loss Sweep** (10 experiments):
-   - λ_pde values: 1e-5, 1e-4, 1e-3, 1e-2, 0.1
-   - Sizes: medium, large, xlarge, wide, deep
-
-3. **RK-PINN Collocation Sweep** (10 experiments):
-   - Collocation points: 5, 10, 15, 20
-   - Sizes: medium, large, xlarge, wide, deep
-
-### Key Files
-
-| File | Purpose |
-|------|---------|
-| `experiments/next_generation/run_all_experiments.py` | Unified experiment runner |
-| `experiments/next_generation/analysis/experiment_analysis.ipynb` | Results analysis |
-| `experiments/next_generation/notes/experimental_protocol.pdf` | Full methodology |
-| `experiments/next_generation/models/train.py` | Main training script |
-
-### Design Documents
-
-See `experiments/next_generation/` for:
-- [README.md](experiments/next_generation/README.md) - Project status
-- [models/README.md](experiments/next_generation/models/README.md) - Architecture details
-- [data_generation/README.md](experiments/next_generation/data_generation/README.md) - Data formats
-
-### Recent Updates (January 2026)
-
-- ✅ Fixed PINN/RK_PINN to use `InterpolatedFieldTorch` (real field map)
-- ✅ Generated 50M track training dataset
-- ✅ Created momentum-split datasets (10M each)
-- ✅ Submitted all 29 training experiments to HTCondor
-- ✅ Created unified experiment runner and analysis notebook
-
-**Benchmark Results:**
-- All 9 extrapolators running successfully
-- Test grid: 11×11 = 121 track states (various momenta and angles)
-- Total execution: ~0.286s for full benchmark suite
-- Methods tested: Reference RK4, BogackiShampine3, Verner7/9, Tsitouras5, Kisel, Herab, Linear, Parabolic
+| Document | Description |
+|----------|-------------|
+| [experiments/gen_1/README.md](experiments/gen_1/README.md) | Master experiment overview (V1–V5 status) |
+| [experiments/gen_1/MASTER_RESULTS.md](experiments/gen_1/MASTER_RESULTS.md) | Comprehensive results with physics analysis |
+| [experiments/gen_1/V4/PINN_ARCHITECTURE_DIAGNOSIS.md](experiments/gen_1/V4/PINN_ARCHITECTURE_DIAGNOSIS.md) | PINN IC failure root-cause analysis (11,000 words) |
+| [experiments/gen_1/V5/README.md](experiments/gen_1/V5/README.md) | V5 architecture comparison design |
+| [experiments/gen_1/LHCB_STACK_MANUAL.md](experiments/gen_1/LHCB_STACK_MANUAL.md) | LHCb software stack setup & build guide |
+| [experiments/gen_1/deployment/README.md](experiments/gen_1/deployment/README.md) | C++ model export (binary format spec) |
+| [src/README.md](src/README.md) | C++ source code component reference |
+| [ml_models/README.md](ml_models/README.md) | Deployed model inventory |
 
 ---
 
-## 📋 Key Learnings
-
-### LHCb Software Stack
-
-**Correct way to run tests:**
-```bash
-# From stack directory (/data/bfys/gscriven/TE_stack)
-Rec/run gaudirun.py <path-to-options-file>
-
-# NOT: gaudirun.py <path> (missing environment setup)
-```
-
-**Test files:**
-- `.qmt` files: QMTest descriptors (reference expected output)
-- `.py` files in `tests/options/`: Gaudi configuration scripts
-- `.ref` files in `tests/refs/`: Expected output for validation
-
-**Adding new extrapolators** (from supervisor guide):
-1. Copy existing extrapolator (e.g., `TrackKiselExtrapolator.cpp`)
-2. Rename class and update CMakeLists.txt
-3. Implement `propagate()` method (line ~68 in template)
-4. Key function signature:
-   ```cpp
-   StatusCode propagate(
-       Gaudi::TrackVector& stateVec,  // [x, y, tx, ty, q/p]
-       double zOld, double zNew,
-       Gaudi::TrackMatrix* transMat,  // Transport matrix (optional)
-       IGeometryInfo const& geometry,
-       LHCb::Tr::PID pid,
-       const LHCb::Magnet::MagneticFieldGrid* grid
-   ) const override;
-   ```
-
-**Simplest reference:** `TrackLinearExtrapolator.cpp` - straight-line propagation
-
----
-
-## 🛠️ Dependencies
+## Dependencies
 
 ### C++ (LHCb Framework)
-- Gaudi
-- LHCb software stack
-- Eigen3 (for ML inference)
-- ROOT (for benchmarking)
+- Gaudi, LHCb software stack
+- Eigen3 (ML inference + parametrized extrapolator)
+- ROOT (benchmarking)
+- GSL (numerical methods)
 
-### Python
+### Python (Training)
 ```bash
 pip install numpy torch tensorboard scikit-learn
 ```
 
-Optional for benchmarking:
-```bash
-pip install uproot awkward  # For parsing ROOT files without PyROOT
-```
-
 ---
 
-## 📝 Experiment Tracking
+## Field Model
 
-All experiments logged in [experiments/experiment_log.csv](experiments/experiment_log.csv)
-
----
-
-## 🤝 Workflow
-
-1. Work in `experiments/next_generation/`
-2. Log experiments to `experiment_log.csv`
-3. Save models with metadata JSON
-4. Update relevant README when completing milestones
-
----
-
-## ⚠️ Important Notes
-
-### Field Model
-
-**Current status:** Now using real field map (`twodip.rtf`) via `InterpolatedFieldTorch`
+The real LHCb dipole field map (`twodip.rtf`) is used via `InterpolatedFieldTorch`:
 - Full 3D field interpolation (Bx, By, Bz all vary with x, y, z)
-- Grid: 81×81×146 points, 100mm spacing
+- Grid: 81×81×146 points, 100 mm spacing
 - Peak |By| = 1.03 T at z ≈ 5007 mm
-
-### HTCondor Settings
-
-Jobs require these settings for the Nikhef STBC cluster:
-```
-+UseOS = "el9"
-+JobCategory = "short"
-```
+- All PINN/RK_PINN training uses this field (legacy Gaussian approximation abandoned)
 
 ---
 
-**Last Updated:** January 22, 2026  
-**Status:** 29 training experiments submitted, awaiting results
+*Last Updated: March 2026*

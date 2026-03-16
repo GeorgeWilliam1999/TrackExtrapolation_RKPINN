@@ -1,0 +1,11 @@
+{
+  "model_type": "FieldMLP",
+  "hidden_dims": [
+    512
+  ],
+  "activation": "relu",
+  "parameters": 3587,
+  "flops": 6656,
+  "weight_bytes_f32": 14348,
+  "fits_L1_32KB": true
+}

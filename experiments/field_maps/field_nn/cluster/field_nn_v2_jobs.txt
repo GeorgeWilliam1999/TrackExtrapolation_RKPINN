@@ -1,0 +1,8 @@
+loss_baseline
+loss_weighted_mse
+loss_relative_mse
+loss_log_space
+loss_curriculum_lin
+loss_curriculum_exp
+loss_mixed
+loss_weighted_strong

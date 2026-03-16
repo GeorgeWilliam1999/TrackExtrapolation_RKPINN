@@ -1,0 +1,30 @@
+# =============================================================================
+# Field Map NN v2 -- ReLU + Log-space Loss -- HTCondor Submission
+# Best loss strategy (log_space) retrained with ReLU activation for speed
+#
+# Usage:
+#   condor_submit cluster/submit_relu_log_space.sub
+# =============================================================================
+
+universe = vanilla
+executable = /data/bfys/gscriven/TrackExtrapolation/experiments/field_maps/field_nn/training/train_field_nn_v2_wrapper.sh
+arguments = $(CONFIG_NAME)
+
+output = /data/bfys/gscriven/TrackExtrapolation/experiments/field_maps/field_nn/cluster/logs/relu_$(CONFIG_NAME)_$(Cluster).$(Process).out
+error  = /data/bfys/gscriven/TrackExtrapolation/experiments/field_maps/field_nn/cluster/logs/relu_$(CONFIG_NAME)_$(Cluster).$(Process).err
+log    = /data/bfys/gscriven/TrackExtrapolation/experiments/field_maps/field_nn/cluster/logs/field_nn_relu_$(Cluster).log
+
+request_gpus   = 1
+request_cpus   = 1
+request_memory = 16G
+request_disk   = 10G
+
++UseOS       = "el9"
++JobCategory = "medium"
+should_transfer_files = NO
+getenv = False
+
+notification = Error
+notify_user  = gscriven@nikhef.nl
+
+queue CONFIG_NAME from /data/bfys/gscriven/TrackExtrapolation/experiments/field_maps/field_nn/cluster/field_nn_relu_jobs.txt
