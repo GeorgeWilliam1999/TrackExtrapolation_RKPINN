@@ -1,0 +1,385 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{titlesec}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black,
+  citecolor=blue!60!black,
+  pdftitle={V1 Data Generation and Training Protocol},
+  pdfauthor={TrackExtrapolation V1 Pipeline}
+}
+
+\lstdefinestyle{bashstyle}{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{TrackExtrapolation Gen\_1 V1\\Exhaustive Data Generation and Training Protocol}
+\author{Repository Protocol Document}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Scope and Purpose}
+This document specifies, in implementation-level detail, how the current V1 pipeline creates data and trains models.
+It is designed to be exhaustive and reproducible from source scripts.
+
+\subsection{What is covered}
+\begin{itemize}[leftmargin=*]
+  \item Physics and numerical equations used to generate ground truth.
+  \item Field map source, interpolation method, and sampling domains.
+  \item Exact dataset schema, dimensionality, and normalization context.
+  \item HTCondor batch production strategy for the 50M-track dataset.
+  \item Current model architecture and training protocol in active use.
+  \item Current sweep configuration (hyperparameters and resource requests).
+\end{itemize}
+
+\subsection{What is not currently active in V1 training}
+The codebase contains PINN and RK-PINN definitions in the architecture module, but the active V1 protocol currently trains pure MLP models with supervised MSE only. No physics residual loss is used in the current submitted jobs.
+
+\section{Code and File Inventory (Source of Truth)}
+The protocol is derived from the following files:
+\begin{itemize}[leftmargin=*]
+  \item \texttt{V1/data\_generation/generate\_data.py}
+  \item \texttt{V1/data\_generation/condor/datagen.sub}
+  \item \texttt{V1/data\_generation/condor/run\_datagen.sh}
+  \item \texttt{V1/data\_generation/merge\_batches.py}
+  \item \texttt{V1/utils/magnetic\_field.py}
+  \item \texttt{V1/utils/rk4\_propagator.py}
+  \item \texttt{V1/models/architectures.py}
+  \item \texttt{V1/models/train.py}
+  \item \texttt{V1/models/condor/train\_sweep.sub}
+  \item \texttt{V1/models/condor/run\_train.sh}
+\end{itemize}
+
+\section{Physics Model Used for Data Generation}
+\subsection{State Definition}
+The propagated state is
+\begin{equation}
+\mathbf{s}(z) = [x, y, t_x, t_y, q/p]^\top,
+\end{equation}
+where $t_x = dx/dz$, $t_y = dy/dz$, and $q/p$ is expressed in $\mathrm{MeV}^{-1}$.
+
+\subsection{Lorentz-force equations in $z$-parameterization}
+The RK4 integrator implements:
+\begin{align}
+\frac{dx}{dz} &= t_x, \\
+\frac{dy}{dz} &= t_y, \\
+\frac{dt_x}{dz} &= \kappa N\left(t_x t_y B_x - (1+t_x^2)B_y + t_y B_z\right), \\
+\frac{dt_y}{dz} &= \kappa N\left((1+t_y^2)B_x - t_x t_y B_y - t_x B_z\right), \\
+\frac{d(q/p)}{dz} &= 0,
+\end{align}
+with
+\begin{equation}
+\kappa = c\,(q/p), \qquad c = 2.99792458\times 10^{-4}, \qquad N = \sqrt{1+t_x^2+t_y^2}.
+\end{equation}
+
+\subsection{Magnetic field source and interpolation}
+\begin{itemize}[leftmargin=*]
+  \item Field map file: \texttt{field\_maps/twodip.rtf}.
+  \item Grid dimensions: $81\times81\times146$.
+  \item Grid spacing: 100 mm in each axis.
+  \item Coordinate bounds: $x,y\in[-4000,4000]$ mm, $z\in[-500,14000]$ mm.
+  \item Interpolation: trilinear (\texttt{scipy.interpolate.RegularGridInterpolator}).
+  \item Outside-grid behavior: fill value $0.0$ for each field component.
+  \item Polarity in production: $-1$ (MagDown), applied to $B_x$ and $B_y$ sign in interpolated model.
+\end{itemize}
+
+\subsection{Integrator settings}
+\begin{itemize}[leftmargin=*]
+  \item Integrator: fixed-step classical RK4.
+  \item Step size: 5 mm in production generation.
+  \item Propagation direction: forward only in the current production setup ($z_{\mathrm{end}} > z_{\mathrm{start}}$).
+\end{itemize}
+
+\subsection{Track-level validity checks}
+A generated track is marked invalid and discarded if any of the following occurs:
+\begin{itemize}[leftmargin=*]
+  \item Any non-finite state value during/after propagation.
+  \item $|x| > 5000$ mm or $|y| > 5000$ mm during integration.
+  \item $|t_x| > 2.0$ or $|t_y| > 2.0$ during integration.
+\end{itemize}
+Invalid tracks are returned as zero arrays and removed in post-processing by filtering on momentum $P>0$.
+
+\section{Sampling Protocol for Dataset Creation}
+\subsection{Input distributions}
+For each track, sampling is:
+\begin{itemize}[leftmargin=*]
+  \item $p\sim\log\mathcal{U}(1,100)$ GeV.
+  \item $q\in\{-1,+1\}$, equiprobable; $q/p = q/(1000\,p)$ in $\mathrm{MeV}^{-1}$.
+  \item $x\sim\mathcal{U}(-300,300)$ mm.
+  \item $y\sim\mathcal{U}(-250,250)$ mm.
+  \item $t_x\sim\mathcal{U}(-0.3,0.3)$.
+  \item $t_y\sim\mathcal{U}(-0.25,0.25)$.
+\end{itemize}
+
+\subsection{$z$-pair and $dz$ sampling}
+\begin{itemize}[leftmargin=*]
+  \item Base bounds: $z_{\min}=0$, $z_{\max}=14000$ mm.
+  \item Draw $z_{\mathrm{start}}\sim\mathcal{U}(z_{\min}, z_{\max}-dz_{\min})$.
+  \item Draw $dz\sim\mathcal{U}(dz_{\min},dz_{\max})$ with $dz_{\min}=100$ mm, $dz_{\max}=10000$ mm.
+  \item Set $z_{\mathrm{end}}=z_{\mathrm{start}}+dz$, then clip to $[z_{\min}+dz_{\min}, z_{\max}]$.
+  \item Recompute $dz=z_{\mathrm{end}}-z_{\mathrm{start}}$ and retain only samples with $dz\ge dz_{\min}$.
+\end{itemize}
+
+\subsection{Important V1 design correction}
+This V1 pipeline explicitly uses \textbf{variable $dz$} per track. This avoids the old fixed-$dz$ behavior that caused near-zero standard deviation in the $dz$ input channel and poor normalization behavior when evaluating at other step sizes.
+
+\section{Dataset Schema and Storage}
+\subsection{Per-sample tensors}
+Saved arrays (NumPy compressed \texttt{.npz}):
+\begin{itemize}[leftmargin=*]
+  \item $X\in\mathbb{R}^{N\times6}$ (input):
+  \begin{equation*}
+  X_i = [x, y, t_x, t_y, q/p, dz].
+  \end{equation*}
+  \item $Y\in\mathbb{R}^{N\times4}$ (target):
+  \begin{equation*}
+  Y_i = [x_{\mathrm{out}}, y_{\mathrm{out}}, t_{x,\mathrm{out}}, t_{y,\mathrm{out}}].
+  \end{equation*}
+  \item $P\in\mathbb{R}^{N}$: sampled momentum in GeV.
+  \item $Z\in\mathbb{R}^{N\times2}$: $[z_{\mathrm{start}}, z_{\mathrm{end}}]$.
+\end{itemize}
+
+\subsection{Batch merge protocol}
+Batch files \texttt{batch\_*.npz} are merged by concatenation along axis 0 for each array, with optional NaN/Inf verification. Final merged artifact is saved via \texttt{np.savez\_compressed}.
+
+\section{Large-scale Generation Procedure (50M Production)}
+\subsection{HTCondor submission for data generation}
+\texttt{datagen.sub} configuration:
+\begin{itemize}[leftmargin=*]
+  \item Universe: \texttt{vanilla}
+  \item Executable: \texttt{/bin/bash}
+  \item Job category: \texttt{medium}
+  \item Resources per job: 2 CPUs, 4 GB RAM, 500 MB disk
+  \item Queue size: 2000 jobs
+  \item Tracks per job: 25,000
+\end{itemize}
+Total requested tracks:
+\begin{equation}
+N_{\mathrm{total}} = 2000\times 25,000 = 50,000,000.
+\end{equation}
+
+\subsection{Worker script behavior}
+\texttt{run\_datagen.sh} performs:
+\begin{enumerate}[leftmargin=*]
+  \item Activate conda env \texttt{TE}.
+  \item Compute batch seed:
+  \begin{equation*}
+  \texttt{seed} = 42 + \texttt{batch\_id}\times 7919.
+  \end{equation*}
+  \item Run \texttt{generate\_data.py} with production physics ranges, 2 workers, step size 5 mm, polarity -1.
+\end{enumerate}
+Inside each worker process, NumPy RNG is reseeded from OS entropy to avoid identical forked random streams.
+
+\section{Current Model Architecture Protocol in Use}
+\subsection{Active model family}
+The active submitted training protocol uses \textbf{MLP only}. Although PINN and RK-PINN are implemented in \texttt{architectures.py}, they are not used in the current running sweep.
+
+\subsection{MLP definition}
+For hidden dimensions $(h_1,\dots,h_L)$, network is:
+\begin{equation}
+\hat{\mathbf{y}} = \mathrm{Denorm}\left( W_{L+1}\,\phi_L\left(\cdots\phi_1(W_1\,\mathrm{Norm}(\mathbf{x})+b_1)\cdots\right)+b_{L+1} \right),
+\end{equation}
+where:
+\begin{itemize}[leftmargin=*]
+  \item Input dimension is 6, output dimension is 4.
+  \item Activation is SiLU in current runs.
+  \item Dropout is 0.0 in current runs.
+  \item Linear weights initialized with Xavier uniform; biases initialized to zero.
+\end{itemize}
+
+\subsection{Normalization strategy}
+\begin{itemize}[leftmargin=*]
+  \item Mean/std are computed on the training split only.
+  \item Inputs are z-score normalized before forward pass.
+  \item Outputs are predicted in normalized space and denormalized back to physical units.
+\end{itemize}
+
+\section{Current Training Protocol in Use}
+\subsection{Loss and objective}
+Current objective is supervised MSE over full 4D output state:
+\begin{equation}
+\mathcal{L}_{\mathrm{MSE}} = \frac{1}{B}\sum_{i=1}^{B}\left\|\hat{\mathbf{y}}_i - \mathbf{y}_i\right\|_2^2,
+\quad
+\mathbf{y}_i=[x,y,t_x,t_y].
+\end{equation}
+No PDE, IC, or auxiliary physics loss terms are included in current V1 training runs.
+
+\subsection{Data split and loaders}
+\begin{itemize}[leftmargin=*]
+  \item Split fractions: train 0.8, validation 0.1, test 0.1.
+  \item Split method: random permutation, then contiguous slicing by fraction.
+  \item DataLoader:
+  \begin{itemize}[leftmargin=*]
+    \item Train: shuffled, \texttt{drop\_last=True}.
+    \item Val/Test: no shuffle, full batches.
+  \end{itemize}
+\end{itemize}
+
+\subsection{Optimizer, scheduler, and stabilization}
+\begin{itemize}[leftmargin=*]
+  \item Optimizer: AdamW.
+  \item Learning rate: $10^{-3}$.
+  \item Weight decay: $10^{-4}$.
+  \item Scheduler: cosine with warmup (warmup epochs = 5 in code defaults).
+  \item Gradient clipping: global norm clip at 1.0.
+\end{itemize}
+
+\subsection{Stopping and checkpointing}
+\begin{itemize}[leftmargin=*]
+  \item Early stopping with patience and min-delta.
+  \item Best model saved by validation loss to \texttt{best\_model.pt}.
+  \item Periodic checkpoints every \texttt{save\_every} epochs.
+  \item Normalization JSON persisted with best model.
+\end{itemize}
+
+\subsection{Metrics tracked}
+Validation and test track:
+\begin{itemize}[leftmargin=*]
+  \item Mean position error: $\sqrt{(\Delta x)^2 + (\Delta y)^2}$ (mm).
+  \item Position std and 95th percentile (mm).
+  \item Mean slope error: $\sqrt{(\Delta t_x)^2 + (\Delta t_y)^2}$.
+  \item Component-wise absolute means for $x,y,t_x,t_y$.
+\end{itemize}
+
+\section{Current HTCondor Training Sweep Configuration}
+\subsection{Submit file settings}
+From \texttt{train\_sweep.sub}:
+\begin{itemize}[leftmargin=*]
+  \item Universe: \texttt{vanilla}, executable: \texttt{/bin/bash}.
+  \item Job category: \texttt{short}.
+  \item Resources per training job: 1 GPU, 1 CPU, 8 GB RAM.
+  \item Shared filesystem mode (no transfer).
+\end{itemize}
+
+\subsection{Worker command template}
+From \texttt{run\_train.sh}, each job runs:
+\begin{lstlisting}[style=bashstyle]
+python train.py --model mlp --name <exp_name> --hidden_dims <dims...> \
+  --epochs 500 --patience 30 --min_delta 1e-7 \
+  --batch_size 4096 --lr 1e-3 --weight_decay 1e-4 \
+  --activation silu --num_workers 0 \
+  --mlflow --mlflow-experiment V1_MLP_sweep \
+  --max_samples 5000000
+\end{lstlisting}
+
+\subsection{Sweep grid (17 architectures)}
+\begin{longtable}{>{\ttfamily}p{0.36\textwidth} p{0.28\textwidth} p{0.22\textwidth}}
+\toprule
+Experiment name & Hidden dims & Max samples \\
+\midrule
+\endfirsthead
+\toprule
+Experiment name & Hidden dims & Max samples \\
+\midrule
+\endhead
+mlp\_2x64 & [64, 64] & 5,000,000 \\
+mlp\_2x128 & [128, 128] & 5,000,000 \\
+mlp\_2x256 & [256, 256] & 5,000,000 \\
+mlp\_2x512 & [512, 512] & 5,000,000 \\
+mlp\_2x1024 & [1024, 1024] & 5,000,000 \\
+mlp\_3x64 & [64, 64, 64] & 5,000,000 \\
+mlp\_3x128 & [128, 128, 128] & 5,000,000 \\
+mlp\_3x256 & [256, 256, 256] & 5,000,000 \\
+mlp\_3x512 & [512, 512, 512] & 5,000,000 \\
+mlp\_128\_64 & [128, 64] & 5,000,000 \\
+mlp\_256\_128 & [256, 128] & 5,000,000 \\
+mlp\_256\_256\_128 & [256, 256, 128] & 5,000,000 \\
+mlp\_512\_256\_128 & [512, 256, 128] & 5,000,000 \\
+mlp\_512\_512\_256 & [512, 512, 256] & 5,000,000 \\
+mlp\_4x128 & [128, 128, 128, 128] & 5,000,000 \\
+mlp\_4x256 & [256, 256, 256, 256] & 5,000,000 \\
+mlp\_1024\_512\_256 & [1024, 512, 256] & 5,000,000 \\
+\bottomrule
+\end{longtable}
+
+\section{Experiment Tracking and Artifacts}
+\subsection{MLflow}
+Current runs enable MLflow with experiment name \texttt{V1\_MLP\_sweep}. Logged entities include:
+\begin{itemize}[leftmargin=*]
+  \item Full scalar config parameters.
+  \item Per-epoch metrics (train/val losses and validation errors).
+  \item Final test metrics and best epoch/loss.
+  \item Artifacts: best model, normalization, config, history, model config.
+\end{itemize}
+
+\subsection{On-disk outputs per run}
+Each run produces an experiment directory under checkpoints containing at least:
+\begin{itemize}[leftmargin=*]
+  \item \texttt{best\_model.pt}
+  \item \texttt{normalization.json}
+  \item \texttt{config.json}
+  \item \texttt{history.json}
+  \item \texttt{model\_config.json}
+\end{itemize}
+
+\section{Reproducibility Notes and Operational Caveats}
+\subsection{Randomness control}
+\begin{itemize}[leftmargin=*]
+  \item Dataset script has top-level seed argument (default 42).
+  \item Batch jobs use deterministic seed offset per batch.
+  \item Worker-level RNG reseeding from OS entropy prevents forked-stream duplication.
+\end{itemize}
+
+\subsection{Known operational decisions reflected in current protocol}
+\begin{itemize}[leftmargin=*]
+  \item Training jobs use \texttt{num\_workers=0} to match 1-CPU GPU slot requests.
+  \item Sweep argument format uses underscore-separated hidden dims in Condor queue rows, converted to space-separated list in worker script.
+  \item Job category is \texttt{short} to satisfy cluster scheduling windows.
+\end{itemize}
+
+\section{Minimal Reproduction Commands}
+\subsection{Generate one local sample dataset}
+\begin{lstlisting}[style=bashstyle]
+cd V1/data_generation
+python generate_data.py --n-tracks 100000 --name train_100k --output-dir datasets
+\end{lstlisting}
+
+\subsection{Merge batch datasets}
+\begin{lstlisting}[style=bashstyle]
+cd V1/data_generation
+python merge_batches.py --input "datasets/batch_*.npz" --output datasets/train_50M.npz --verify
+\end{lstlisting}
+
+\subsection{Run one training job locally (MLP protocol)}
+\begin{lstlisting}[style=bashstyle]
+cd V1/models
+python train.py --model mlp --name mlp_test --hidden_dims 256 256 128 \
+  --epochs 500 --patience 30 --min_delta 1e-7 \
+  --batch_size 4096 --lr 1e-3 --weight_decay 1e-4 \
+  --activation silu --num_workers 0 --mlflow \
+  --mlflow-experiment V1_MLP_sweep --max_samples 5000000
+\end{lstlisting}
+
+\section{Protocol Summary}
+The current V1 production protocol is:
+\begin{enumerate}[leftmargin=*]
+  \item Generate RK4 truth tracks using interpolated real field map \texttt{twodip.rtf} with variable $dz$.
+  \item Store samples in $(X,Y,P,Z)$ schema with $X=[x,y,t_x,t_y,q/p,dz]$ and $Y=[x,y,t_x,t_y]$ at propagated endpoint.
+  \item Produce large datasets via Condor arrays and merge compressed NPZ batches.
+  \item Train MLP models only (for now) using supervised MSE on full 4D output, with AdamW, cosine schedule, early stopping, and MLflow tracking.
+  \item Execute a 17-architecture GPU sweep at 5M samples per run to identify best-performing MLP families before any full-50M retraining.
+\end{enumerate}
+
+\end{document}

@@ -1,0 +1,60 @@
+# =============================================================================
+# train_sweep.sub — HTCondor submit file for MLP architecture sweep
+#
+# Trains MLPs with varying widths and depths on the 50M dataset.
+# All models use MSE loss on full 4D output (x, y, tx, ty) — no physics loss.
+#
+# Usage:
+#   condor_submit train_sweep.sub
+# =============================================================================
+
+universe        = vanilla
+executable      = /bin/bash
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/models
+
+# Shared filesystem
+should_transfer_files = NO
+
+# Logging
+output = condor/logs/$(exp_name).out
+error  = condor/logs/$(exp_name).err
+log    = condor/logs/condor_train.log
+
+# Nikhef cluster flags
++UseOS          = "el9"
++JobCategory    = "short"
+
+# Resources: 1 GPU, 1 CPU (num_workers=0), 8 GB RAM
+request_gpus    = 1
+request_cpus    = 1
+request_memory  = 8 GB
+
+# Arguments: script_path, exp_name, hidden_dims_csv, max_samples
+arguments = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/models/condor/run_train.sh $(exp_name) $(hidden_dims) $(max_samples)
+
+# ─── Architecture sweep ─────────────────────────────────────────
+# Varying depth (2-4 layers) and width (64-512)
+# Using 5M samples for the sweep (fast iteration), full 50M for best models later
+#
+# Format: exp_name, hidden_dims (underscore-separated), max_samples
+
+# All architectures in a single queue statement
+queue exp_name, hidden_dims, max_samples from (
+    mlp_2x64,         64_64,              5000000
+    mlp_2x128,        128_128,            5000000
+    mlp_2x256,        256_256,            5000000
+    mlp_2x512,        512_512,            5000000
+    mlp_2x1024,       1024_1024,          5000000
+    mlp_3x64,         64_64_64,           5000000
+    mlp_3x128,        128_128_128,        5000000
+    mlp_3x256,        256_256_256,        5000000
+    mlp_3x512,        512_512_512,        5000000
+    mlp_128_64,       128_64,             5000000
+    mlp_256_128,      256_128,            5000000
+    mlp_256_256_128,  256_256_128,        5000000
+    mlp_512_256_128,  512_256_128,        5000000
+    mlp_512_512_256,  512_512_256,        5000000
+    mlp_4x128,        128_128_128_128,    5000000
+    mlp_4x256,        256_256_256_256,    5000000
+    mlp_1024_512_256, 1024_512_256,       5000000
+)

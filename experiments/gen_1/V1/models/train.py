@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """
-Training Script for Track Extrapolation Neural Networks
+Training Script for Track Extrapolation Neural Networks (V1 — MLP only)
 
 This script handles:
 1. Data loading from NPZ format
 2. Train/validation/test splitting
-3. Training loop with logging
+3. Training loop with MSE loss on 4D state vector [x, y, tx, ty]
 4. Checkpoint management
 5. Early stopping
 6. Results export
+
+V1 trains pure MLPs with supervised data loss only (no physics loss).
 
 Author: G. Scriven
 Date: January 2026
 
 Usage:
     python train.py --model mlp --preset medium --epochs 100
-    python train.py --model pinn --preset medium --lambda_pde 1.0 --epochs 100
-    python train.py --config configs/my_experiment.yaml
+    python train.py --model mlp --hidden_dims 256 256 128 --epochs 500
 """
 
 import os
@@ -42,6 +43,15 @@ except ImportError:
     TENSORBOARD_AVAILABLE = False
     SummaryWriter = None
 
+# MLflow support
+try:
+    import mlflow
+    import mlflow.pytorch
+    MLFLOW_AVAILABLE = True
+except ImportError:
+    MLFLOW_AVAILABLE = False
+    mlflow = None
+
 # Add models directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 from architectures import (
@@ -55,7 +65,7 @@ from architectures import (
 
 DEFAULT_CONFIG = {
     # Data
-    'data_path': '/data/bfys/gscriven/TE_stack/Rec/Tr/TrackExtrapolators/experiments/next_generation/data_generation/data/training_50M.npz',
+    'data_path': '/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/data_generation/datasets/train_50M.npz',
     'train_fraction': 0.8,
     'val_fraction': 0.1,
     'test_fraction': 0.1,
@@ -67,11 +77,6 @@ DEFAULT_CONFIG = {
     'activation': 'silu',
     'dropout': 0.0,
     
-    # Physics (PINN/RK_PINN only)
-    'lambda_pde': 1.0,  # Weight for PDE residual loss
-    'lambda_ic': 1.0,   # Weight for initial condition loss
-    'n_collocation': 10,  # Number of collocation points
-    
     # Training
     'batch_size': 2048,
     'epochs': 100,
@@ -79,9 +84,6 @@ DEFAULT_CONFIG = {
     'weight_decay': 1e-4,
     'scheduler': 'cosine',  # 'cosine', 'step', 'none'
     'warmup_epochs': 5,
-    
-    # PINN Training Stability (see train_epoch docstring for details)
-    'physics_warmup_epochs': 10,  # Gradually increase physics loss over N epochs
     'grad_clip': 1.0,             # Gradient clipping threshold (0 to disable)
     
     # Early stopping
@@ -96,6 +98,9 @@ DEFAULT_CONFIG = {
     'log_every': 1,
     'use_tensorboard': False,
     'use_wandb': False,
+    'use_mlflow': True,
+    'mlflow_tracking_uri': None,  # None = local ./mlruns
+    'mlflow_experiment_name': 'V1_track_extrapolation',
     'experiment_name': None,
     
     # Hardware
@@ -344,43 +349,15 @@ def train_epoch(
     scheduler: Optional[object],
     device: torch.device,
     config: dict,
-    epoch: int = 0,
 ) -> Dict[str, float]:
-    """Train for one epoch.
-    
-    PINN Training Stability Features:
-    ---------------------------------
-    1. Gradient Clipping: Prevents gradient explosion during backprop through
-       physics loss computation (which involves second derivatives via autograd).
-       
-    2. Physics Loss Warmup: Gradually increases physics loss contribution over
-       the first N epochs. This allows the network to first learn a reasonable
-       approximation from data before physics constraints are enforced.
-       
-    3. NaN/Inf Detection: Skips batches that produce invalid loss values,
-       preventing the entire training from crashing.
-       
-    4. Loss Scaling: Physics loss is scaled by warmup factor to prevent
-       early training instability.
-    """
+    """Train for one epoch with MSE loss on 4D state vector."""
     model.train()
     
     total_loss = 0
-    total_data_loss = 0
-    total_physics_loss = 0
     n_batches = 0
     n_skipped = 0
     
     criterion = nn.MSELoss()
-    
-    # Physics loss warmup: ramp from 0 to 1 over warmup_epochs
-    warmup_epochs = config.get('physics_warmup_epochs', 10)
-    if epoch < warmup_epochs:
-        physics_scale = epoch / warmup_epochs
-    else:
-        physics_scale = 1.0
-    
-    # Gradient clipping threshold
     grad_clip = config.get('grad_clip', 1.0)
     
     for x, y, p in loader:
@@ -389,47 +366,15 @@ def train_epoch(
         
         optimizer.zero_grad()
         
-        # Forward pass
         y_pred = model(x)
+        loss = criterion(y_pred, y)
         
-        # Data loss
-        data_loss = criterion(y_pred, y)
-        
-        # Check for NaN/Inf in data loss
-        if torch.isnan(data_loss) or torch.isinf(data_loss):
-            n_skipped += 1
-            continue
-            
-        total_data_loss += data_loss.item()
-        
-        # Physics loss (PINN models) with warmup scaling
-        loss = data_loss
-        batch_physics_loss = 0.0
-        if hasattr(model, 'compute_physics_loss') and physics_scale > 0:
-            physics_losses = model.compute_physics_loss(x, y_pred)
-            physics_loss = sum(physics_losses.values())
-            
-            # Check for NaN/Inf in physics loss
-            if isinstance(physics_loss, torch.Tensor):
-                if torch.isnan(physics_loss) or torch.isinf(physics_loss):
-                    # Skip physics loss for this batch but continue with data loss
-                    physics_loss = torch.tensor(0.0, device=device)
-                else:
-                    batch_physics_loss = physics_loss.item()
-            
-            # Apply warmup scaling
-            loss = loss + physics_scale * physics_loss
-            total_physics_loss += batch_physics_loss
-        
-        # Final loss check
         if torch.isnan(loss) or torch.isinf(loss):
             n_skipped += 1
             continue
         
-        # Backward pass with gradient clipping
         loss.backward()
         
-        # Gradient clipping to prevent explosion
         if grad_clip > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         
@@ -441,24 +386,17 @@ def train_epoch(
         total_loss += loss.item()
         n_batches += 1
     
-    # Handle case where all batches were skipped
     if n_batches == 0:
         return {
             'loss': float('inf'),
-            'data_loss': float('inf'),
-            'physics_loss': float('inf'),
             'lr': optimizer.param_groups[0]['lr'],
             'skipped_batches': n_skipped,
-            'physics_scale': physics_scale,
         }
     
     return {
         'loss': total_loss / n_batches,
-        'data_loss': total_data_loss / n_batches,
-        'physics_loss': total_physics_loss / n_batches,
         'lr': optimizer.param_groups[0]['lr'],
         'skipped_batches': n_skipped,
-        'physics_scale': physics_scale,
     }
 
 
@@ -509,6 +447,13 @@ def train(config: dict):
     device = torch.device(config['device'])
     print(f"\nUsing device: {device}")
     
+    # GPU warmup: perform a small tensor operation to register GPU usage
+    # with the HTCondor GPU watchdog before the long CPU-bound data loading phase
+    if device.type == 'cuda':
+        _ = torch.zeros(1, device=device)
+        torch.cuda.synchronize()
+        print("  GPU warmup complete")
+    
     # Create experiment directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     exp_name = config['experiment_name'] or f"{config['model_type']}_{timestamp}"
@@ -530,16 +475,8 @@ def train(config: dict):
     model_kwargs = {
         'hidden_dims': config['hidden_dims'],
         'activation': config['activation'],
+        'dropout': config.get('dropout', 0.0),
     }
-    
-    if config['model_type'] in ['pinn', 'rk_pinn']:
-        model_kwargs['lambda_pde'] = config['lambda_pde']
-        model_kwargs['lambda_ic'] = config['lambda_ic']
-        if config['model_type'] == 'pinn':
-            model_kwargs['n_collocation'] = config['n_collocation']
-    
-    if config['model_type'] not in ['rk_pinn']:
-        model_kwargs['dropout'] = config.get('dropout', 0.0)
     
     model = create_model(config['model_type'], **model_kwargs)
     
@@ -582,6 +519,45 @@ def train(config: dict):
             print(f"TensorBoard logging to: {tb_dir}")
             print(f"  Launch with: tensorboard --logdir={exp_dir.parent}")
     
+    # ─── MLflow setup ───────────────────────────────────────────
+    mlflow_run = None
+    if config.get('use_mlflow', False) and MLFLOW_AVAILABLE:
+        tracking_uri = config.get('mlflow_tracking_uri')
+        if tracking_uri:
+            mlflow.set_tracking_uri(tracking_uri)
+        else:
+            # Store mlruns next to the models directory
+            mlruns_dir = Path(__file__).parent.parent / 'mlruns'
+            mlflow.set_tracking_uri(f'file://{mlruns_dir.resolve()}')
+        
+        mlflow_exp_name = config.get('mlflow_experiment_name', 'V1_track_extrapolation')
+        mlflow.set_experiment(mlflow_exp_name)
+        
+        mlflow_run = mlflow.start_run(run_name=exp_name)
+        
+        # Log all config parameters
+        flat_config = {}
+        for k, v in config.items():
+            if isinstance(v, (int, float, str, bool)) or v is None:
+                flat_config[k] = v
+            elif isinstance(v, list):
+                flat_config[k] = str(v)
+        mlflow.log_params(flat_config)
+        mlflow.log_param('n_parameters', model.count_parameters())
+        
+        # Tag with model type and architecture
+        mlflow.set_tags({
+            'model_type': config['model_type'],
+            'preset': config.get('preset', 'custom'),
+            'architecture': str(config['hidden_dims']),
+        })
+        
+        print(f"MLflow tracking: {mlflow.get_tracking_uri()}")
+        print(f"  Experiment: {mlflow_exp_name}")
+        print(f"  Run: {mlflow_run.info.run_id[:8]}...")
+    elif config.get('use_mlflow', False) and not MLFLOW_AVAILABLE:
+        print("Warning: MLflow requested but not installed. pip install mlflow")
+    
     # Training history
     history = {
         'train': [],
@@ -601,9 +577,8 @@ def train(config: dict):
     best_val_loss = float('inf')
     
     for epoch in range(config['epochs']):
-        # Train (pass epoch for physics warmup)
         train_metrics = train_epoch(
-            model, loaders['train'], optimizer, scheduler, device, config, epoch=epoch
+            model, loaders['train'], optimizer, scheduler, device, config
         )
         
         # Validate
@@ -615,14 +590,11 @@ def train(config: dict):
         
         # TensorBoard logging
         if writer is not None:
-            # Loss curves
             writer.add_scalars('Loss', {
                 'train': train_metrics['loss'],
                 'val': val_metrics['loss'],
             }, epoch)
-            writer.add_scalar('Loss/train_total', train_metrics['loss'], epoch)
-            writer.add_scalar('Loss/train_data', train_metrics['data_loss'], epoch)
-            writer.add_scalar('Loss/train_physics', train_metrics['physics_loss'], epoch)
+            writer.add_scalar('Loss/train', train_metrics['loss'], epoch)
             writer.add_scalar('Loss/val', val_metrics['loss'], epoch)
             
             # Position errors
@@ -643,6 +615,21 @@ def train(config: dict):
             
             # Learning rate
             writer.add_scalar('Training/learning_rate', train_metrics['lr'], epoch)
+        
+        # ─── MLflow epoch logging ─────────────────────────────
+        if mlflow_run is not None:
+            mlflow.log_metrics({
+                'train_loss': train_metrics['loss'],
+                'val_loss': val_metrics['loss'],
+                'val_pos_mean_mm': val_metrics['pos_mean_mm'],
+                'val_pos_95_mm': val_metrics['pos_95_mm'],
+                'val_slope_mean': val_metrics['slope_mean'],
+                'val_x_mean_mm': val_metrics['x_mean_mm'],
+                'val_y_mean_mm': val_metrics['y_mean_mm'],
+                'val_tx_mean': val_metrics['tx_mean'],
+                'val_ty_mean': val_metrics['ty_mean'],
+                'learning_rate': train_metrics['lr'],
+            }, step=epoch)
         
         # Log progress
         if epoch % config['log_every'] == 0:
@@ -709,7 +696,6 @@ def train(config: dict):
                 'model_type': config['model_type'],
                 'hidden_dims': str(config['hidden_dims']),
                 'activation': config['activation'],
-                'lambda_pde': config.get('lambda_pde', 0.0),
                 'learning_rate': config['learning_rate'],
                 'batch_size': config['batch_size'],
             },
@@ -734,6 +720,33 @@ def train(config: dict):
     # Save model config
     with open(exp_dir / 'model_config.json', 'w') as f:
         json.dump(model.get_config(), f, indent=2)
+    
+    # ─── MLflow: log final results & artifacts ────────────────
+    if mlflow_run is not None:
+        # Log final test metrics
+        mlflow.log_metrics({
+            'test_pos_mean_mm': test_metrics['pos_mean_mm'],
+            'test_pos_std_mm': test_metrics['pos_std_mm'],
+            'test_pos_95_mm': test_metrics['pos_95_mm'],
+            'test_slope_mean': test_metrics['slope_mean'],
+            'test_x_mean_mm': test_metrics['x_mean_mm'],
+            'test_y_mean_mm': test_metrics['y_mean_mm'],
+            'test_tx_mean': test_metrics['tx_mean'],
+            'test_ty_mean': test_metrics['ty_mean'],
+            'best_val_loss': history['best_val_loss'],
+            'best_epoch': history['best_epoch'],
+            'training_time_min': training_time / 60.0,
+        })
+        
+        # Log model artifacts
+        mlflow.log_artifact(str(exp_dir / 'best_model.pt'))
+        mlflow.log_artifact(str(exp_dir / 'normalization.json'))
+        mlflow.log_artifact(str(exp_dir / 'config.json'))
+        mlflow.log_artifact(str(exp_dir / 'history.json'))
+        mlflow.log_artifact(str(exp_dir / 'model_config.json'))
+        
+        mlflow.end_run()
+        print(f"MLflow run logged: {mlflow_run.info.run_id[:8]}...")
     
     print(f"\nResults saved to: {exp_dir}")
     
@@ -773,14 +786,6 @@ def parse_args():
     parser.add_argument('--dropout', type=float, default=0.0,
                        help='Dropout rate')
     
-    # Physics (PINN/RK_PINN)
-    parser.add_argument('--lambda_pde', type=float, default=1.0,
-                       help='Weight for PDE residual loss (PINN/RK_PINN only)')
-    parser.add_argument('--lambda_ic', type=float, default=1.0,
-                       help='Weight for initial condition loss (PINN/RK_PINN only)')
-    parser.add_argument('--n_collocation', type=int, default=10,
-                       help='Number of collocation points (PINN only)')
-    
     # Training
     parser.add_argument('--batch_size', type=int, default=2048,
                        help='Batch size')
@@ -802,6 +807,12 @@ def parse_args():
                        help='Directory for checkpoints')
     parser.add_argument('--tensorboard', action='store_true',
                        help='Enable TensorBoard logging')
+    parser.add_argument('--mlflow', action='store_true', default=True,
+                       help='Enable MLflow tracking (default: enabled)')
+    parser.add_argument('--no-mlflow', dest='mlflow', action='store_false',
+                       help='Disable MLflow tracking')
+    parser.add_argument('--mlflow-experiment', type=str, default='V1_track_extrapolation',
+                       help='MLflow experiment name')
     
     # Hardware
     parser.add_argument('--device', type=str, default=None,
@@ -824,9 +835,6 @@ def main():
     config['model_type'] = args.model
     config['activation'] = args.activation
     config['dropout'] = args.dropout
-    config['lambda_pde'] = args.lambda_pde
-    config['lambda_ic'] = args.lambda_ic
-    config['n_collocation'] = args.n_collocation
     config['batch_size'] = args.batch_size
     config['epochs'] = args.epochs
     config['learning_rate'] = args.lr
@@ -836,6 +844,8 @@ def main():
     config['experiment_name'] = args.name
     config['checkpoint_dir'] = args.checkpoint_dir
     config['use_tensorboard'] = args.tensorboard
+    config['use_mlflow'] = args.mlflow
+    config['mlflow_experiment_name'] = args.mlflow_experiment
     config['num_workers'] = args.num_workers
     
     # Apply preset first, then allow hidden_dims to override

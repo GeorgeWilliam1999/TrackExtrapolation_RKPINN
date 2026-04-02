@@ -1,0 +1,70 @@
+{
+  "mlp_1024_512_256": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_1024_512_256.bin",
+    "valid": true
+  },
+  "mlp_128_64": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_128_64.bin",
+    "valid": true
+  },
+  "mlp_256_128": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_256_128.bin",
+    "valid": true
+  },
+  "mlp_256_256_128": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_256_256_128.bin",
+    "valid": true
+  },
+  "mlp_2x1024": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_2x1024.bin",
+    "valid": true
+  },
+  "mlp_2x128": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_2x128.bin",
+    "valid": true
+  },
+  "mlp_2x256": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_2x256.bin",
+    "valid": true
+  },
+  "mlp_2x512": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_2x512.bin",
+    "valid": true
+  },
+  "mlp_2x64": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_2x64.bin",
+    "valid": true
+  },
+  "mlp_3x128": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_3x128.bin",
+    "valid": true
+  },
+  "mlp_3x256": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_3x256.bin",
+    "valid": true
+  },
+  "mlp_3x512": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_3x512.bin",
+    "valid": true
+  },
+  "mlp_3x64": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_3x64.bin",
+    "valid": true
+  },
+  "mlp_4x128": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_4x128.bin",
+    "valid": true
+  },
+  "mlp_4x256": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_4x256.bin",
+    "valid": true
+  },
+  "mlp_512_256_128": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_512_256_128.bin",
+    "valid": true
+  },
+  "mlp_512_512_256": {
+    "path": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/analysis/exported_bins/mlp_512_512_256.bin",
+    "valid": true
+  }
+}

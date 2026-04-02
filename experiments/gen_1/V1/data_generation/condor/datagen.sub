@@ -1,0 +1,39 @@
+# =============================================================================
+# datagen.sub — HTCondor submit file for track data generation
+#
+# Generates 50M tracks in 2000 batches of 25K tracks each.
+#
+# Usage:
+#   condor_submit datagen.sub
+#
+# Or with custom parameters:
+#   condor_submit datagen.sub n_tracks=50000 n_batches=1000
+# =============================================================================
+
+universe        = vanilla
+executable      = /bin/bash
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/data_generation
+
+# Shared filesystem — no file transfer needed
+should_transfer_files = NO
+
+# Logging
+output = condor/logs/batch_$(Process).out
+error  = condor/logs/batch_$(Process).err
+log    = condor/logs/condor.log
+
+# Nikhef cluster flags
++UseOS          = "el9"
++JobCategory    = "medium"
+
+# Resources: 2 CPUs per job (for 2 workers), 4GB RAM
+request_cpus    = 2
+request_memory  = 4 GB
+request_disk    = 500 MB
+
+# Arguments: script_path batch_id n_tracks_per_batch output_dir
+n_tracks = 25000
+arguments = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/data_generation/condor/run_datagen.sh $(Process) $(n_tracks) /data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/data_generation/datasets
+
+# Queue 2000 batches → 2000 × 25K = 50M tracks
+queue 2000

@@ -1,0 +1,7 @@
+artifact_location: file:///data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/mlruns/920354276216120200
+creation_time: 1775052199121
+experiment_id: '920354276216120200'
+last_update_time: 1775052199121
+lifecycle_stage: active
+name: V1_MLP_sweep
+workspace: default

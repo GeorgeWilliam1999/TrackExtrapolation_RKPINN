@@ -1,0 +1,35 @@
+# =============================================================================
+# train_cpu_resubmit.sub — CPU-only training for small models
+#
+# These models are too small to register GPU utilization, triggering the
+# HTCondor GPU watchdog ("GPU claimed but no GPU usage"). Train on CPU instead.
+# =============================================================================
+
+universe        = vanilla
+executable      = /bin/bash
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/models
+
+should_transfer_files = NO
+
+output = condor/logs/$(exp_name).out
+error  = condor/logs/$(exp_name).err
+log    = condor/logs/condor_train.log
+
++UseOS          = "el9"
++JobCategory    = "short"
+
+# CPU-only: no GPU, 4 CPUs for data loading, 16 GB RAM
+request_cpus    = 4
+request_memory  = 16 GB
+
+arguments = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/models/condor/run_train_cpu.sh $(exp_name) $(hidden_dims) $(max_samples)
+
+queue exp_name, hidden_dims, max_samples from (
+    mlp_2x64,         64_64,              5000000
+    mlp_2x128,        128_128,            5000000
+    mlp_3x64,         64_64_64,           5000000
+    mlp_3x128,        128_128_128,        5000000
+    mlp_3x512,        512_512_512,        5000000
+    mlp_128_64,       128_64,             5000000
+    mlp_512_256_128,  512_256_128,        5000000
+)

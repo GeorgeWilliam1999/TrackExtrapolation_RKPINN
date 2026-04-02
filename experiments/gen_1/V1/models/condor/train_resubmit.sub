@@ -1,0 +1,35 @@
+# =============================================================================
+# train_resubmit.sub — Resubmit 7 held jobs (GPU watchdog fix applied)
+#
+# Fixed: Added GPU warmup in train.py + PYTHONUNBUFFERED=1 in run_train.sh
+# =============================================================================
+
+universe        = vanilla
+executable      = /bin/bash
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/models
+
+should_transfer_files = NO
+
+output = condor/logs/$(exp_name).out
+error  = condor/logs/$(exp_name).err
+log    = condor/logs/condor_train.log
+
++UseOS          = "el9"
++JobCategory    = "short"
+
+request_gpus    = 1
+request_cpus    = 1
+request_memory  = 8 GB
+
+arguments = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/models/condor/run_train.sh $(exp_name) $(hidden_dims) $(max_samples)
+
+# 7 previously-held architectures
+queue exp_name, hidden_dims, max_samples from (
+    mlp_2x64,         64_64,              5000000
+    mlp_2x128,        128_128,            5000000
+    mlp_3x64,         64_64_64,           5000000
+    mlp_3x128,        128_128_128,        5000000
+    mlp_3x512,        512_512_512,        5000000
+    mlp_128_64,       128_64,             5000000
+    mlp_512_256_128,  512_256_128,        5000000
+)
