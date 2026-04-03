@@ -1,0 +1,14 @@
+artifact_uri: file:///data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/mlruns/920354276216120200/6422ca317de14f25b51110f2b1427182/artifacts
+end_time: 1775136246335
+entry_point_name: ''
+experiment_id: '920354276216120200'
+lifecycle_stage: active
+run_id: 6422ca317de14f25b51110f2b1427182
+run_name: mlp_512_256_128
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1775123618741
+status: 3
+tags: []
+user_id: gscriven
