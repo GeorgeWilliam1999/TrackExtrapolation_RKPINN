@@ -24,6 +24,7 @@ import os
 import sys
 import json
 import time
+import random
 import argparse
 from datetime import datetime
 from pathlib import Path
@@ -63,7 +64,23 @@ from architectures import (
 # Configuration
 # =============================================================================
 
+def set_seed(seed: int):
+    """Set random seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    print(f"Random seed set to {seed}")
+
+
 DEFAULT_CONFIG = {
+    # Reproducibility
+    'seed': 42,
+    
     # Data
     'data_path': '/data/bfys/gscriven/TrackExtrapolation/experiments/gen_1/V1/data_generation/datasets/train_50M.npz',
     'train_fraction': 0.8,
@@ -91,7 +108,7 @@ DEFAULT_CONFIG = {
     'min_delta': 1e-6,
     
     # Checkpointing
-    'checkpoint_dir': 'checkpoints',
+    'checkpoint_dir': '../trained_models',
     'save_every': 10,
     
     # Logging
@@ -442,6 +459,9 @@ def validate(
 
 def train(config: dict):
     """Full training loop."""
+    
+    # Reproducibility
+    set_seed(config['seed'])
     
     # Setup
     device = torch.device(config['device'])
@@ -803,7 +823,7 @@ def parse_args():
     # Experiment
     parser.add_argument('--name', type=str, default=None,
                        help='Experiment name')
-    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints',
+    parser.add_argument('--checkpoint_dir', type=str, default='../trained_models',
                        help='Directory for checkpoints')
     parser.add_argument('--tensorboard', action='store_true',
                        help='Enable TensorBoard logging')
@@ -813,6 +833,10 @@ def parse_args():
                        help='Disable MLflow tracking')
     parser.add_argument('--mlflow-experiment', type=str, default='V1_track_extrapolation',
                        help='MLflow experiment name')
+    
+    # Reproducibility
+    parser.add_argument('--seed', type=int, default=42,
+                       help='Random seed for reproducibility')
     
     # Hardware
     parser.add_argument('--device', type=str, default=None,
@@ -847,6 +871,7 @@ def main():
     config['use_mlflow'] = args.mlflow
     config['mlflow_experiment_name'] = args.mlflow_experiment
     config['num_workers'] = args.num_workers
+    config['seed'] = args.seed
     
     # Apply preset first, then allow hidden_dims to override
     if args.preset:

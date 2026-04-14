@@ -1,0 +1,28 @@
+# Core training dependencies (pinned from conda env 'TE', April 2026)
+# Full environment: see environment.yml
+# Install: conda env create -f environment.yml
+#      or: pip install -r requirements.txt (torch needs --index-url for CUDA)
+
+# ML framework
+torch==2.9.1
+numpy==2.2.6
+scipy==1.15.3
+scikit-learn==1.7.2
+
+# Experiment tracking
+mlflow==3.10.1
+
+# Plotting / analysis
+matplotlib==3.10.7
+seaborn==0.13.2
+
+# Data
+h5py==3.16.0
+pandas==2.3.3
+
+# ONNX export
+onnx==1.20.0
+
+# Utilities
+tqdm==4.67.1
+pyyaml==6.0.3

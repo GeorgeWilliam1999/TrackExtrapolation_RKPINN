@@ -9,11 +9,7 @@ This directory contains the binary model files and C++ inference code for the `T
 ```
 ml_models/
 ├── README.md                      # This file
-├── models/                        # Binary model files
-│   ├── mlp_v2_shallow_256.bin     # MLP: [256] hidden, SiLU
-│   ├── pinn_v3_res_256_col5.bin   # PINN v3 residual: 5 collocation points
-│   ├── pinn_v3_res_256_col10.bin  # PINN v3 residual: 10 collocation points
-│   └── pinn_v3_res_256_col20.bin  # PINN v3 residual: 20 collocation points
+├── models/                        # Binary model files (currently empty — to be regenerated)
 └── src/
     └── TrackMLPExtrapolator.cpp   # Eigen-based NN inference (571 lines)
 ```
@@ -22,12 +18,18 @@ ml_models/
 
 ## Deployed Models
 
-| Model File | Architecture | Hidden Layers | Activation | Mode | Origin |
-|------------|-------------|---------------|------------|------|--------|
-| `mlp_v2_shallow_256.bin` | MLP | [256] | SiLU | Endpoint | V2 shallow-wide sweep |
-| `pinn_v3_res_256_col5.bin` | PINN v3 Residual | [256, 256] | SiLU | IC + z_frac scaling | V3 PINN with skip connection |
-| `pinn_v3_res_256_col10.bin` | PINN v3 Residual | [256, 256] | SiLU | IC + z_frac scaling | V3 PINN with skip connection |
-| `pinn_v3_res_256_col20.bin` | PINN v3 Residual | [256, 256] | SiLU | IC + z_frac scaling | V3 PINN with skip connection |
+No models currently deployed. Models will be exported from V1 trained checkpoints using the deployment pipeline.
+
+To export a trained model:
+
+```bash
+cd experiments/gen_1
+python deployment/export_to_cpp.py \
+    V1/trained_models/<model_name> \
+    ../../ml_models/models/<model_name>.bin
+```
+
+See [experiments/gen_1/deployment/README.md](../experiments/gen_1/deployment/README.md) for the binary format specification.
 
 ---
 
@@ -53,19 +55,4 @@ declareProperty("UsePINNResidual", m_usePINNResidual = false);
 
 ---
 
-## Exporting New Models
-
-To export a trained PyTorch model to the binary format:
-
-```bash
-cd experiments/gen_1
-python deployment/export_to_cpp.py \
-    trained_models/<model_name> \
-    ../../ml_models/models/<model_name>.bin
-```
-
-See [experiments/gen_1/deployment/README.md](../experiments/gen_1/deployment/README.md) for the binary format specification and normalization handling.
-
----
-
-*Last Updated: March 2026*
+*Last Updated: April 2026*
