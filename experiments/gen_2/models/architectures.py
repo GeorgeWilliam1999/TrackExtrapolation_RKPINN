@@ -1,0 +1,1 @@
+../../gen_1/V1/models/architectures.py

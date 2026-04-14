@@ -387,6 +387,24 @@ class BaseTrackExtrapolator(nn.Module):
     def count_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
     
+    def compute_jacobian(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Compute transport matrix (Jacobian): d[output] / d[input_state].
+        
+        Returns:
+            [batch, 4, 5] tensor: d[x,y,tx,ty]_out / d[x,y,tx,ty,qop]_in
+        """
+        x = x.clone().detach().requires_grad_(True)
+        y = self(x)
+        batch_size = x.shape[0]
+        jac = torch.zeros(batch_size, 4, 5, device=x.device)
+        for i in range(4):
+            grad = torch.autograd.grad(
+                y[:, i].sum(), x, create_graph=False, retain_graph=(i < 3)
+            )[0]
+            jac[:, i, :] = grad[:, :5]  # w.r.t. state variables only (not dz)
+        return jac
+    
     def get_config(self) -> dict:
         raise NotImplementedError("Subclasses must implement get_config()")
 
@@ -637,13 +655,14 @@ class PINN(BaseTrackExtrapolator):
         
         return x_baseline, y_baseline, tx_baseline, ty_baseline
     
-    def forward_at_z(self, x0: torch.Tensor, z_frac: torch.Tensor) -> torch.Tensor:
+    def forward_at_z(self, x0: torch.Tensor, z_frac: torch.Tensor, dz: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Forward pass at arbitrary z position.
         
         Args:
             x0: Initial state [batch, 5] = [x0, y0, tx0, ty0, qop]
             z_frac: Fractional z position [batch, 1] or scalar, in range [0, 1]
+            dz: Per-sample step size [batch] or scalar. If None, uses stored mean.
         
         Returns:
             y: State at z [batch, 4] = [x, y, tx, ty]
@@ -667,11 +686,17 @@ class PINN(BaseTrackExtrapolator):
         ty0 = x0[:, 3:4]
         qop = x0[:, 4:5]
         
-        # Get dz (step size)
-        if hasattr(self, 'dz'):
-            dz = self.dz
-        else:
-            dz = torch.tensor(self.z_end, device=device, dtype=dtype)
+        # Get dz (step size) — prefer per-sample, fall back to stored mean
+        if dz is None:
+            if hasattr(self, 'dz'):
+                dz = self.dz
+            else:
+                dz = torch.tensor(self.z_end, device=device, dtype=dtype)
+        if dz.dim() == 0:
+            dz = dz.unsqueeze(0).expand(batch_size)
+        elif dz.dim() == 2:
+            dz = dz.squeeze(1)
+        # dz is now [batch_size]
         
         # Normalize initial state for encoder (not z_frac)
         x0_norm = (x0 - self.input_mean[:5]) / self.input_std[:5]
@@ -705,10 +730,11 @@ class PINN(BaseTrackExtrapolator):
         return torch.stack([x_out, y_out, tx_out, ty_out], dim=1)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass at endpoint (z_frac=1)."""
+        """Forward pass at endpoint (z_frac=1) with per-sample dz."""
         x0 = x[:, :5]
+        dz = x[:, 5]  # per-sample step size
         z_frac = torch.ones((x.shape[0], 1), device=x.device, dtype=x.dtype)
-        return self.forward_at_z(x0, z_frac)
+        return self.forward_at_z(x0, z_frac, dz=dz)
     
     def compute_physics_loss(self, x: torch.Tensor, y_pred: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
@@ -724,11 +750,7 @@ class PINN(BaseTrackExtrapolator):
         x0 = x[:, :5]
         initial_state = x[:, :4]  # [x0, y0, tx0, ty0]
         qop = x[:, 4]
-        
-        if hasattr(self, 'dz'):
-            dz = self.dz
-        else:
-            dz = torch.tensor(self.z_end, device=device, dtype=dtype)
+        dz = x[:, 5]  # per-sample step size [batch]
         
         kappa = qop * C_LIGHT
         
@@ -740,7 +762,7 @@ class PINN(BaseTrackExtrapolator):
         # Initial Condition Loss (should be ~0 due to residual formulation)
         # =====================================================================
         z_zero = torch.zeros((batch_size, 1), device=device, dtype=dtype)
-        y_at_z0 = self.forward_at_z(x0, z_zero)
+        y_at_z0 = self.forward_at_z(x0, z_zero, dz=dz)
         
         ic_pos_err = ((y_at_z0[:, :2] - initial_state[:, :2]) / pos_scale).pow(2).mean()
         ic_slope_err = ((y_at_z0[:, 2:] - initial_state[:, 2:]) / slope_scale).pow(2).mean()
@@ -760,7 +782,7 @@ class PINN(BaseTrackExtrapolator):
             z_tensor = torch.full((batch_size, 1), z_frac_val.item(), device=device, dtype=dtype, requires_grad=True)
             
             # Forward at this z with gradient tracking
-            y = self.forward_at_z(x0, z_tensor)
+            y = self.forward_at_z(x0, z_tensor, dz=dz)
             
             # Clamp to physical range
             y_clamped = y.clone()
@@ -781,9 +803,9 @@ class PINN(BaseTrackExtrapolator):
                 dy_dz.append(grad.squeeze())
             dy_dz = torch.stack(dy_dz, dim=1)
             
-            # Physical z position and field evaluation
-            z_physical = self.z_start + z_frac_val * dz
-            Bx, By, Bz = self.field(y_clamped[:, 0], y_clamped[:, 1], z_physical.expand(batch_size))
+            # Physical z position and field evaluation (per-sample)
+            z_physical = self.z_start + z_frac_val * dz  # [batch]
+            Bx, By, Bz = self.field(y_clamped[:, 0], y_clamped[:, 1], z_physical)
             
             tx_pred = y_clamped[:, 2]
             ty_pred = y_clamped[:, 3]
@@ -800,8 +822,8 @@ class PINN(BaseTrackExtrapolator):
             )
             
             # Convert autograd gradient: ∂y/∂z_physical = (∂y/∂z_frac) / dz
-            dz_safe = max(dz.item() if torch.is_tensor(dz) else dz, 100.0)
-            dy_dz_physical = dy_dz / dz_safe
+            dz_safe = dz.clamp(min=100.0)  # [batch]
+            dy_dz_physical = dy_dz / dz_safe.unsqueeze(1)  # [batch, 4] / [batch, 1]
             
             # Normalized residuals
             curvature_scale = 1e-5

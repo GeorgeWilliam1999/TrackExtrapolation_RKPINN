@@ -1,0 +1,35 @@
+# =============================================================================
+# HTCondor submit file for gen_2 experiments
+# =============================================================================
+# Submit all jobs:   condor_submit submit.sub
+# Submit one job:    condor_submit submit.sub -append 'queue config_path from (configs/mlp/medium.json)'
+# Check status:      condor_q -nobatch
+# =============================================================================
+
+universe        = vanilla
+executable      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_2/condor/run_training.sh
+arguments       = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_2/$(config_path)
+
+# Resources
+request_cpus    = 2
+request_memory  = 8GB
+request_gpus    = 1
+require_gpus    = (GlobalMemoryMb >= 16000)
+
+# Output
+output          = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_2/condor/logs/$(ClusterId)_$(ProcId).out
+error           = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_2/condor/logs/$(ClusterId)_$(ProcId).err
+log             = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_2/condor/logs/$(ClusterId)_$(ProcId).log
+
+# Environment
+getenv          = true
++SingularityImage = ""
++JobCategory    = "long"
+
+# Job control
+max_retries     = 1
+periodic_hold   = (JobStatus == 2) && (time() - EnteredCurrentStatus > 14400)
+periodic_hold_reason = "Job exceeded 4 hour wall time"
+
+# Queue from job list
+queue config_path from jobs.txt

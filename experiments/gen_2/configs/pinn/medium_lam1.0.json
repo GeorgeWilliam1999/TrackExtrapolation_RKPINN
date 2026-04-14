@@ -1,0 +1,19 @@
+{
+    "experiment_name": "pinn_medium_lam1.0",
+    "model_type": "pinn",
+    "hidden_dims": [256, 256],
+    "activation": "tanh",
+    "dropout": 0.0,
+    "lambda_pde": 1.0,
+    "lambda_ic": 0.1,
+    "n_collocation": 8,
+    "field_type": "interpolated",
+    "batch_size": 1024,
+    "epochs": 300,
+    "learning_rate": 5e-4,
+    "weight_decay": 1e-4,
+    "patience": 40,
+    "seed": 42,
+    "eval_jacobian": true,
+    "mlflow_experiment_name": "gen_2_track_extrapolation"
+}
