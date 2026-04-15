@@ -1,0 +1,6 @@
+configs/pinn/medium_lam0.1.json
+configs/pinn/medium_lam1.0.json
+configs/pinn/medium_lam10.0.json
+configs/rk_pinn/medium_lam0.1.json
+configs/rk_pinn/medium_lam1.0.json
+configs/rk_pinn/medium_lam10.0.json

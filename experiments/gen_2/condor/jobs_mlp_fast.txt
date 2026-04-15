@@ -1,0 +1,2 @@
+configs/mlp/tiny.json
+configs/mlp/small.json
