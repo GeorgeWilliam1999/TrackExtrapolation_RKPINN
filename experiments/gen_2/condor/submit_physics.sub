@@ -1,4 +1,7 @@
-# PINN/RK_PINN queue (heavier physics-informed runs)
+# =============================================================================
+# HTCondor submit for PINN / RK_PINN sweep
+# =============================================================================
+
 universe        = vanilla
 executable      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_2/condor/run_training.sh
 arguments       = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_2/$(config_path)
@@ -17,7 +20,5 @@ getenv          = true
 +JobCategory    = "long"
 
 max_retries     = 1
-periodic_hold   = (JobStatus == 2) && (time() - EnteredCurrentStatus > 14400)
-periodic_hold_reason = "Job exceeded 4 hour wall time"
 
 queue config_path from jobs_physics.txt

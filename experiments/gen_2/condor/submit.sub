@@ -1,9 +1,9 @@
 # =============================================================================
-# HTCondor submit file for gen_2 experiments
-# =============================================================================
-# Submit all jobs:   condor_submit submit.sub
-# Submit one job:    condor_submit submit.sub -append 'queue config_path from (configs/mlp/medium.json)'
-# Check status:      condor_q -nobatch
+# HTCondor submit file for full gen_2 sweep (11 jobs)
+# STBC policy notes:
+# - Set +UseOS (el7/el8/el9) when not specifying custom SingularityImage
+# - Do NOT set +SingularityImage = "" (causes scheduler/container issues)
+# - Let JobCategory define scheduler walltime policy; avoid custom 4h holds
 # =============================================================================
 
 universe        = vanilla
@@ -16,22 +16,18 @@ request_memory  = 8GB
 request_gpus    = 1
 require_gpus    = (GlobalMemoryMb >= 16000)
 
-# Output
+# Logs
 output          = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_2/condor/logs/$(ClusterId)_$(ProcId).out
 error           = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_2/condor/logs/$(ClusterId)_$(ProcId).err
 log             = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_2/condor/logs/$(ClusterId)_$(ProcId).log
 
-# Environment
+# Environment / policy
 getenv          = true
-# IMPORTANT: do not override site container policy with an empty image.
-# STBC provides a default container when this attribute is omitted.
 +UseOS          = "el9"
 +JobCategory    = "long"
 
-# Job control
+# Reliability
 max_retries     = 1
-periodic_hold   = (JobStatus == 2) && (time() - EnteredCurrentStatus > 14400)
-periodic_hold_reason = "Job exceeded 4 hour wall time"
 
-# Queue from job list
+# Queue all jobs
 queue config_path from jobs.txt
