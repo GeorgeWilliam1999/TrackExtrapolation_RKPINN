@@ -14,7 +14,7 @@ Enhanced from gen_1/V1 with:
 Data format:
   Input  X [N, 6]:  [x, y, tx, ty, q/p, dz]   (mm, mm, -, -, 1/MeV, mm)
   Output Y [N, 4]:  [x_out, y_out, tx_out, ty_out]
-  dz is VARIABLE per-sample: U[100, 10000] mm
+  dz is VARIABLE per-sample: U[25, 10000] mm (covers VELO through full detector)
 
 Usage:
   # MLP from config file
@@ -74,10 +74,10 @@ from architectures import (
 # Configuration
 # =============================================================================
 
-# Default data path — gen_1 50M dataset with variable dz
+# Default data path — gen_2 50M dataset with dz_min=25mm (VELO coverage)
 _DEFAULT_DATA = str(
-    Path(__file__).resolve().parent.parent.parent
-    / 'gen_1' / 'V1' / 'data_generation' / 'datasets' / 'train_50M.npz'
+    Path(__file__).resolve().parent.parent
+    / 'data' / 'train_50M_dz25.npz'
 )
 
 DEFAULT_CONFIG = {

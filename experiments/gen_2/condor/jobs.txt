@@ -1,11 +1,9 @@
 configs/mlp/tiny.json
 configs/mlp/small.json
 configs/mlp/medium.json
-configs/mlp/large.json
-configs/mlp/wide.json
-configs/pinn/medium_lam0.1.json
-configs/pinn/medium_lam1.0.json
-configs/pinn/medium_lam10.0.json
-configs/rk_pinn/medium_lam0.1.json
-configs/rk_pinn/medium_lam1.0.json
-configs/rk_pinn/medium_lam10.0.json
+configs/pinn/lam0.1.json
+configs/pinn/lam1.0.json
+configs/pinn/lam10.0.json
+configs/rk_pinn/lam0.1.json
+configs/rk_pinn/lam1.0.json
+configs/rk_pinn/lam10.0.json

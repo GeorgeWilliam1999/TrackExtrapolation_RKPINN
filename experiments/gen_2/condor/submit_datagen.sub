@@ -1,0 +1,26 @@
+# =============================================================================
+# HTCondor submit file for gen_2 data generation (50M tracks, dz_min=25mm)
+# CPU-only, high memory — data gen is I/O and CPU bound, no GPU needed.
+# =============================================================================
+
+universe        = vanilla
+executable      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_2/condor/run_datagen.sh
+
+# Resources — data generation is CPU-heavy (16 workers) and memory-heavy (50M tracks)
+request_cpus    = 16
+request_memory  = 32GB
+
+# Logs
+output          = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_2/condor/logs/datagen_$(ClusterId).out
+error           = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_2/condor/logs/datagen_$(ClusterId).err
+log             = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_2/condor/logs/datagen_$(ClusterId).log
+
+# Environment / policy
+getenv          = true
++UseOS          = "el9"
++JobCategory    = "long"
+
+# Reliability
+max_retries     = 1
+
+queue

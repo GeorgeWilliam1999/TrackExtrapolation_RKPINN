@@ -1,3 +1,0 @@
-configs/mlp/medium.json
-configs/mlp/large.json
-configs/mlp/wide.json

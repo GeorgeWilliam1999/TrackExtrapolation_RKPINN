@@ -51,3 +51,6 @@ condor_logs/
 
 # Archived previous work (kept on disk, not tracked)
 legacy/
+experiments/gen_2/condor/logs/
+experiments/gen_2/mlruns/
+experiments/gen_2/trained_models/

@@ -1,7 +1,7 @@
 {
     "experiment_name": "mlp_small",
     "model_type": "mlp",
-    "hidden_dims": [128, 128],
+    "hidden_dims": [96, 96],
     "activation": "silu",
     "dropout": 0.0,
     "batch_size": 4096,
