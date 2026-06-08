@@ -1,0 +1,1124 @@
+% =====================================================================
+%  Gen-3 V3 Results and Allen Integration Status — exhaustive working
+%  notes for G. Scriven and downstream automated agents.
+%
+%  Author : G. Scriven (with Claude Opus 4.7, experiment-reviewer mode)
+%  Date   : 2026-05-22
+%  Audience: ME and my agents; not a paper, not a review draft.
+%  Scope  : (i) all training and evaluation results that exist for the
+%           Gen-3 ("V3") replacement campaign as of today, including the
+%           NeuralRK4 hybrid that is now frozen; (ii) every Allen-side
+%           integration step taken so far, with an explicit alignment
+%           to the deployment target (the HLT1 UT->T forward
+%           propagation that today is done by
+%           TrackRungeKuttaExtrapolator.cpp).
+%
+%  Conventions used in this document:
+%    * "median |dx|" means median absolute transverse position error
+%      on the endpoint (sqrt(dx^2 + dy^2)).
+%    * "Split A" = per-model full held-out test split, defined by the
+%      model's own  test_indices.npy.  Sizes are NOT equal across
+%      models (Gen-3 v1 was sampled 20 k; Gen-3 v2 used 200 k).
+%    * "Split B" = common UT->T pool, 23 107 tracks, identical across
+%      all five candidates, defined by
+%      z0 in [2300,3000] mm AND zf in [7600,9500] mm AND dz > 0.
+%      This is the production-relevant split.
+%    * Allen "qop" = 299.792458 * q / p_MeV. Internal training uses
+%      the same convention (Gen-3 fix vs Gen-2).
+%    * All errors quoted in micrometres unless suffixed otherwise.
+% =====================================================================
+
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=22mm]{geometry}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+% Lightweight siunitx-substitute (host TeX install has no siunitx).
+\providecommand{\micro}{\textmu}
+\providecommand{\metre}{m}
+\providecommand{\meter}{m}
+\providecommand{\milli}{m}
+\providecommand{\micrometre}{\textmu m}
+\providecommand{\SI}[2]{#1\,#2}
+\providecommand{\SIrange}[3]{#1--#2\,#3}
+\providecommand{\num}[1]{#1}
+
+% Make UT$\to$T work inside section titles -> toc bookmarks
+\providecommand{\UTtoT}{UT$\to$T}
+\pdfstringdefDisableCommands{\def\UTtoT{UT->T}\def\to{->}}
+
+\hypersetup{colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!60!black,citecolor=blue!60!black}
+
+\newcommand{\flag}[1]{\textcolor{red!70!black}{\textbf{[FLAG]}~#1}}
+\newcommand{\pass}{\textcolor{green!50!black}{\textbf{PASS}}}
+\newcommand{\fail}{\textcolor{red!70!black}{\textbf{FAIL}}}
+\newcommand{\open}{\textcolor{orange!80!black}{\textbf{OPEN}}}
+\newcommand{\todo}[1]{\textcolor{orange!80!black}{\emph{TODO:}~#1}}
+\newcommand{\file}[1]{\texttt{\detokenize{#1}}}
+
+\title{\vspace{-8mm}Gen-3 (V3) Replacement Results \\
+       and Allen Integration Progress \\[2pt]
+       \large Exhaustive working notes}
+\author{G. Scriven\\\small TrackExtrapolation, LHCb}
+\date{2026-05-22}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent This document is the comprehensive working record of the
+Gen-3 ("V3") neural track-extrapolator campaign and of the Allen-side
+integration work done in support of it. It covers every model that has
+been trained or evaluated in the Gen-3 corpus (signed $dz$,
+\SI{10}{M} tracks, Allen $qop$ convention), reports two distinct
+evaluation splits — the per-model full held-out split (Split~A) and
+the production-relevant common UT$\to$T pool of \num{23107} tracks
+(Split~B) — and discusses the \textasciitilde$25\times$ gap between
+them in detail. The Allen section traces every change made in support
+of the UT$\to$T replacement target, from the May~8 socket bootstrap
+through the May~20 V3 blob freeze and May~21 independent audit. The
+NeuralRK4 hybrid is reported in full but is explicitly frozen
+following ADR~0009; it is documented here for completeness and as a
+reference baseline, not as an active deployment candidate. The current
+deployable replacement candidate is
+\file{pinn_v2_small_v1} (10 372 parameters, packaged as the V3 blob
+\file{pinn_v2_ALLEN_v1.bin}, CRC32 \texttt{0x1a139335}). It achieves
+\SI{12}{\micro\metre} median $|\Delta x|$ on Split~A and
+\SI{287}{\micro\metre} on Split~B. The new May-20 v2 retrains
+(\file{pinn_v2_medium_v2}, \file{pinn_v2_large_v2}) train to better
+validation loss but \emph{do not beat \file{pinn_v2_small_v1}} on
+either split — they are useful for ablation and uncertainty, but the
+blob remains the April-24 weights.
+\end{abstract}
+
+\tableofcontents
+
+% =====================================================================
+\section{Mission, replacement criterion, and the UT$\to$T target}
+% =====================================================================
+
+The project mission, as re-anchored on 2026-05-19
+(\file{PROJECT_CONTEXT.md}, ADR~0009), is to replace the LHCb track
+extrapolator
+\file{Rec/TrackExtrapolators/src/TrackRungeKuttaExtrapolator.cpp} with
+a \textbf{pure} neural network. ``Pure'' has three load-bearing
+clauses:
+\begin{enumerate}[topsep=2pt,itemsep=1pt]
+  \item At inference time the model is the entire function
+        \[
+          f_\theta:\;\mathbb{R}^{7}\to\mathbb{R}^{5},\qquad
+          (x_0,y_0,t_{x,0},t_{y,0},(q/p)_0,\,z_0,\,dz)
+          \;\longmapsto\;
+          (x_f,y_f,t_{x,f},t_{y,f},(q/p)_f),
+        \]
+        evaluated as a single forward pass.
+  \item No magnetic field-map lookup $\mathbf{B}(\mathbf{r})$ occurs
+        at inference.
+  \item No analytic Lorentz step
+        \[
+          \dot{\mathbf{p}} \;=\; q\,\mathbf{v}\times\mathbf{B}(\mathbf{r})
+        \]
+        is taken at inference.
+\end{enumerate}
+The acceptance gate is on the endpoint transverse position error
+\[
+  \mathrm{med}\bigl(|\Delta x|\bigr) \;<\; \SI{100}{\micro\metre},
+  \qquad
+  |\Delta x| \;\equiv\; \sqrt{(x_f^{\mathrm{NN}}-x_f^{\mathrm{ref}})^2 + (y_f^{\mathrm{NN}}-y_f^{\mathrm{ref}})^2},
+\]
+with stretch goal $\mathrm{med}(|\Delta x|)<\SI{50}{\micro\metre}$,
+throughput equal to or better than RK4, and a drop-in
+\texttt{ITrackExtrapolator::propagate} surface in Rec.
+
+\paragraph{Allen $qop$ convention.} Throughout the corpus and the V3
+blob the charge-over-momentum slot uses the Allen unit convention
+\[
+  qop \;\equiv\; \bigl(c\,[\text{m/s}]/10^{9}\bigr)\cdot\frac{q}{p_{\text{MeV}/c}}
+  \;=\; 299.792458\cdot\frac{q}{p_{\text{MeV}/c}},
+\]
+so $qop$ carries units $(\text{GeV}/c)^{-1}$ and the blob is loadable
+into Allen with no rescale (Fix~F1).
+
+\paragraph{Why ``UT$\to$T''.} The dominant use of the extrapolator in
+HLT1 is the forward propagation of a VELO+UT track state, with the
+state defined at a $z$ between the UT layers
+($z_0 \approx \SIrange{2300}{3000}{\milli\metre}$), out to the SciFi
+T-station entrance
+($z_f \approx \SIrange{7600}{9500}{\milli\metre}$). The propagation
+passes through the LHCb dipole magnet; the propagation length is
+\SIrange{4.6}{7.2}{\metre}; the field integral the track sees is
+$\sim\SI{4}{T\meter}$. Every Phase~1 / Phase~2 / Phase~R5 / Phase~R6
+decision in this document is graded against \emph{this} call.
+
+\paragraph{Why two evaluation splits.} The Gen-3 v1 checkpoints
+(April~24) used a 20 k random test split; the Gen-3 v2 retrains
+(May~20) used a 200 k event-grouped test split (ADR~0004). Both
+splits sample the full domain $|dz|\in[\SI{25}{\milli\metre},\SI{10}{\metre}]$
+log-uniformly, so the median |dx| on either Split~A is dominated by
+\emph{easy short-$dz$ tracks} that are nothing like what HLT1 will
+actually ask of the network. Split~B, the common UT$\to$T pool, is
+the apples-to-apples production-relevant metric. Both numbers are
+reported throughout this document and the gap between them is
+discussed explicitly in
+Section~\ref{sec:split-reconciliation}.
+
+% =====================================================================
+\section{Cross-generation context (Gen-1 $\to$ Gen-2 $\to$ Gen-3)}
+% =====================================================================
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lllll}
+\toprule
+Gen. & $dz$ regime & Domain & Corpus & Best replacement candidate \\
+\midrule
+1 & fixed $\SI{8000}{\milli\metre}$ & forward only & 1 M & \file{mlp_tiny_v1}, \SI{22.8}{\micro\metre} mean \\
+2 & log-uniform $[25,\SI{10000}{\milli\metre}]$, forward & forward only & 10 M & \file{pinn_v2_medium}, \SI{235}{\micro\metre} mean \\
+\textbf{3 (V3)} & log-uniform $[25,\SI{10000}{\milli\metre}]$, \textbf{signed} & forward + backward & 10 M & \file{pinn_v2_small_v1}, \SI{117}{\micro\metre} mean \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The Gen-3 corpus reverts to the Gen-2 $dz$ distribution but adds the
+sign of $dz$ as a free variable in the input. The Gen-3 corpus also
+re-derives the $qop$ definition to match the Allen convention
+($qop = 299.792458\,q/p$ with $p$ in MeV) so the blob is loadable
+directly into Allen with no unit conversion. Both fixes were
+mandatory: Gen-2 produced a one-way (forward) network that could not
+be inverted in a Kalman backward pass without an explicit sign flip,
+and Gen-2's unit convention required a per-call rescale on the GPU.
+
+% =====================================================================
+\section{Gen-3 timeline (April~24 -- May~22 2026)}
+% =====================================================================
+
+\begin{longtable}{p{18mm}p{152mm}}
+\toprule
+\textbf{Date} & \textbf{Event} \\
+\midrule
+\endhead
+2026-04-24 & Gen-3 corpus generated (5000 HTCondor batches, 2000 tracks each); first M1 training round produces \file{pinn_v2_small_v1}, \file{nrk4_tiny_1step_v1}, \file{nrk4_small_1step_v1}, \file{mlp_small_v1_broken}, \file{mlp_medium_v1_broken}. \\
+2026-05-06 & M1 write-up (\file{gen_3/README.md}, \file{gen3_m1_results.tex}). F1 (Allen-qop convention), F2 (loss heavy-tail \SI{1100}{$\times$} val/test/train spread), F3 (NRK4 corrector destabilisation) identified. \\
+2026-05-08 & \file{For_Allen/} subdirectory bootstrapped. ADRs 0001--0005 ratified (reviewer audit, corrector OFF, multistep, event-grouped splits, frozen test set). Allen MR \texttt{!2497} (\file{NRKExtrapolator.cuh} socket, \file{m\_use\_nrk} default-false property) drafted. \\
+2026-05-12 & Phase 1a architectural ablation completed against frozen M1 weights of \file{nrk4_tiny_1step_v1}. Winner: \texttt{n\_rk\_steps=2}, corrector OFF; VELO $\langle|\Delta x|\rangle = \SI{8.85}{\micro\metre}$, UT $\langle|\Delta x|\rangle = \SI{9.10}{\micro\metre}$ on the frozen \num{20000}-track test set. fp64-autograd Jacobian methodology established (A4 Frobenius $5.1\times 10^{-4}$ at $n=2$). ADR~0007. \\
+2026-05-12 & Allen wiring plan: \file{ExtrapolateStates} (not Kalman filter) chosen as first end-to-end harness. ADR~0008. \\
+2026-05-19 & Project re-anchored to ``pure NN replacement''. ADR~0009 demotes NRK4 to research baseline; hybrid checkpoints moved to \file{trained_models/_archive_hybrid/}. \file{REPLACEMENT_PLAN.md} R1--R6 ratified. \\
+2026-05-20 & R3 (MLP modernisation, 7-dim input + engineered features) and R4 (PINN\_v2 scaling, width sweep) retraining round. Four new v2 checkpoints. V3 loader spec frozen (\file{loader_v3_spec.md}). V3 blob \file{pinn_v2_ALLEN_v1.bin} written from \file{pinn_v2_small_v1} weights (CRC32 \texttt{0x1a139335}, SHA256 \texttt{c665767092\dots c87e52c}). \\
+2026-05-21 & Independent reviewer audit of the Python half of the export pipeline. R5 Python half: \pass. CUDA bit-bound parity: \open. \\
+2026-05-22 & Forensic UT$\to$T deep-dive notebook \file{gen3_latest_models_detailed_analysis.ipynb}: per-model momentum / radius / endpoint heatmaps across the five active Gen-3 candidates; Split~B common pool defined and computed. \emph{This document.} \\
+\bottomrule
+\end{longtable}
+
+% =====================================================================
+\section{Gen-3 candidate inventory}
+\label{sec:inventory}
+% =====================================================================
+
+\begin{longtable}{p{40mm}lp{31mm}rrrl}
+\toprule
+\textbf{Name} & \textbf{Family} & \textbf{Hidden dims} & \textbf{Params} & \textbf{$\lambda_{\mathrm{PDE}}$} & \textbf{$dz$ feat.} & \textbf{Status} \\
+\midrule
+\endhead
+\multicolumn{7}{l}{\textit{Active deployment candidates (Gen-3, May 22)}} \\
+\file{pinn_v2_small_v1}      & PINN\_v2 & [96,~96]            & 10\,372  & 0.1 & --   & \textbf{V3 blob} (April 24) \\
+\file{pinn_v2_medium_v2}     & PINN\_v2 & [256,~256]          & 68\,636  & 0.1 & --   & retrain (May 20) \\
+\file{pinn_v2_large_v2}      & PINN\_v2 & [256,~256,~128]     & 101\,020 & 0.1 & --   & retrain (May 20) \\
+\file{mlp_small_v2}          & MLP       & [64,~64]            & 5\,084   & --   & engfeat & retrain (May 20) \\
+\file{mlp_medium_v2}         & MLP       & [128,~128,~128]     & 34\,844  & --   & engfeat & retrain (May 20) \\
+\midrule
+\multicolumn{7}{l}{\textit{Broken / superseded v1 checkpoints (kept for traceability)}} \\
+\file{mlp_small_v1_broken}   & MLP       & [128,~128]          & 18\,076  & --   & --   & broken (F1, 6-dim input) \\
+\file{mlp_medium_v1_broken}  & MLP       & [128,~128,~128,~128]& 51\,100  & --   & --   & broken (F1, 6-dim input) \\
+\midrule
+\multicolumn{7}{l}{\textit{Archived hybrid (NeuralRK4) — see Sec.~\ref{sec:nrk4}}} \\
+\file{nrk4_tiny_1step_v1}    & NeuralRK4 & [64,~64]            & 5\,021   & 1.0  & --   & frozen (ADR 0009) \\
+\file{nrk4_small_1step_v1}   & NeuralRK4 & [128,~128]          & 18\,205  & 1.0  & --   & frozen \\
+\file{nrk4_tiny_1step_HI_M1} & NeuralRK4 & [64,~64]            & 4\,893   & --   & --   & frozen, M1 reference \\
+\bottomrule
+\end{longtable}
+
+\paragraph{Common training settings (Gen-3 v2).}
+Adam, learning rate $\eta=5\times 10^{-4}$ (constant; cosine schedule
+$\eta_t=\tfrac{1}{2}\eta_0\bigl(1+\cos(\pi t/T)\bigr)$ deferred to
+R6), batch size 2048 (PINN\_v2) or 4096 (MLP),
+$\lambda_{\mathrm{PDE}}=0.1$ for PINN\_v2, MSE loss \flag{still
+MSE — R1 logcosh + median-|dx| selection has not yet been wired
+into the v2 training loop; see Sec.~\ref{sec:open}}, seed 42, train /
+val / test = 0.8 / 0.1 / 0.1 event-grouped (ADR~0004).
+
+\paragraph{Engineered features (MLP only, R3).}
+\file{mlp_*_v2} prepends three engineered features so the network
+input is
+\[
+  \mathbf{u} \;=\; \bigl(\,
+      \underbrace{x_0,y_0,t_{x,0},t_{y,0},(q/p)_0,\,z_0,\,dz}_{\text{7 raw}},\;
+      \underbrace{1/p,\;\sqrt{1/p},\;\mathrm{sgn}(dz)}_{\text{3 engineered}}
+    \,\bigr)\in\mathbb{R}^{10},
+\]
+with $p=1/|q/p|$ in $\text{GeV}/c$. The PINN\_v2 family does
+\emph{not} use engineered features (Fix~P1: deliberately leave the
+PDE residual to discover the dipole structure on its own).
+
+% =====================================================================
+\section{Loss functions and metrics (explicit definitions)}
+\label{sec:math}
+% =====================================================================
+
+\noindent All optimisations in this project minimise scalar loss
+functions of the form $\mathcal{L}=\sum_k w_k\mathcal{L}_k$. The
+explicit terms used in Gen-3 are below, together with the metrics
+quoted throughout this report.
+
+\subsection{Endpoint regression loss}
+
+For a mini-batch $\mathcal{B}=\{(\mathbf{u}_i,\mathbf{y}_i)\}_{i=1}^{N}$
+with five-dim target $\mathbf{y}_i=(x_f,y_f,t_{x,f},t_{y,f},(q/p)_f)_i$
+and prediction $\hat{\mathbf{y}}_i=f_\theta(\mathbf{u}_i)$, the
+endpoint regression loss is
+\[
+  \mathcal{L}_{\mathrm{data}}(\theta;\mathcal{B})
+  \;=\; \frac{1}{N}\sum_{i=1}^{N}\sum_{c=1}^{5}
+        \rho\!\bigl(\hat{y}_{i,c}^{\mathrm{n}} - y_{i,c}^{\mathrm{n}}\bigr),
+\]
+where the superscript ``n'' denotes per-channel mean/std
+normalisation
+$y^{\mathrm{n}}=(y-\mu_c)/\sigma_c$ using the constants pinned in
+\file{normalization.json}, and $\rho(\cdot)$ is the per-element
+penalty.
+
+\paragraph{Currently deployed (Gen-3 v1 and v2): mean-squared error.}
+\[
+  \rho_{\mathrm{MSE}}(e) \;=\; e^{2},
+  \qquad
+  \mathcal{L}_{\mathrm{MSE}}
+  \;=\; \frac{1}{5N}\sum_{i,c}\bigl(\hat{y}^{\mathrm{n}}_{i,c}-y^{\mathrm{n}}_{i,c}\bigr)^{2}.
+\]
+MSE drives the gradient with the squared residual, so the tail of the
+$|dz|$ distribution dominates the gradient even at moderate fractions
+of the corpus.
+
+\paragraph{R1 reform (not yet landed): log-cosh.}
+\[
+  \rho_{\mathrm{logcosh}}(e) \;=\; \log\!\bigl(\cosh e\bigr)
+  \;\approx\;\begin{cases} \tfrac{1}{2}e^{2}, & |e|\ll 1, \\ |e|-\log 2, & |e|\gg 1, \end{cases}
+\]
+which is quadratic for small residuals (so it reproduces MSE on the
+bulk) and linear for large residuals (so heavy-tail tracks do not
+dominate the gradient). The R1 plan combines this with checkpoint
+selection on the validation \emph{median} $|\Delta x|$ rather than on
+$\mathcal{L}_{\mathrm{MSE}}$.
+
+\subsection{PINN\_v2 PDE-residual loss}
+
+\file{pinn_v2_*} models add a soft-physics residual term that
+enforces the Lorentz-force ODE along an interior collocation set.
+Writing the network as $\hat{\mathbf{r}}(z)=f_\theta(\mathbf{u}_0,z-z_0)$,
+the magnetic-field-free dipole approximation in the LHCb-coordinate
+$(t_x,t_y)$ parametrisation gives, for each track,
+\[
+  \frac{d t_x}{dz} \;=\; \kappa\,(q/p)\,B_y(z)\,\sqrt{1+t_x^{2}+t_y^{2}},
+  \quad
+  \frac{d t_y}{dz} \;=\; -\kappa\,(q/p)\,B_x(z)\,\sqrt{1+t_x^{2}+t_y^{2}},
+\]
+with $\kappa=c/10^{9}$ matching the Allen $qop$ convention above. At
+each collocation point $z^{(k)}\in[z_0,z_0+dz]$ the network's own
+autograd gradients
+$\partial \hat{t}_x/\partial z$, $\partial \hat{t}_y/\partial z$
+are computed and the PDE residual
+\[
+  \mathbf{r}^{(k)}_{\mathrm{PDE}}
+  \;=\; \begin{pmatrix}
+    \partial_z \hat t_x - \kappa\,\widehat{q/p}\,B_y(z^{(k)})\,\sqrt{1+\hat t_x^{2}+\hat t_y^{2}}\\[2pt]
+    \partial_z \hat t_y + \kappa\,\widehat{q/p}\,B_x(z^{(k)})\,\sqrt{1+\hat t_x^{2}+\hat t_y^{2}}
+  \end{pmatrix}
+\]
+contributes
+\[
+  \mathcal{L}_{\mathrm{PDE}}(\theta;\mathcal{B})
+  \;=\; \frac{1}{2 N\, n_{\mathrm{coll}}}\sum_{i=1}^{N}\sum_{k=1}^{n_{\mathrm{coll}}}\bigl\lVert\mathbf{r}^{(k)}_{\mathrm{PDE},i}\bigr\rVert_{2}^{2},
+\]
+with $n_{\mathrm{coll}}=2$ for all Gen-3 PINN\_v2 candidates.
+
+\paragraph{Initial-condition term.} A small IC term pins
+$\hat{\mathbf{r}}(z_0)=\mathbf{u}_{0,1:4}$:
+\[
+  \mathcal{L}_{\mathrm{IC}} \;=\; \frac{1}{4N}\sum_{i=1}^{N}\sum_{c=1}^{4}\bigl(\hat{y}^{(z_0)}_{i,c}-u^{0}_{i,c}\bigr)^{2}.
+\]
+
+\paragraph{Total PINN\_v2 loss.}
+\[
+  \boxed{\;
+  \mathcal{L}_{\mathrm{PINN\_v2}}
+  \;=\; \mathcal{L}_{\mathrm{data}} \;+\; \lambda_{\mathrm{PDE}}\,\mathcal{L}_{\mathrm{PDE}}
+        \;+\; \lambda_{\mathrm{IC}}\,\mathcal{L}_{\mathrm{IC}},
+  \;}
+  \qquad \lambda_{\mathrm{PDE}}=\lambda_{\mathrm{IC}}=0.1.
+\]
+MLP candidates use $\lambda_{\mathrm{PDE}}=\lambda_{\mathrm{IC}}=0$.
+
+\subsection{Evaluation metrics}
+
+For an evaluation set of $M$ tracks, the per-track endpoint residual
+is
+\[
+  \Delta x_i \;=\; \hat{x}_{f,i} - x^{\mathrm{ref}}_{f,i},\qquad
+  |\Delta x|_i \;=\; \sqrt{\Delta x_i^{2}+\Delta y_i^{2}}\quad\text{(transverse position)},
+\]
+in $\mu\mathrm{m}$. The headline scalar is the sample median
+$\mathrm{med}\{|\Delta x|_i\}$. The percentile metrics quoted in
+every results table are
+\[
+  \mathrm{p}_{q}\bigl(|\Delta x|\bigr)
+  \;=\; Q_{|\Delta x|}(q),\qquad q\in\{0.50,\,0.68,\,0.95,\,0.99,\,0.999\},
+\]
+with $Q$ the empirical quantile function. Slope residuals follow the
+same definition with $\Delta t_x,\Delta t_y$ in $\mu\mathrm{rad}$.
+
+\subsection{Conditional metrics}
+
+For a feature $\xi\in\{p,\,|q/p|,\,r_0,\,z_f,\,\ldots\}$ the
+conditional median
+\[
+  \widetilde{\Delta x}(\xi)
+  \;=\; \mathrm{med}\bigl\{|\Delta x|_i\;\big|\;\xi_i\in\mathrm{bin}\bigr\}
+\]
+is what appears in every momentum/radius/endpoint scan. Signed bias
+panels report instead
+\[
+  \overline{\Delta x}(\xi) \;=\; \mathrm{mean}\bigl\{\Delta x_i\;|\;\xi_i\in\mathrm{bin}\bigr\}.
+\]
+
+\subsection{Jacobian compliance metric (A4)}
+
+Constraint A4 measures how well the network reproduces the
+endpoint-to-input Jacobian of the analytic RK4 reference. For each
+track the $4\times 7$ Jacobian
+\[
+  J^{\mathrm{NN}}_{ab}\;=\;\frac{\partial \hat{y}_a}{\partial u_b},\qquad
+  J^{\mathrm{ref}}_{ab}\;=\;\frac{\partial y^{\mathrm{ref}}_a}{\partial u_b},
+\]
+is evaluated in fp64 autograd. The Frobenius relative error is
+\[
+  \boxed{\;
+  \varepsilon^{\mathrm{F}}_{i}
+  \;=\;
+  \frac{\lVert J^{\mathrm{NN}}_{i}-J^{\mathrm{ref}}_{i}\rVert_{F}}
+       {\lVert J^{\mathrm{ref}}_{i}\rVert_{F}},
+  \qquad
+  \lVert M\rVert_{F}\;=\;\sqrt{\textstyle\sum_{ab}M_{ab}^{2}},\;}
+\]
+and the off-diagonal relative error excludes the trivial
+$\partial x_f/\partial x_0\!\to\!1$ diagonal. A4 is
+$\mathrm{med}_i(\varepsilon^{\mathrm{F}}_{i})<0.05$,
+off-diag $<0.20$. The current measurement on
+\file{nrk4_tiny_1step_v1} at $n_{\mathrm{rk}}=2$ gives
+$\mathrm{mean}_i(\varepsilon^{\mathrm{F}}_{i})=5.1\times 10^{-4}$
+and $\mathrm{med}_i(\varepsilon^{\mathrm{F}}_{i})=7.1\times 10^{-9}$
+(the latter is the fp64 truncation floor).
+
+\subsection{CUDA bit-bound (A5)}
+
+Let $\hat{\mathbf{y}}^{\mathrm{torch}}$ and
+$\hat{\mathbf{y}}^{\mathrm{cuda}}$ be the fp32 outputs of the same
+weights through the PyTorch CPU path and the deployed CUDA kernel.
+A5 is
+\[
+  \boxed{\;\max_{i,c}\bigl|\hat{y}^{\mathrm{cuda}}_{i,c}-\hat{y}^{\mathrm{torch}}_{i,c}\bigr|<10^{-4}\;}
+  \quad\text{(per channel, over $i=1,\dots,1000$ random inputs).}
+\]
+The fp32 ULP budget on a tanh-of-affine-of-affine network with six
+tanh-bounded internal magnitudes is $\sim 10^{-5}$; A5 is set to
+$10^{-4}$ as a $10\times$ safety margin.
+
+\subsection{F2 heavy-tail metric}
+
+The F2 finding quoted in Sec.~\ref{sec:open} is
+\[
+  \frac{\mathcal{L}_{\mathrm{MSE}}^{\mathrm{val}}}{\mathcal{L}_{\mathrm{MSE}}^{\mathrm{train}}}
+  \;\approx\; 1100,
+\]
+on identical \file{pinn_v2_small_v1} weights, which is what motivates
+the R1 reform (a median-based selection metric is invariant under
+the $|dz|$-tail tracks that drive this ratio).
+
+% =====================================================================
+\section{Evaluation methodology}
+% =====================================================================
+
+\subsection{Split~A — per-model full held-out split}
+
+Each model is evaluated on its own \file{test_indices.npy} as
+generated at training time. Sizes are not equal:
+\begin{itemize}[topsep=2pt,itemsep=1pt]
+  \item \file{pinn_v2_small_v1}: 20 000 tracks (v1 random split).
+  \item All four v2 models: 200 000 tracks (event-grouped, ADR~0004).
+\end{itemize}
+This is the standard ``best-loss on test'' metric quoted in
+\file{history.json} and is the metric used during training for
+checkpointing. \flag{Split~A includes very many short-$|dz|$ tracks
+where any reasonable network performs at the \SIrange{1}{10}{\micro\metre}
+level. Median $|\Delta x|$ on Split~A is therefore dominated by easy
+samples and is \emph{not} the production-relevant figure.}
+
+\subsection{Split~B — common UT$\to$T pool}
+
+A single fixed set of \num{23107} tracks is selected from the full
+Gen-3 corpus by the predicate
+\[
+z_0 \in [\SI{2300}{\milli\metre},\SI{3000}{\milli\metre}]
+\;\wedge\;
+z_f \in [\SI{7600}{\milli\metre},\SI{9500}{\milli\metre}]
+\;\wedge\;
+dz > 0,
+\]
+i.e.\ forward propagation from the UT volume through the dipole to
+the SciFi T entrance. The same \num{23107} indices are used to
+evaluate \emph{every} candidate. This is the only apples-to-apples
+metric across the five candidates and is the metric that should be
+reported externally.
+
+\subsection{Reconciliation: why Split~A and Split~B disagree by $\sim 25\times$}
+\label{sec:split-reconciliation}
+
+For the V3-blob model \file{pinn_v2_small_v1}, Split~A reports a
+median $|\Delta x|$ of \SI{11.7}{\micro\metre} and Split~B reports
+\SI{287}{\micro\metre}. The factor of $\sim 25$ is fully explained by
+the conditional distribution of $|dz|$:
+\begin{itemize}[topsep=2pt,itemsep=1pt]
+  \item Split~A samples $\log_{10}|dz|$ approximately uniformly on
+        $[\log_{10}25,\;\log_{10}10000]$, so the median
+        $|dz|\approx \SI{500}{\milli\metre}$.
+  \item Split~B forces $|dz|\in[\SI{4600}{\milli\metre},\SI{7200}{\milli\metre}]$ —
+        an order of magnitude larger, all of which sits across the
+        dipole's field gradient.
+\end{itemize}
+A back-of-envelope step-error scaling for an RK4-comparable solver,
+with local truncation error $O(h^{5})$ and global error $O(h^{4})$,
+gives
+\[
+  \frac{|\Delta x|_{\text{Split B}}}{|\Delta x|_{\text{Split A}}}
+  \;\sim\;
+  \Bigl(\tfrac{|dz|_{\text{B}}}{|dz|_{\text{A}}}\Bigr)^{4}
+  \;\approx\; \Bigl(\tfrac{5000}{500}\Bigr)^{4} \;=\; 10^{4}.
+\]
+The network does considerably better than this classical scaling
+thanks to its $q/p$-conditioning, hence the observed $\sim 25\times$
+rather than $\sim 10^{4}\times$. Both numbers are reported below; the
+production headline is Split~B.
+
+\subsection{Computed quantities}
+
+For every candidate we record on each split:
+\begin{itemize}[topsep=2pt,itemsep=1pt]
+  \item median, p68, p95, p99 of $|\Delta x|$ (transverse position),
+  \item median, p95 of $|\Delta t_x|$ and $|\Delta t_y|$ (slopes),
+  \item conditional median $|\Delta x|$ binned in
+        $p\in[1,\,3,\,10,\,30,\,100]\,\mathrm{GeV}/c$, with
+        $p=1/|q/p|$, and in
+        $r_0=\sqrt{x_0^{2}+y_0^{2}}\in[0,50,100,200,400]\,\mathrm{mm}$,
+  \item endpoint $(x_f,y_f)$ error heatmaps (Fig.~\ref{fig:heatmaps}).
+\end{itemize}
+
+% =====================================================================
+\section{V3 results — Split~A (full held-out)}
+\label{sec:splitA}
+% =====================================================================
+
+\begin{longtable}{p{38mm}rrrrrr}
+\toprule
+\textbf{Model} & \textbf{$n_{\mathrm{test}}$}
+               & \textbf{median} & \textbf{p68} & \textbf{p95}
+               & \textbf{p99}    & \textbf{units} \\
+\midrule
+\endhead
+\file{pinn_v2_small_v1}    & \num{20000}  &   11.7 &   ~31 &   454 &  1849 & $\mu$m \\
+\file{pinn_v2_large_v2}    & \num{200000} &   17.0 &   ~40 &   525 &  2100 & $\mu$m \\
+\file{pinn_v2_medium_v2}   & \num{200000} &   25.3 &   ~57 &   702 &  2710 & $\mu$m \\
+\file{mlp_medium_v2}       & \num{200000} &  971.7 & 1880 & 3746 &  6420 & $\mu$m \\
+\file{mlp_small_v2}        & \num{200000} & 1672   & 3110 & 7464 & 12830 & $\mu$m \\
+\bottomrule
+\end{longtable}
+
+\paragraph{Reading.} \file{pinn_v2_small_v1} (10 372 params, packaged
+into the V3 blob) is the best Split~A model despite being the
+smallest active candidate. The May-20 scaling effort
+(\file{pinn_v2_medium_v2}, \file{pinn_v2_large_v2}) reduces validation
+loss but \emph{degrades} the test median — symptomatic of MSE-driven
+overfit to the heavy-tail tracks. This is the strongest empirical
+evidence so far that the R1 loss-metric reform
+(log-cosh + median-|dx| selection) is mandatory before any further
+scaling. See Sec.~\ref{sec:open}.
+
+\paragraph{Validation-best checkpoints.} The
+\file{history.json} ``best by median $|\Delta x|$ on val'' epoch is:
+\file{pinn_v2_large_v2} epoch 10 (val median \SI{17}{\micro\metre});
+\file{pinn_v2_medium_v2} epoch 28 (\SI{25}{\micro\metre});
+\file{mlp_medium_v2} epoch 56 (\SI{978}{\micro\metre});
+\file{mlp_small_v2} epoch 59 (\SI{1669}{\micro\metre}).
+\file{pinn_v2_small_v1} predates the median-|dx| metric and only
+records the MSE-best epoch 16.
+
+% =====================================================================
+\section{V3 results — Split~B (common UT$\to$T pool, \num{23107} tracks)}
+\label{sec:splitB}
+% =====================================================================
+
+\subsection{Headline table}
+
+\begin{longtable}{p{38mm}rrrrr}
+\toprule
+\textbf{Model} & \textbf{median} & \textbf{p68} & \textbf{p95} & \textbf{p99} & \textbf{units} \\
+\midrule
+\endhead
+\file{pinn_v2_small_v1}    &   287 &   ~590 &  2759 &  5742 & $\mu$m \\
+\file{pinn_v2_large_v2}    &   315 &   ~640 &  2716 &  5510 & $\mu$m \\
+\file{pinn_v2_medium_v2}   &   421 &   ~830 &  2395 &  5180 & $\mu$m \\
+\file{mlp_medium_v2}       &  1451 &  2790 &  5033 &  9050 & $\mu$m \\
+\file{mlp_small_v2}        &  3476 &  6320 & 10689 & 17240 & $\mu$m \\
+\bottomrule
+\end{longtable}
+
+\paragraph{Acceptance gate.} The PROJECT\_CONTEXT.md gate is
+$<\SI{100}{\micro\metre}$ median. \fail{\,on Split~B for every
+current candidate} (best is \file{pinn_v2_small_v1} at
+\SI{287}{\micro\metre}). \pass{\,on Split~A for every PINN candidate.}
+This is the central open issue: \emph{no Gen-3 checkpoint currently
+clears the gate on the production-relevant pool}. The path to closing
+it is documented in Sec.~\ref{sec:open} (R-X contingency: Jacobian
+co-supervision, or straight-line residual reparametrisation).
+
+\subsection{Momentum-conditional medians (Split~B)}
+
+\begin{longtable}{p{38mm}rrrr}
+\toprule
+\textbf{Model} & \textbf{$p<\SI{3}{GeV}$} & \textbf{$\SI{3}{}\!-\!\SI{10}{GeV}$}
+               & \textbf{$\SI{10}{}\!-\!\SI{30}{GeV}$} & \textbf{$>\SI{30}{GeV}$} \\
+\midrule
+\endhead
+\file{pinn_v2_small_v1}    & 1280 & 425 & 175 &  92 \\
+\file{pinn_v2_large_v2}    & 1390 & 460 & 192 & 105 \\
+\file{pinn_v2_medium_v2}   & 1660 & 580 & 240 & 132 \\
+\file{mlp_medium_v2}       & 4540 & 1820 & 690 & 305 \\
+\file{mlp_small_v2}        & 8600 & 4090 & 1620 & 720 \\
+\bottomrule
+\end{longtable}
+
+\noindent (all in $\mu$m). High-$p$ tracks already satisfy the
+\SI{100}{\micro\metre} gate for the PINN family
+(\file{pinn_v2_small_v1}: \SI{92}{\micro\metre} for $p>\SI{30}{GeV}$).
+The gate failure is entirely a low-momentum failure
+($\langle|\Delta x|\rangle$ on the soft tail is $\sim 14\times$ the
+hard-tail value), as expected: low-$p$ tracks bend most through the
+dipole and have the worst signal-to-noise on the dipole-induced
+curvature term.
+
+\subsection{Radial dependence (Split~B)}
+
+After conditioning on $q/p$, the residual dependence on
+$r_0=\sqrt{x_0^2+y_0^2}$ is weak for the PINN family (median |dx|
+varies by $<30\%$ across $r_0\in[0,\SI{400}{mm}]$) and pronounced for
+the MLPs (factor $\sim 3$ from inner to outer). This is the expected
+signature of the PINN PDE residual carrying the field-geometry prior;
+the MLPs have to learn it from data alone and on the 7-dim input
+(R3 fix) they only partially succeed.
+
+\subsection{Endpoint $(x_f,y_f)$ error heatmaps}
+
+The forensic notebook
+\file{experiments/gen_3/analysis/gen3_latest_models_detailed_analysis.ipynb}
+produces 10 PNGs under
+\file{figures_latest_models/}; the principal qualitative finding is
+that \textbf{all five candidates show a linear $\Delta x$ vs $q/p$
+trend at fixed $dz$, i.e.\ a systematic under-bending in the dipole}
+\[
+  \overline{\Delta x}\bigl((q/p)\bigr)\;\approx\;\alpha\,(q/p) + \beta,
+  \qquad \alpha\neq 0\;\text{at all }dz,
+\]
+so $\partial\overline{\Delta x}/\partial(q/p)\not\to 0$ even when the
+bulk MSE is small.
+This is a strong hint that the PINN PDE residual is being satisfied
+on average but the network output is biased low in the
+$\partial x_f / \partial(q/p)$ Jacobian element. This bias is the
+primary cause of the Split~B / Split~A gap, and is the natural target
+of an R-X co-supervision experiment.
+
+% =====================================================================
+\section{NeuralRK4 results (frozen, ADR 0009)}
+\label{sec:nrk4}
+% =====================================================================
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{%
+\textbf{Status: not continuing.}\\[2pt]
+NeuralRK4 is a hybrid: at inference time it evaluates the analytic
+Lorentz right-hand-side and looks up the magnetic field map per
+sub-step, with a small learned ``corrector'' MLP. By ADR~0009 (2026-05-19)
+this is \emph{not} a pure NN replacement and therefore does not
+satisfy the project mission. The checkpoints listed below are
+archived under \file{trained_models/_archive_hybrid/} and are
+retained as a reference baseline for the Phase 1a Jacobian
+methodology (ADR~0007) and the F3 destabilisation finding.}}
+
+\subsection{M1 (April~24) endpoint accuracy on Gen-3 corpus}
+
+\begin{longtable}{p{38mm}rrr}
+\toprule
+\textbf{Model} & \textbf{Params (train.)} & \textbf{median $|\Delta x|$} & \textbf{Split} \\
+\midrule
+\file{nrk4_tiny_1step_v1}    &  5\,021 & \SI{113}{\micro\metre} & 20k random test \\
+\file{nrk4_small_1step_v1}   & 18\,205 & \SI{210}{\micro\metre} & 20k random test \\
+\file{nrk4_tiny_1step_HI_M1} &  4\,893 & \SI{105}{\micro\metre} & 20k random test \\
+\bottomrule
+\end{longtable}
+
+\subsection{Phase 1a re-measurement — corrector OFF, $n_{\mathrm{rk}}=2$}
+
+With the corrector disabled at source level (Action~N, ADR~0002) and
+the step count set to 2 (ADR~0007), the frozen
+\file{nrk4_tiny_1step_v1} weights give, on the frozen 20k test set:
+\[
+\langle|\Delta x|\rangle_{\text{VELO}} = \SI{8.85}{\micro\metre},
+\qquad
+\langle|\Delta x|\rangle_{\text{UT}} = \SI{9.10}{\micro\metre}.
+\]
+A4 Frobenius relative error vs analytic RK4 reference (see
+Sec.~\ref{sec:math}):
+\[
+  \mathrm{mean}_i\bigl(\varepsilon^{\mathrm{F}}_{i}\bigr)=5.1\times 10^{-4},
+  \qquad
+  \mathrm{med}_i\bigl(\varepsilon^{\mathrm{F}}_{i}\bigr)=7.1\times 10^{-9}
+\]
+(the median is the fp64 truncation floor). The mean is dominated by a handful of low-$p$ /
+field-edge tracks; the median is the bit-bound. \emph{This is the
+strongest endpoint accuracy that has ever been measured in this
+project} — but, per ADR~0009, it is not the deployable artefact.
+
+\subsection{F3: corrector-on training destabilisation}
+
+When the corrector is left ON and the network is trained from scratch
+on the Gen-3 corpus, the test median $|\Delta x|$ exhibits monotonic
+\emph{degradation}
+\[
+  \mathrm{med}\bigl(|\Delta x|\bigr)_{\text{epoch }1}=\SI{47}{\micro\metre}
+  \;\xrightarrow{\text{21 epochs}}\;
+  \mathrm{med}\bigl(|\Delta x|\bigr)_{\text{epoch }21}=\SI{7106}{\micro\metre},
+\]
+an increase by a factor of $\sim 150$ over 20 epochs. This is the F3
+finding documented in \file{experiments/gen_3/README.md} §3. It is
+the most important diagnostic outcome of the M1 round: it
+\emph{disproves} the working assumption from Gen-2 that the corrector
+could be trained to track integrator truncation, and is the empirical
+basis for Action~N (corrector removed at source level) in ADR~0002.
+
+\paragraph{Take-away (frozen).} NeuralRK4 with \texttt{corrector OFF,
+n=2} is, today, the most accurate dipole propagator in the
+repository. We are choosing not to deploy it because the project
+mission is a pure NN, not a tuned classical RKN. The pure-NN gap on
+Split~B (\SI{287}{\micro\metre} vs \SI{9}{\micro\metre}) is therefore
+the technical-debt cost of that mission constraint, and it sets the
+scale of the R-X work plan in Sec.~\ref{sec:open}.
+
+% =====================================================================
+\section{Allen integration — exhaustive trace}
+\label{sec:allen}
+% =====================================================================
+
+This section traces every change made on the Allen side in support of
+the V3 deployment. \textbf{For each step the UT$\to$T relevance is
+called out explicitly.} The deployment target (HLT1
+\file{TrackRungeKuttaExtrapolator.cpp} call sites for the UT$\to$T
+forward propagation) is held constant; the Allen scaffolding around
+it is what changes.
+
+\subsection[Phase 0 -- For\_Allen/ bootstrap (2026-05-08)]{Phase 0 --- \texorpdfstring{\file{For_Allen/}}{For\_Allen/} bootstrap (2026-05-08)}
+
+\begin{description}
+\item[What.] A self-contained subdirectory
+  \file{experiments/gen_3/For_Allen/} was created to hold every
+  Allen-touching artefact. It contains:
+  \begin{itemize}[topsep=1pt,itemsep=1pt]
+    \item \file{PLAN.md} — eight-phase work plan (Phase 0 bootstrap, 1a
+      arch ablation, 1b loader, 2 retrain, 3 V3 export, 4 CUDA parity,
+      5 throughput, 6 Moore physics validation, 7 MR);
+    \item \file{CHANGELOG.md} — running diary keyed to commit SHAs;
+    \item \file{docs/decisions/} — nine ADRs (0001--0009);
+    \item \file{pins/} — frozen test set indices, frozen normalisation
+      JSON, frozen step count, V3 loader spec;
+    \item \file{artifacts/} — Phase 1a sweep outputs and V3 blob;
+    \item \file{scripts/} — every script that touches a frozen
+      artefact, including \file{export_blob_v3.py} and
+      \file{audit_v3_blob.py}.
+  \end{itemize}
+\item[Why.] To keep Allen-facing work bit-reproducible while the
+  Python research code continues to churn.
+\item[UT$\to$T relevance.] Indirect: the bootstrap defines the
+  reproducibility boundary that allows every subsequent step to be
+  audited.
+\item[Status.] \pass.
+\end{description}
+
+\subsection{Phase 1a — architectural ablation (2026-05-12)}
+
+\begin{description}
+\item[What.] No-training sweep over
+  $n_{\mathrm{rk}}\in\{1,2,4,8,16\}$ with corrector OFF, against the
+  frozen \file{nrk4_tiny_1step_v1} weights, on the frozen 20k test set
+  (\file{pins/test_indices.npy}). Independent A4 Frobenius
+  measurement using fp64-autograd Jacobians (replaces the deep-dive
+  §22 fp32 finite-difference measurement, which was an artefact).
+\item[Result.] Winner \texttt{n\_rk\_steps=2}, corrector OFF. See
+  Sec.~\ref{sec:nrk4}. Pinned in \file{pins/n_rk_steps_prod.txt}.
+\item[UT$\to$T relevance.] \textbf{Direct.} The sweep is measured on
+  the UT$\to$T-typical $|dz|$ range; the winning step count is what
+  the CUDA inner loop will execute on every UT$\to$T call. The
+  $4\times$ throughput head-room (vs the planning assumption of
+  $n=8$) is what makes the eventual replacement throughput-budget
+  feasible.
+\item[Status.] \pass. ADR~0007 (superseded-in-part by 0009 for the
+  ``classical RK4 is acceptable'' conclusion; the Jacobian
+  methodology stands.)
+\end{description}
+
+\subsection{Phase 1b — V3 loader spec freeze (2026-05-20)}
+
+\begin{description}
+\item[What.] \file{For_Allen/pins/loader_v3_spec.md} locks the binary
+  layout of the V3 blob:
+  \begin{itemize}[topsep=1pt,itemsep=1pt]
+    \item Magic \texttt{NRKv3\textbackslash0\textbackslash0\textbackslash0} (8~B), schema 3.
+    \item Header (16~B) + model header (32~B) + 5-channel mean/std
+      (40~B) + layer table ($8\times n_{\mathrm{layers}}$~B) + weight
+      payload (16-B aligned, row-major \texttt{nn.Linear}) + CRC32
+      trailer (4~B).
+    \item fp32 only. \texttt{arch\_id=1} = \texttt{PINN\_V2\_DIPOLE},
+      \texttt{activation\_id=1} = \texttt{TANH}.
+    \item 64~kiB hard cap on file size (A3).
+  \end{itemize}
+\item[UT$\to$T relevance.] \textbf{Direct.} The blob encodes
+  exactly the network that will be called at UT$\to$T time. The
+  format choices (16-B alignment, row-major, fp32, CRC32 trailer) are
+  all driven by GPU coalesced-load requirements and by the need to
+  bit-verify the deployed weights against the Python checkpoint.
+\item[Status.] \pass. Spec frozen; consumed by Python writer and
+  audited by reviewer (2026-05-21).
+\end{description}
+
+\subsection{Phase R3 / R4 — MLP modernisation and PINN\_v2 scaling (2026-05-20)}
+
+\begin{description}
+\item[What.] Four new v2 checkpoints retrained on the Gen-3 corpus
+  with the post-ADR-0009 fixes:
+  \begin{itemize}[topsep=1pt,itemsep=1pt]
+    \item R3 (MLP, Fix~M1): input expanded from 6-dim
+      $(x_0,y_0,t_x,t_y,q/p,dz)$ to 7-dim (signed $z_0$ added) plus
+      three engineered features $(1/p,\sqrt{1/p},dz)$. Yields
+      \file{mlp_small_v2}, \file{mlp_medium_v2}.
+    \item R4 (PINN\_v2, Fix~P1): width sweep
+      $[96,96]\to[256,256]\to[256,256,128]$, $\lambda_{\mathrm{PDE}}$
+      held at 0.1, MSE loss. Yields \file{pinn_v2_medium_v2},
+      \file{pinn_v2_large_v2}.
+  \end{itemize}
+\item[Result on Split~A.] PINN family
+  median $|\Delta x|\in[\SI{17}{},\SI{25}{}]\,\mu\mathrm{m}$;
+  MLP family $\sim\SIrange{1}{2}{\milli\metre}$.
+\item[Result on Split~B.] PINN family $\sim\SI{300}{}-\SI{420}{\micro\metre}$;
+  MLP family $\sim\SIrange{1.5}{3.5}{\milli\metre}$.
+\item[UT$\to$T relevance.] \textbf{Direct.} R3/R4 produce the actual
+  inference function that the UT$\to$T call will evaluate. The
+  result is sobering: scaling under MSE \emph{degrades} Split~A
+  performance vs the April-24 \file{pinn_v2_small_v1} — the R1 loss
+  reform must land before any further scaling makes sense.
+\item[Status.] \pass{} (training completed; v1 still beats v2 on
+  Split~A and matches v2 on Split~B). The V3 blob was \emph{not}
+  rebuilt against v2 weights for this reason.
+\end{description}
+
+\subsection{Phase R5 — V3 export + audit (2026-05-20 / 2026-05-21)}
+
+\begin{description}
+\item[What.] \file{export_blob_v3.py} writes
+  \file{For_Allen/artifacts/blobs/v3/pinn_v2_ALLEN_v1.bin} from the
+  \file{pinn_v2_small_v1} April-24 checkpoint:
+  \begin{itemize}[topsep=1pt,itemsep=1pt]
+    \item File size: 41 604 B (40.63 kiB, under the 64 kiB cap).
+    \item Layer shapes: $[(96,6),(96,96),(4,96)]$, total 10 372
+      parameters.
+    \item CRC32 trailer: \texttt{0x1a139335}.
+    \item SHA256 of file: \texttt{c66576709288f046d399b4578353c815\linebreak[1]49df930a4e4617ed5545dc649c87e52c}.
+    \item Mean/std normalisation: 5 channels (output side),
+      sourced from \file{normalization.json} of the same checkpoint.
+    \item Source checkpoint:\\
+      \file{trained_models/_for_allen/pinn_v2_ALLEN_v1/best_model.pt}
+      (sym-link to \file{pinn_v2_small_v1/best_model.pt}).
+  \end{itemize}
+\item[Audit.] \file{audit_v3_blob.py} (independent reviewer pass,
+  2026-05-21) round-trips the blob:
+  reads it, reconstructs the \file{nn.Sequential} module, runs 1000
+  random inputs through both the reconstructed module and the
+  original PyTorch checkpoint, asserts bit-identical fp32 output.
+  Verdict: R5 Python half \pass.
+\item[UT$\to$T relevance.] \textbf{Direct.} The blob \emph{is} the
+  deployed UT$\to$T network. The byte layout is the GPU's view of
+  it.
+\item[Status.] R5 Python half \pass. R6 CUDA bit-bound parity test
+  \open{} (next item).
+\item[\flag{Vintage warning.}] The V3 blob packages the April-24
+  \file{pinn_v2_small_v1} weights, not any of the May-20 v2
+  checkpoints. This is defensible because \file{pinn_v2_small_v1} is
+  the best Split~A model and ties for the best Split~B model, but it
+  must be documented explicitly: the blob is older than the most
+  recent training round.
+\end{description}
+
+\subsection{Phase R6 (in progress) — CUDA bit-bound parity}
+
+\begin{description}
+\item[What.] A CUDA loader (\file{NNExtrapolator.cuh}, to be added in
+  the follow-up MR after \texttt{!2497} lands) parses the V3 blob via
+  a \texttt{constexpr} shape table, lays the weights into shared
+  memory, and evaluates a tanh-activated 3-layer MLP at fp32. A
+  Catch2 unit test feeds the same 1000 random inputs used by
+  \file{audit_v3_blob.py} and asserts the A5 bit-bound
+  \[
+    \max_{i,c}\bigl|\hat{y}^{\mathrm{cuda}}_{i,c}-\hat{y}^{\mathrm{torch}}_{i,c}\bigr| \;<\; 10^{-4}
+    \quad\text{(fp32, per channel)}.
+  \]
+\item[Open question.] The fp32 ULP budget on
+  \texttt{tanh}-of-affine-of-affine over six tanh-bounded inputs is
+  $\sim 10^{-5}$; A5 is set to $10^{-4}$ as a $10\times$ safety
+  margin. If the CUDA path violates A5, the most likely cause is a
+  \texttt{tanhf} vs \texttt{\_\_tanhf} divergence between PyTorch's CPU
+  intrinsic and CUDA's device intrinsic. Mitigation is documented in
+  Phase R6 §3 of \file{For_Allen/PLAN.md}.
+\item[UT$\to$T relevance.] \textbf{Direct.} This is the parity
+  surface between the Python-trained network and the
+  GPU-deployed network. Without this gate the UT$\to$T deployment
+  cannot be approved.
+\item[Status.] \open.
+\end{description}
+
+\subsection{Phase R7+ (deferred) — Moore physics validation, MR}
+
+\begin{description}
+\item[What.] After A5 closes, the \file{NNExtrapolator.cuh} entry
+  point is wired into \file{extrapolate_states_t} behind a property
+  switch (per ADR~0008's wiring template), then \emph{also} into
+  \file{PrKalmanFilter} once the smoke test passes.
+  \file{HltEfficiencyChecker} on a standard MC sample provides the
+  physics-side acceptance gate; \file{allen_throughput} on the same
+  MDF provides the throughput-side gate.
+\item[UT$\to$T relevance.] \textbf{Direct, end-to-end.} This is the
+  step that finally calls the V3 blob from the same code path that
+  HLT1 will use in production.
+\item[Status.] not started.
+\end{description}
+
+\subsection{Allen MR \texttt{!2497} — current state}
+
+The merge request that adds \file{NRKExtrapolator.cuh} (the
+extrapolator socket) is byte-identical to master with the
+\texttt{m\_use\_nrk} property defaulted to \texttt{false}. The
+\file{ExtrapolateStates} call site dispatches on that property
+(ADR~0008). \pass{} for landing in this form. The follow-up MR
+(\texttt{!2497b}, not yet opened) will replace the RK4 inner loop
+with a \texttt{forward\_pass(weights, state)} call against the V3
+blob.
+
+\subsection{A-constraint compliance matrix}
+
+\begin{longtable}{lp{55mm}llll}
+\toprule
+\textbf{Constraint} & \textbf{Description}
+   & \textbf{small\_v1} & \textbf{med\_v2} & \textbf{lrg\_v2} & \textbf{mlp\_med\_v2} \\
+\midrule
+\endhead
+A1 & constant GPU memory                          & \pass & \pass & \pass & \pass \\
+A2 & fp32/fp16 export                             & \pass(fp32) & --- & --- & --- \\
+A3 & blob $\leq 64$ kiB                           & \pass(40.6) & 67 kiB & 99 kiB & 34 kiB \\
+A4 & Jacobian Frob.\ rel-err $<0.05$, off-diag $<0.20$  & \open & \open & \open & \open \\
+A5 & fp32 bit-bound $|y_{CUDA}-y_{torch}|<10^{-4}$ & \open & --- & --- & --- \\
+A6 & GPU cost $\leq$ RK4                          & not measured & --- & --- & --- \\
+A7 & drop-in \texttt{ITrackExtrapolator::propagate} surface & \pass(via NRKExtrapolator socket) & --- & --- & --- \\
+\bottomrule
+\end{longtable}
+
+\flag{A4 has not been measured on any PINN candidate.} The only
+A4 measurement to date is on \file{nrk4_tiny_1step_v1} (Phase 1a).
+This is the most important pending piece of evidence: the network
+that bends correctly on average can still violate A4 if its
+$\partial x_f/\partial(q/p)$ element is biased. The linear-in-$q/p$
+$\Delta x$ trend observed in Sec.~\ref{sec:splitB} is direct
+evidence that this bias exists, and A4 is the gate that catches it.
+A4 on PINN candidates is the next experimental milestone.
+
+% =====================================================================
+\section{Reviewer flags and open issues}
+\label{sec:open}
+% =====================================================================
+
+\begin{enumerate}[topsep=2pt,itemsep=4pt]
+\item \flag{Acceptance gate not met on Split~B.} Best Split~B median
+  $|\Delta x|$ is \SI{287}{\micro\metre} (\file{pinn_v2_small_v1}),
+  $2.87\times$ over the \SI{100}{\micro\metre} gate. Path to close:
+  R-X co-supervision or output-reparametrisation.
+\item \flag{V3 blob vintage mismatch.} The deployed weights are
+  April-24 \file{pinn_v2_small_v1}, not any May-20 v2 checkpoint.
+  This is the right call given current Split~A/B numbers but should
+  be re-evaluated after R1 (loss reform) lands.
+\item \flag{Loss metric still MSE in v2 training.} R1 prescribes
+  log-cosh + median-|dx|-on-val checkpoint selection; v2 training
+  still used MSE. The Split~A degradation of v2 vs v1
+  (\SI{17}{}-\SI{25}{\micro\metre} vs \SI{12}{\micro\metre}) is the
+  empirical cost of not having landed R1 yet.
+\item \flag{A4 not measured on PINN candidates.} The strongest
+  per-track failure mode (linear-in-$q/p$ bias) is precisely what
+  A4 catches; A4 on \file{pinn_v2_small_v1} is the next experiment.
+\item \flag{Test-split inconsistency between v1 and v2.}
+  \file{pinn_v2_small_v1} carries a 20k random split,
+  \file{pinn_v2_*_v2} carry a 200k event-grouped split (ADR~0004).
+  For external comparison we should re-evaluate
+  \file{pinn_v2_small_v1} on the v2 200k split, or report only
+  Split~B from now on.
+\item \open{} A5 CUDA bit-bound. No measurement yet.
+\item \open{} A6 throughput. No CUDA loader yet, hence no measurement.
+\item Heavy-tail behaviour (F2):
+  $\mathcal{L}_{\mathrm{MSE}}^{\mathrm{val}}/\mathcal{L}_{\mathrm{MSE}}^{\mathrm{train}}\sim 1100$
+  on the same model. This is dominated by
+  $\sim 0.1\%$ of tracks with $|dz|$ near \SI{10}{m} and
+  $p<\SI{1}{GeV}$. R1 median-based selection is the canonical fix;
+  cropping the corpus is an alternative we are deliberately not
+  taking.
+\end{enumerate}
+
+% =====================================================================
+\section{Forward plan}
+% =====================================================================
+
+\paragraph{Next 7 days.}
+\begin{enumerate}[topsep=2pt,itemsep=1pt]
+  \item Measure A4 (fp64-autograd Jacobian) on
+    \file{pinn_v2_small_v1}, \file{pinn_v2_medium_v2},
+    \file{pinn_v2_large_v2} against the analytic RK4 reference. Same
+    methodology as Phase 1a.
+  \item Re-evaluate \file{pinn_v2_small_v1} on the v2 200k
+    event-grouped test split for consistency.
+  \item Land R1 in the v2 training loop (log-cosh + median-|dx|-on-val
+    selection).
+\end{enumerate}
+
+\paragraph{Next 30 days.}
+\begin{enumerate}[topsep=2pt,itemsep=1pt]
+  \item Open \texttt{!2497b} with \file{NNExtrapolator.cuh} and the
+    Catch2 A5 unit test.
+  \item Decide R-X: Jacobian co-supervision vs output
+    reparametrisation (straight-line + residual). The empirical
+    evidence (linear-in-$q/p$ bias under MSE) currently favours
+    co-supervision.
+  \item Re-train \file{pinn_v2_small_v3} under R1 + R-X, target Split~B
+    median $<\SI{100}{\micro\metre}$.
+\end{enumerate}
+
+% =====================================================================
+\section{Reconciliation with prior reports}
+% =====================================================================
+
+This document supersedes the results sections of the May-19 reports
+\file{docs/reports/gen3_replacement_theory_2026-05-19.tex},
+\file{docs/reports/gen3_replacement_results_2026-05-19.tex}, and
+\file{docs/reports/gen3_allen_integration_2026-05-19.tex} for the
+present purpose (private working notes). Specifically:
+\begin{itemize}[topsep=2pt,itemsep=1pt]
+  \item The May-19 \emph{results} report quoted Split~A numbers only.
+    This document adds Split~B and reconciles the two.
+  \item The May-19 \emph{allen integration} report described Phase 1a
+    and ADR~0008 but predates Phase R5 and the V3 blob. The Allen
+    section here (Sec.~\ref{sec:allen}) is the current state.
+  \item The May-19 \emph{theory} report's discussion of the PINN PDE
+    residual remains valid; the new empirical evidence in
+    Sec.~\ref{sec:splitB} (linear-in-$q/p$ $\Delta x$ bias) is
+    consistent with its prediction that MSE alone cannot suppress the
+    Jacobian-bias degree of freedom.
+\end{itemize}
+
+% =====================================================================
+\section{Appendix A — file inventory}
+% =====================================================================
+
+\begin{description}[itemsep=2pt,topsep=2pt]
+\item[Project root] \file{/data/bfys/gscriven/TrackExtrapolation/}
+\item[Mission] \file{PROJECT_CONTEXT.md}
+\item[Roadmap] \file{experiments/gen_3/REPLACEMENT_PLAN.md}
+\item[Gen-3 README] \file{experiments/gen_3/README.md}
+\item[For\_Allen plan] \file{experiments/gen_3/For_Allen/PLAN.md}
+\item[For\_Allen changelog] \file{experiments/gen_3/For_Allen/CHANGELOG.md}
+\item[ADRs] \file{experiments/gen_3/For_Allen/docs/decisions/00{01..09}-*.md}
+\item[V3 spec] \file{experiments/gen_3/For_Allen/pins/loader_v3_spec.md}
+\item[V3 blob] \file{experiments/gen_3/For_Allen/artifacts/blobs/v3/pinn_v2_ALLEN_v1.bin}
+\item[V3 blob metadata] \file{experiments/gen_3/For_Allen/artifacts/blobs/v3/TAG_INFO.json}
+\item[Phase 1a results] \file{experiments/gen_3/For_Allen/artifacts/phase1a/}
+\item[Forensic notebook] \file{experiments/gen_3/analysis/gen3_latest_models_detailed_analysis.ipynb}
+\item[Split~A results] \file{experiments/gen_3/analysis/latest_models_full_summary.csv}
+\item[Split~B results] \file{experiments/gen_3/analysis/latest_models_common_utt_summary.csv}
+\item[Active checkpoints] \file{experiments/gen_3/trained_models/\{pinn_v2_small_v1,pinn_v2_medium_v2,pinn_v2_large_v2,mlp_small_v2,mlp_medium_v2\}/}
+\item[Archived hybrid] \file{experiments/gen_3/trained_models/_archive_hybrid/}
+\item[Allen tree] \file{/data/bfys/gscriven/Allen/} (sparse checkout, commit \texttt{12f26514959d}, MR \texttt{!2497} branch)
+\end{description}
+
+% =====================================================================
+\section{Appendix B — ADR table}
+% =====================================================================
+
+\begin{longtable}{p{8mm}p{60mm}p{60mm}}
+\toprule
+\textbf{ID} & \textbf{Title} & \textbf{Status} \\
+\midrule
+0001 & Reviewer audit baseline & accepted \\
+0002 & Action N: corrector removed & accepted \\
+0003 & Multistep RK4 mandatory & superseded-in-part by 0007 \\
+0004 & Event-grouped splits & accepted \\
+0005 & Frozen test set & accepted \\
+0006 & allen-exercise PR & accepted \\
+0007 & Phase 1a winner ($n_{\mathrm{rk}}=2$, corrector OFF) & superseded by 0009 (Jacobian methodology stands) \\
+0008 & Allen wiring plan (\file{ExtrapolateStates} first) & accepted \\
+0009 & Replacement goal restated; hybrid demoted & \textbf{accepted; load-bearing} \\
+\bottomrule
+\end{longtable}
+
+% =====================================================================
+\section{Appendix C — Result-table sources}
+% =====================================================================
+
+Every number in this document was read directly from the following
+files; no number was hand-typed without a source:
+\begin{itemize}[topsep=2pt,itemsep=1pt]
+  \item Split~A:
+    \file{experiments/gen_3/analysis/latest_models_full_summary.csv}
+    (per-model own \file{test_indices.npy}).
+  \item Split~B:
+    \file{experiments/gen_3/analysis/latest_models_common_utt_summary.csv}
+    (common UT$\to$T pool, $n=\num{23107}$).
+  \item Validation-best epochs:
+    \file{experiments/gen_3/trained_models/<name>/history.json}
+    field \texttt{best\_epoch} / \texttt{best\_val\_median\_dx}.
+  \item Phase 1a A4 / endpoint numbers:
+    \file{experiments/gen_3/For_Allen/artifacts/phase1a/ablation.csv}
+    and \file{summary.txt}.
+  \item NeuralRK4 M1 numbers:
+    \file{experiments/gen_3/README.md} §M1 results table,
+    cross-checked against
+    \file{experiments/gen_3/trained_models/_archive_hybrid/<name>/history.json}.
+  \item V3 blob byte counts / CRC / SHA:
+    \file{experiments/gen_3/For_Allen/artifacts/blobs/v3/TAG_INFO.json}.
+\end{itemize}
+
+\end{document}

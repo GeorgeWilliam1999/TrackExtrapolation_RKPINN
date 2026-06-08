@@ -1,0 +1,30 @@
+# Allen throughput baseline — classical RKN4 (master)
+#
+# Source: pipeline 14802867, job 75131982
+# Ref:    master @ bfac907320ea60effd88bbbf143b680e89497a48
+# Date:   2026-05-18
+# Sequence: hlt1_pp_default
+# Dataset:  MEP_2025_pp_pD2_bu_321834_LHCb_ECEB01_BU_0
+# Extrapolator: classical RKN4, n_rk_steps=2 (see n_rk_steps_prod.txt)
+#
+# This is the A6 gate target for Phase R6.
+# A replacement model must achieve >= this throughput on all tested devices.
+
+NVIDIA_RTX_A5000_kHz         = 74192.0
+NVIDIA_GeForce_RTX_2080Ti_kHz = 53429.0
+NVIDIA_GeForce_RTX_3090_kHz   = 89828.2
+
+# --- MR !2497 branch result (gscriven/nrk-integration-phase1a @ e1facc0a) ---
+# CI job 75148540 (2026-05-20).  FAILED the 7.5% threshold on A5000.
+# This is the NRK hybrid integration, NOT the true-replacement path.
+# The regression is expected: the NRK path calls the field map and Lorentz
+# RHS at inference, adding overhead on top of the classical RK path.
+#
+# MR_A5000_kHz          = 66580   (delta = -10.27%  FAIL)
+# MR_RTX2080Ti_kHz      = 51080   (delta =  -4.39%  ok)
+# MR_RTX3090_kHz        = 90020   (delta =  +0.21%  ok)
+#
+# Root cause to investigate before R5: does the MR add overhead on the
+# *classical* path (flag checks, weight-load at startup) or only on the
+# NRK path?  If classical path is clean, the PINN_v2 branch should be faster
+# than master (no field-map calls at inference).

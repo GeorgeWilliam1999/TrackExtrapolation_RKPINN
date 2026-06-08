@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Artifacts (hashes go in pins/, not the blobs themselves)
+artifacts/
+mlruns/
+*.pt
+*.bin
+*.npz
+*.npy
+
+# Allowed: small frozen test indices (override per-file with !)
+!pins/data_manifests/*.sha256
+!pins/data_manifests/*.txt
+
+# Environment
+.envrc
+.venv/
+*.log

@@ -1,0 +1,95 @@
+{
+  "pinn_v2_medium_v2": {
+    "params": 68612,
+    "hidden_dims": [
+      256,
+      256
+    ],
+    "test_eval": {
+      "n_test": 200000,
+      "median_dx_mm": 0.0252685546875,
+      "p68_dx_mm": 0.077392578125,
+      "p95_dx_mm": 0.7019681930541992,
+      "p99_dx_mm": 1.9415397644042969,
+      "p99_9_dx_mm": 6.6651611328125,
+      "max_dx_mm": 91.79022216796875,
+      "median_dy_mm": 0.019733428955078125,
+      "p95_dy_mm": 0.532233715057373,
+      "median_dtx_mrad": 0.02816319465637207,
+      "median_dty_mrad": 0.016644597053527832
+    },
+    "a4": {
+      "model_name": "pinn_v2_medium_v2",
+      "n_tracks": 200,
+      "frob_rel_mean": 0.0009431083811109925,
+      "frob_rel_median": 0.0006430544714341865,
+      "frob_rel_p95": 0.0016425688977783296,
+      "off_max_frob_median": 0.00018348205020554177,
+      "off_max_frob_p95": 0.0002862598671024433,
+      "gate_frob": 0.05,
+      "gate_off_frob": 0.05,
+      "passes": true,
+      "verdict": "PASS",
+      "eval_time_s": 0.757606029510498
+    }
+  },
+  "pinn_v2_large_v2": {
+    "params": 100996,
+    "hidden_dims": [
+      256,
+      256,
+      128
+    ],
+    "test_eval": {
+      "error": "test_indices.npy missing"
+    },
+    "a4": {
+      "model_name": "pinn_v2_large_v2",
+      "n_tracks": 200,
+      "frob_rel_mean": 0.0009494219151612673,
+      "frob_rel_median": 0.0005175953694283911,
+      "frob_rel_p95": 0.0023628683048621084,
+      "off_max_frob_median": 0.00016094075314525183,
+      "off_max_frob_p95": 0.0004725173089296043,
+      "gate_frob": 0.05,
+      "gate_off_frob": 0.05,
+      "passes": true,
+      "verdict": "PASS",
+      "eval_time_s": 0.8244302272796631
+    }
+  },
+  "pinn_v2_small_v1": {
+    "params": 10372,
+    "hidden_dims": [
+      96,
+      96
+    ],
+    "test_eval": {
+      "n_test": 20000,
+      "median_dx_mm": 0.01171875,
+      "p68_dx_mm": 0.038247108459472656,
+      "p95_dx_mm": 0.4541015625,
+      "p99_dx_mm": 1.848929524421692,
+      "p99_9_dx_mm": 6.709847450256348,
+      "max_dx_mm": 17.990234375,
+      "median_dy_mm": 0.01708984375,
+      "p95_dy_mm": 0.4871000349521637,
+      "median_dtx_mrad": 0.025838613510131836,
+      "median_dty_mrad": 0.024225562810897827
+    },
+    "a4": {
+      "model_name": "pinn_v2_small_v1",
+      "n_tracks": 200,
+      "frob_rel_mean": 0.0009005699807071843,
+      "frob_rel_median": 0.0005200777349713134,
+      "frob_rel_p95": 0.0019882026900827554,
+      "off_max_frob_median": 0.00020457543048281972,
+      "off_max_frob_p95": 0.0004987468784099396,
+      "gate_frob": 0.05,
+      "gate_off_frob": 0.05,
+      "passes": true,
+      "verdict": "PASS",
+      "eval_time_s": 0.7272810935974121
+    }
+  }
+}

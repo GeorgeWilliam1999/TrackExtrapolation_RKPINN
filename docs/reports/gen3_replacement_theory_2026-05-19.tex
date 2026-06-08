@@ -1,0 +1,555 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=22mm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{hyperref}
+\usepackage{tabularx}
+\usepackage{array}
+\hypersetup{colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black}
+
+% Notation consistent with gen3_m1_results.tex and gen3_protocol.tex.
+\newcommand{\qop}{q/p}
+\newcommand{\dz}{\Delta z}
+\newcommand{\state}{\mathbf{y}}
+\newcommand{\Bfield}{\mathbf{B}}
+\newcommand{\Jac}{\mathbf{J}}
+\newcommand{\loss}{\mathcal{L}}
+\newcommand{\cmark}{\ensuremath{\checkmark}}
+\newcommand{\xmark}{\ensuremath{\times}}
+
+\title{Gen-3 Theoretical Framework:\\
+       Full Neural Replacement of the LHCb Runge--Kutta Track Extrapolator}
+\author{TrackExtrapolation / gen-3 \\ \small consolidated 2026-05-19}
+\date{2026-05-19}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+The canonical project goal, stated verbatim in
+\href{run:../../PROJECT_CONTEXT.md}{\texttt{PROJECT\_CONTEXT.md}}, is to
+\emph{``replace the C++ adaptive Runge--Kutta track extrapolator with a faster
+neural network that maintains high accuracy.''} As of 2026-05-19 the gen-3
+programme is re-anchored on this \emph{replacement} criterion: at inference
+time the candidate must be the entire map from initial to final state, with no
+analytic Lorentz right-hand side and no field-map lookup. Under this criterion
+all hybrid candidates --- legacy \texttt{PINN}, \texttt{RK\_PINN} and
+\texttt{NeuralRK4} --- are demoted, and only two architecture families survive:
+the plain \texttt{MLP} (\href{run:../../experiments/gen_3/models/architectures.py}{\texttt{architectures.py}}
+line~178) and \texttt{PINN\_v2} (\emph{ibid.} line~232). Three blockers stand
+between these survivors and Stage-1 deployment: a metric pathology
+(\textbf{Fix L1}, heavy-tail-dominated MSE), an MLP input-layout regression
+(\textbf{Fix M1}, missing $z_0$ and signed-$\dz$ features) and an unscaled
+PINN\_v2 (\textbf{Fix P1}, parameter-starved at $\sim$10\,k weights). The
+six-phase \mbox{R1--R6} roadmap of
+\href{run:../../experiments/gen_3/REPLACEMENT_PLAN.md}{\texttt{REPLACEMENT\_PLAN.md}}
+addresses each blocker in dependency order, with an R-X contingency for the
+open A4 (Jacobian) question. The empirical companion document
+\href{run:gen3_replacement_results_2026-05-19.tex}{\texttt{gen3\_replacement\_results\_2026-05-19.tex}}
+reports the corresponding measurements.
+\end{abstract}
+
+% ============================================================================
+\section{The replacement criterion}\label{sec:criterion}
+
+\paragraph{Definition.} A trained model $f_\theta$ is a \emph{replacement} of
+the C++ adaptive Runge--Kutta extrapolator iff, at \emph{inference} time, the
+only inputs are the 7-tuple
+\begin{equation}\label{eq:input7}
+\mathbf{x} \;=\; (x,\ y,\ t_x,\ t_y,\ \qop,\ z_0,\ \dz) \in \mathbb{R}^{7},
+\end{equation}
+the only outputs are the 5-tuple
+\begin{equation}\label{eq:output5}
+f_\theta(\mathbf{x}) \;=\; (x_f,\ y_f,\ t_{x,f},\ t_{y,f},\ {\qop}_f) \in \mathbb{R}^{5},
+\end{equation}
+and the computational graph of $f_\theta$ contains \emph{no} evaluation of the
+analytic Lorentz right-hand side
+\begin{equation}\label{eq:lorentz}
+f_\mathrm{Lorentz}(\state, z;\, \qop) \;=\;
+\begin{pmatrix}
+t_x \\ t_y \\
+\kappa\, N\,[\, t_y(t_x B_x + B_z) - (1 + t_x^2) B_y \,] \\
+\kappa\, N\,[\, -t_x(t_y B_y + B_z) + (1 + t_y^2) B_x \,]
+\end{pmatrix},
+\quad N = \sqrt{1 + t_x^2 + t_y^2},
+\end{equation}
+and \emph{no} lookup into the LHCb dipole field map $\Bfield(x, y, z)$
+(stored as a $81\times 81\times 146$ trilinear grid in
+\texttt{twodip.rtf};
+\href{run:../../PROJECT_CONTEXT.md}{\texttt{PROJECT\_CONTEXT.md}} §``Physics'').
+
+\paragraph{Hybrids violate the criterion.} A model that runs a classical
+RK4 loop over $f_\mathrm{Lorentz}$ with a small learned correction is an
+\emph{augmentation} of the analytic integrator, not a replacement: every
+sub-step calls $\Bfield(\cdot)$ and evaluates~\eqref{eq:lorentz}. The
+inference graph carries the entire field map as a dependency and inherits the
+classical integrator's cost structure. The hybrid may be accurate, but it
+cannot remove the production bottleneck the project was set up to remove
+(\href{run:../../PROJECT_CONTEXT.md}{\texttt{PROJECT\_CONTEXT.md}}
+§``The Problem''); it can at best speed it up by a constant factor through
+step-count reduction.
+
+\paragraph{What this rules in and out.}
+\href{run:../../experiments/gen_3/REPLACEMENT_PLAN.md}{\texttt{REPLACEMENT\_PLAN.md}}
+§1 and ADR~0009
+(\href{run:../../experiments/gen_3/For_Allen/docs/decisions/0009-replacement-goal-restated.md}{\texttt{0009-replacement-goal-restated.md}})
+formalise three things that are \emph{not} replacements: (i) a small neural
+correction added to an RK4 base prediction; (ii) a learned right-hand side
+evaluated inside a classical RK4 loop (Neural-ODE flavour); (iii) a classical
+RK4 with a single trainable hyperparameter. Each evaluates~\eqref{eq:lorentz}
+at inference time. Each is therefore retired from the deployment candidate
+list.
+
+% ============================================================================
+\section{Architecture taxonomy}\label{sec:taxonomy}
+
+Table~\ref{tab:taxonomy} classifies the five families that have been trained
+in the project according to the replacement criterion of
+Section~\ref{sec:criterion}. The verdicts are taken from
+\href{run:../../experiments/gen_3/REPLACEMENT_PLAN.md}{\texttt{REPLACEMENT\_PLAN.md}}
+§2 and the gen-2 audit
+\href{run:../../experiments/gen_2/ISSUES_WITH_PINNS_AND_RK_PINNS.md}{\texttt{ISSUES\_WITH\_PINNS\_AND\_RK\_PINNS.md}}
+§§3,~5.
+
+\begin{table}[h!]
+\centering
+\caption{Architecture families and their replacement-criterion verdict.
+``Inference cost'' lists the dominant per-call operation. ``Replacement?''
+applies the Section~\ref{sec:criterion} definition.}
+\label{tab:taxonomy}
+\small
+\begin{tabularx}{\linewidth}{l l c X}
+\toprule
+Family & Inference cost & Replacement? & Justification \\
+\midrule
+\texttt{MLP}
+  & single matmul chain
+  & \cmark
+  & Direct map $\mathbb{R}^7\to\mathbb{R}^5$;
+    no field, no $f_\mathrm{Lorentz}$. Class at
+    \href{run:../../experiments/gen_3/models/architectures.py}{\texttt{architectures.py}}
+    line~178. \\
+\addlinespace
+\texttt{PINN\_v2}
+  & single matmul chain (at $\zeta=1$)
+  & \cmark
+  & Encoder of $[\mathbf{x}_0,\zeta]$ with the field consumed only in the
+    \emph{training} PDE residual; at inference $\zeta=1$ and the network
+    alone is evaluated. Class at
+    \href{run:../../experiments/gen_3/models/architectures.py}{\texttt{architectures.py}}
+    line~232. \\
+\addlinespace
+legacy \texttt{PINN}
+  & matmul + structural floor
+  & \xmark
+  & Trunk is $z$-independent $\Rightarrow$ trajectory affine in $\zeta$;
+    PDE residual has a structural floor and IC loss is identically zero by
+    construction
+    (\href{run:../../experiments/gen_2/ISSUES_WITH_PINNS_AND_RK_PINNS.md}{ISSUES} §3).
+    Superseded by \texttt{PINN\_v2}. \\
+\addlinespace
+legacy \texttt{RK\_PINN}
+  & 4 head matmuls + softmax
+  & \xmark
+  & Softmax mixture of \emph{states} at four $\zeta$ values; not an
+    RK4 quadrature of \emph{derivatives}. Backbone detached from physics
+    by \texttt{features.detach()}. Slope error 43--587$\times$ worse than
+    MLP
+    (\href{run:../../experiments/gen_2/ISSUES_WITH_PINNS_AND_RK_PINNS.md}{ISSUES} §5). \\
+\addlinespace
+\texttt{NeuralRK4}
+  & $N_\mathrm{RK}$ Lorentz RHS + matmul correction
+  & \xmark
+  & Calls $f_\mathrm{Lorentz}$ and $\Bfield(\cdot)$ at inference. A
+    hybrid, not a replacement
+    (\href{run:../../experiments/gen_3/CLEANUP_LIST.md}{\texttt{CLEANUP\_LIST.md}} §3.1).
+    Demoted to research baseline. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Reasoning chain for the hybrid demotion.} In gen-2 the best
+hybrid (\texttt{neural\_rk4\_small\_1step}, 17.9\,k params, 0.125\,mm)
+outperformed the best true replacement
+(\texttt{pinn\_v2\_medium\_lam0.1}, 68.6\,k params, 0.235\,mm)
+by roughly $2\times$
+(\href{run:../../PROJECT_CONTEXT.md}{\texttt{PROJECT\_CONTEXT.md}} §``Current
+State''). On the gen-3 signed-$\dz$ data contract the gap closed: the best
+true replacement \texttt{pinn\_v2\_small\_v1} (10.4\,k params, 0.117\,mm)
+\emph{matched} the best hybrid \texttt{nrk4\_tiny\_1step\_v1} (5.0\,k params,
+0.113\,mm) to within statistical noise
+(\href{run:../../experiments/gen_3/REPLACEMENT_PLAN.md}{\texttt{REPLACEMENT\_PLAN.md}}
+§3). Combined with the canonical goal mandating replacement, the hybrid is
+therefore retired: there is no longer a measured accuracy advantage that would
+justify accepting a candidate that fails the criterion of
+Section~\ref{sec:criterion}.
+
+% ============================================================================
+\section{Loss-metric reform (Fix L1)}\label{sec:L1}
+
+\paragraph{Pathology.} The gen-3 M1 audit
+(\href{run:../../experiments/gen_3/README.md}{\texttt{gen\_3/README.md}} §F2)
+reports for a single trained model with a single data pipeline
+\begin{equation}\label{eq:f2}
+\loss^\mathrm{train} = 2.162\times 10^{-4},\quad
+\loss^\mathrm{val}   = 1.426\times 10^{-5},\quad
+\loss^\mathrm{test}  = 1.918\times 10^{-7},
+\end{equation}
+a spread of $\sim 1100\times$ across splits drawn from the same distribution.
+The split-to-split variance is entirely driven by which split happens to
+contain the worst $<\!1\%$ of tracks.
+
+\paragraph{Why squared residuals are unstable here.} Write the per-track
+residual on output channel $k$ as
+$r_k = (y_{\theta,k} - y_k^\star)/\sigma_k$, where $\sigma_k$ is the output
+standard deviation used for non-dimensionalisation in
+\href{run:../../experiments/gen_2/ISSUES_WITH_PINNS_AND_RK_PINNS.md}{ISSUES} §1.
+The mini-batch MSE is
+\begin{equation}\label{eq:mse}
+\loss_\mathrm{MSE} \;=\; \frac{1}{NK}\sum_{n=1}^{N}\sum_{k=1}^{K} r_{n,k}^{2}.
+\end{equation}
+If the empirical distribution of $|r|$ is heavy-tailed with a Pareto-like
+upper tail $P(|r|>t)\sim t^{-\alpha}$, the contribution of the top
+fraction $\varepsilon$ to~\eqref{eq:mse} scales as
+\begin{equation}\label{eq:tail}
+\mathbb{E}\!\left[r^2 \,\mathbf{1}_{|r|>t_\varepsilon}\right]
+\;\propto\;
+\int_{t_\varepsilon}^{\infty}\! t^{2-\alpha-1}\,dt
+\;=\;
+\frac{t_\varepsilon^{\,2-\alpha}}{\alpha-2}
+\qquad (\alpha > 2),
+\end{equation}
+which diverges as $\alpha\to 2^{+}$. Empirically the gen-3 corpus has
+$\alpha$ close enough to this regime that $<\!1\%$ of outliers contribute
+$>\!90\%$ of the mini-batch loss
+(\href{run:../../experiments/gen_3/REPLACEMENT_PLAN.md}{\texttt{REPLACEMENT\_PLAN.md}}
+§4.C). The model-selection signal-to-noise ratio collapses.
+
+\paragraph{Replacement loss: log-cosh.} Define
+\begin{equation}\label{eq:lc}
+\loss_\mathrm{lc}(r) \;=\; \log\cosh(r),\qquad
+\frac{d\loss_\mathrm{lc}}{dr} = \tanh(r).
+\end{equation}
+The behaviour near zero is quadratic,
+$\loss_\mathrm{lc}(r) = \tfrac{1}{2}r^2 - \tfrac{1}{12}r^4 + \mathcal{O}(r^6)$,
+preserving the gradient on typical tracks. In the tails
+$\loss_\mathrm{lc}(r) = |r| - \log 2 + \mathcal{O}(e^{-2|r|})$ and
+$|d\loss_\mathrm{lc}/dr|\le 1$, capping the per-sample gradient
+contribution regardless of $\alpha$. Substituting~\eqref{eq:lc}
+into~\eqref{eq:tail} replaces $r^{2-\alpha-1}$ by $r^{1-\alpha-1}$ in the
+heavy-tail integrand, restoring integrability for any $\alpha>1$.
+
+\paragraph{Selection metric.} Model selection switches from
+$\loss_\mathrm{MSE}$ to the \emph{median} $|\Delta x|$ on the held-out test
+split, with the 68\%, 95\% and 99\% quantiles reported alongside. The median
+is a robust location statistic that is insensitive to the heavy tail
+of~\eqref{eq:tail} and does not change under monotone transformations of
+the residual scale.
+\href{run:../../experiments/gen_3/REPLACEMENT_PLAN.md}{\texttt{REPLACEMENT\_PLAN.md}}
+§4.C marks Fix L1 as \emph{non-negotiable}: it must land before any further
+training run, because otherwise the heavy-tail population alone determines
+which checkpoint wins.
+
+% ============================================================================
+\section{MLP modernisation (Fix M1)}\label{sec:M1}
+
+\paragraph{The input-dimensionality regression.} The gen-3 MLP was inherited
+verbatim from gen-2 with a 6-dimensional input
+$[x, y, t_x, t_y, \qop, \dz]$, missing the gen-3 $z_0$ coordinate. On the
+gen-3 corpus this produces an order-of-magnitude collapse: gen-2
+\texttt{mlp\_medium} reached 0.305\,mm on forward-only data, whereas the
+inherited gen-3 \texttt{mlp\_medium\_v1} sits at 5.57\,mm and
+\texttt{mlp\_small\_v1} at 18.41\,mm
+(\href{run:../../experiments/gen_3/REPLACEMENT_PLAN.md}{\texttt{REPLACEMENT\_PLAN.md}}
+§3, gen-3 row). The PINN\_v2 and NeuralRK4 families had already absorbed
+$z_0$ via Fix~H and signed $\dz$ via Fix~C2; the MLP recipe was the lone
+holdout.
+
+\paragraph{Fix M1.} The input layout becomes 7-dimensional,
+\begin{equation}\label{eq:input7-mlp}
+\mathbf{x} \;=\; (x,\ y,\ t_x,\ t_y,\ \qop,\ z_0,\ \dz),
+\end{equation}
+matching~\eqref{eq:input7} and the existing
+\href{run:../../experiments/gen_3/models/architectures.py}{\texttt{architectures.py}}
+line-178 declaration \texttt{input\_dim=7}. Two engineered features are
+appended:
+\begin{equation}\label{eq:eng}
+\phi_1(\dz) \;=\; \log_{10}\!\left(\frac{|\dz|}{100\ \mathrm{mm}}\right),
+\qquad
+\phi_2(\dz) \;=\; \operatorname{sign}(\dz).
+\end{equation}
+
+\paragraph{Why each feature is physically needed.}
+\emph{(i) $z_0$:} the LHCb dipole field profile is asymmetric about the
+VELO-exit plane (peak $|B_y|\approx 1.03$\,T at $z\approx 5007$\,mm,
+\href{run:../../PROJECT_CONTEXT.md}{\texttt{PROJECT\_CONTEXT.md}}
+§``Magnetic field map''). Two tracks with identical
+$(x, y, t_x, t_y, \qop, \dz)$ but different $z_0$ traverse qualitatively
+different field histories --- short pre-magnet drift versus full magnet
+crossing --- and produce different endpoint states. Without $z_0$ the MLP
+must average over these regimes and learns neither.
+\emph{(ii) $\operatorname{sign}(\dz)$:} the gen-2 corpus had $\dz>0$
+always; gen-3 spans $\dz \in [-10000, +10000]$\,mm to support the
+Kalman-filter backward pass. The Lorentz ODE~\eqref{eq:lorentz} is not
+symmetric under $z\to -z$ in the presence of the asymmetric $\Bfield$, so
+forward and backward extrapolations are physically distinct maps.
+A symmetric 6-input layout cannot distinguish them.
+\emph{(iii) $\log_{10}|\dz|$:} the dataset spans nearly three decades in
+$|\dz|$ (25\,mm to 10\,000\,mm). A log-scaled feature gives the network a
+basis adapted to this dynamic range, in the same spirit as the
+$\sigma_k/\dz$ non-dimensionalisation already used elsewhere
+(\href{run:../../experiments/gen_2/ISSUES_WITH_PINNS_AND_RK_PINNS.md}{ISSUES} §1).
+
+% ============================================================================
+\section{PINN\_v2 framework}\label{sec:pinn_v2}
+
+\paragraph{Output parametrisation.} Let
+$\mathbf{x}_0 = (x, y, t_x, t_y, \qop, z_0)$ be the initial state and
+$\zeta = (z-z_0)/\dz \in [0,1]$ a normalised path parameter along the
+extrapolation step. The PINN\_v2 trajectory is
+\begin{equation}\label{eq:traj}
+u_\theta(\mathbf{x}_0, \zeta)
+\;=\;
+\mathbf{y}_\mathrm{base}(\mathbf{x}_0, \zeta)
+\;+\;
+\zeta \cdot \delta_\theta\!\big(\,\widetilde{\mathbf{x}}_0,\ \zeta\,\big),
+\end{equation}
+where $\mathbf{y}_\mathrm{base}$ is the straight-line baseline (initial
+state plus linear-in-$\zeta$ slope extrapolation),
+$\widetilde{\mathbf{x}}_0$ is the non-dimensionalised initial state, and
+$\delta_\theta$ is the network correction. The Fix~C trunk of
+\href{run:../../experiments/gen_2/ISSUES_WITH_PINNS_AND_RK_PINNS.md}{ISSUES} §7C
+makes the encoder explicitly $\zeta$-dependent, so~\eqref{eq:traj} is
+\emph{not} affine in $\zeta$. The $\zeta$-prefactor enforces the initial
+condition exactly: $u_\theta(\mathbf{x}_0, 0) = \mathbf{y}_\mathrm{base}(\mathbf{x}_0, 0) = \mathbf{x}_0$.
+
+\paragraph{Physics at training time only.} The PDE residual
+\begin{equation}\label{eq:resid}
+\mathcal{R}_\mathrm{Lorentz}[u_\theta](\mathbf{x}_0, \zeta)
+\;=\;
+\partial_\zeta\, u_\theta(\mathbf{x}_0, \zeta)
+\;-\;
+\dz \cdot f_\mathrm{Lorentz}\!\big(u_\theta, \, z_0 + \zeta\dz;\ \qop\big)
+\end{equation}
+is evaluated on $n_c$ collocation points
+$\zeta \sim \mathcal{U}(0, 1)$ drawn per sample per batch (Fix~B,
+$n_c = 2$ in gen-3). The $\partial_\zeta$ derivative is computed by a
+single forward-mode JVP via \texttt{torch.func.jvp} under
+\texttt{torch.func.vmap} (Fix~A), replacing the 32 reverse-mode backwards
+of the legacy implementation by one JVP per batch element.
+\textbf{Crucially, $f_\mathrm{Lorentz}$ and $\Bfield$ appear only inside
+the training loss}; at inference time $\zeta = 1$ is fixed, the trajectory
+collapses to $u_\theta(\mathbf{x}_0, 1)$, and a single forward pass through
+$\delta_\theta$ produces the output. The replacement criterion of
+Section~\ref{sec:criterion} is preserved.
+
+\paragraph{Loss decomposition.} The total training loss is
+\begin{equation}\label{eq:lossdecomp}
+\loss \;=\;
+\loss_\mathrm{data}
+\;+\;
+\lambda_\mathrm{pde}\, \loss_\mathrm{pde}
+\;+\;
+\lambda_\mathrm{ic}\, \loss_\mathrm{ic},
+\end{equation}
+with $\loss_\mathrm{data}$ the log-cosh loss~\eqref{eq:lc} on the endpoint
+prediction, $\loss_\mathrm{pde} = \langle \|\mathcal{R}_\mathrm{Lorentz}\|^2_{\sigma/\dz}\rangle$
+the component-wise non-dimensionalised mean of~\eqref{eq:resid}, and
+$\loss_\mathrm{ic} \equiv 0$ identically by construction (the $\zeta$
+prefactor in~\eqref{eq:traj} zeroes the correction at $\zeta = 0$); the
+$\lambda_\mathrm{ic}$ term is retained only for forward compatibility.
+
+\paragraph{Fix P1 schedule.} Linear warm-up
+$\lambda_\mathrm{pde}: 0 \to \lambda_\mathrm{pde}^\star$ over the first 10
+epochs (extended from the gen-2 value of 5), followed by a held plateau,
+then a late-stage cosine decay
+$\lambda_\mathrm{pde}: \lambda_\mathrm{pde}^\star \to 0.1\,\lambda_\mathrm{pde}^\star$
+over the final 20\% of training
+(\href{run:../../experiments/gen_3/REPLACEMENT_PLAN.md}{\texttt{REPLACEMENT\_PLAN.md}}
+§4.B). The rationale is that the physics term is most useful as a
+trajectory-anchoring \emph{regulariser} early in training; reducing its
+weight late allows the data term to polish the endpoint accuracy that
+matters at inference, without re-introducing the structural-floor pathology
+of the legacy PINN.
+
+% ============================================================================
+\section{Allen integration constraints}\label{sec:allen}
+
+The seven hard constraints (A1--A7) lifted from
+\href{run:../../experiments/gen_3/REPLACEMENT_PLAN.md}{\texttt{REPLACEMENT\_PLAN.md}}
+§5 are reproduced in Table~\ref{tab:allen}, together with the verdict per
+surviving family. A4 is flagged explicitly as the open empirical question
+of Phase R2.
+
+\begin{table}[h!]
+\centering
+\caption{Allen Stage-1 integration constraints A1--A7 and their hard
+limits. Verdicts per replacement family. ``?'' = untested, awaiting
+Phase R2.}
+\label{tab:allen}
+\small
+\begin{tabularx}{\linewidth}{l X l c c}
+\toprule
+ID & Constraint & Hard limit & MLP & PINN\_v2 \\
+\midrule
+A1 & Constant memory at inference; no per-event allocation
+   & strict
+   & \cmark & \cmark \\
+A2 & Weight export to fp32 \& fp16 with deterministic round-trip
+   & bit-exact reload
+   & \cmark & \cmark \\
+A3 & Total trainable weights $\le$ 64\,kB (GPU shared-mem budget)
+   & hard
+   & \cmark (width $\le [256,256]$)
+   & \cmark up to $[256,256]$; the wider $[512,256,256]$ variant of Fix~P1 reaches $\sim$150\,kB and must be checked \\
+A4 & $\|\Jac_\mathrm{model} - \Jac_\mathrm{RK45}\|_F / \|\Jac_\mathrm{RK45}\|_F < 0.05$, max off-diagonal rel-err $<0.20$
+   & hard (Kalman)
+   & \textbf{?}
+   & \textbf{?} \\
+A5 & fp32 inference reproduces Python output to $\le 10^{-4}$ relative
+   & hard
+   & \cmark (proven via \texttt{TrackMLPExtrapolator.cpp})
+   & \cmark (same forward arithmetic) \\
+A6 & Per-track GPU cost $\le$ classical RK4 on same hardware
+   & hard
+   & \cmark & \cmark \\
+A7 & Drop-in via \texttt{ITrackExtrapolator::propagate}; no API change
+   & hard
+   & \cmark & \cmark (trivial extension) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{A4 is the open empirical question.} The original A4 failure that
+motivated the move toward NeuralRK4 was diagnosed as an fp32 plus
+finite-difference artefact, not a structural property of point-prediction
+networks (ADR~0007 re-measurement, recorded in
+\href{run:../../experiments/gen_3/For_Allen/docs/decisions/0009-replacement-goal-restated.md}{ADR~0009}).
+A4 has \emph{not} yet been re-measured on the true replacement candidates
+with the corrected fp64 + autograd methodology. Phase R2
+(Section~\ref{sec:roadmap}) does this measurement before any further
+training is committed.
+
+% ============================================================================
+\section{Roadmap (R1--R6 + R-X)}\label{sec:roadmap}
+
+\begin{table}[h!]
+\centering
+\caption{The six-phase replacement roadmap from
+\href{run:../../experiments/gen_3/REPLACEMENT_PLAN.md}{\texttt{REPLACEMENT\_PLAN.md}}
+§6, plus the R-X contingency.}
+\label{tab:roadmap}
+\small
+\begin{tabularx}{\linewidth}{l X l}
+\toprule
+Phase & Exit criterion & Artefact produced \\
+\midrule
+R1 (Fix L1) & Published median, 68\%, 95\%, 99\% $|\Delta x|$ and $|\Delta\mathrm{slope}|$ for all M1 checkpoints under log-cosh selection
+           & Re-evaluated metrics tables; updated \texttt{train.py} / \texttt{eval.py} \\
+R2 (A4 gate) & A4 measured at fp64 on \texttt{mlp\_medium\_v1} and \texttt{pinn\_v2\_small\_v1} against the cached RK45 Jacobian reference
+           & \texttt{evaluate\_a4(model, test\_states)} utility; pass/fail decision \\
+R3 (Fix M1) & At least one MLP $<0.5$\,mm median $|\Delta x|$ on the 10\,M corpus with the 7-dim + engineered-feature input
+           & \texttt{mlp\_\{small,medium,large\}\_v2} checkpoints \\
+R4 (Fix P1) & At least one PINN\_v2 $<0.10$\,mm median $|\Delta x|$, passing A4
+           & PINN\_v2 width sweep; \textbf{the Allen candidate} \\
+R5 (export + bridge) & Bit-bound smoke test green on the R4 winner; \texttt{NRKExtrapolator.cuh} re-purposed to call \texttt{forward\_pass(weights, state)}
+           & Re-anchored \texttt{For\_Allen/PLAN.md}; weight blob \\
+R6 (Allen MR + Moore) & Throughput improvement in \texttt{hlt1\_pp\_default}; accuracy gates hold in Moore physics tests
+           & Production MR \\
+\midrule
+R-X (contingency) & Triggered if both MLP and PINN\_v2 fail A4 after R3 + R4
+           & See below \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{R-X contingency.} If A4 cannot be met by point prediction alone,
+the diagnosis is that no point-prediction network can match the RK4
+Jacobian. Two routes are documented in
+\href{run:../../experiments/gen_3/REPLACEMENT_PLAN.md}{\texttt{REPLACEMENT\_PLAN.md}}
+§6 R-X, both of which preserve the replacement property:
+\begin{enumerate}
+\item \emph{Jacobian co-supervision} --- augment the training loss with
+\begin{equation}\label{eq:jacsup}
+\loss_J \;=\; \lambda_J \,
+\big\| \Jac_\theta(\mathbf{x}) - \Jac_\mathrm{RK45}(\mathbf{x}) \big\|_F^{\,2},
+\end{equation}
+with $\Jac_\theta = \partial f_\theta / \partial \mathbf{x}$ cheaply
+obtained via \texttt{torch.func.jacfwd}. The Jacobian is a property of the
+network alone; no field map enters at inference.
+\item \emph{Straight-line residual output parametrisation} --- write
+\begin{equation}\label{eq:slr}
+f_\theta(\mathbf{x}) \;=\;
+\big(\,x_0 + t_x \dz,\ y_0 + t_y \dz,\ t_x,\ t_y,\ \qop\,\big)
+\;+\;
+\Delta_\theta(\mathbf{x}),
+\end{equation}
+so the network learns only the deviation from a closed-form linear
+baseline. The straight-line Jacobian is constant and known, and the
+network's Jacobian contribution is small by construction, easing A4. No
+field map and no $f_\mathrm{Lorentz}$ enter~\eqref{eq:slr}; the criterion
+of Section~\ref{sec:criterion} is preserved.
+\end{enumerate}
+
+% ============================================================================
+\section{What changed from prior documents}\label{sec:changed}
+
+The re-anchoring of 2026-05-19 supersedes a sequence of prior design
+decisions. Cross-references are to the
+\href{run:../../experiments/gen_3/CLEANUP_LIST.md}{\texttt{CLEANUP\_LIST.md}}
+where the corresponding code/doc action is itemised.
+\begin{itemize}
+\item \textbf{ADR 0002 / 0003 / 0007 superseded by ADR 0009.} The progression
+``hybrid NeuralRK4 with learned corrector $\to$ pure classical RK4 with
+$n_\mathrm{rk\_steps}=2$, corrector OFF'' is retired. Neither endpoint
+satisfies the canonical replacement goal
+(\href{run:../../experiments/gen_3/For_Allen/docs/decisions/0009-replacement-goal-restated.md}{ADR~0009}).
+\item \textbf{\texttt{NeuralRK4} demoted.} Moved from ``M1 deployment
+candidate'' to ``research baseline / F2--F3 audit reference''. Checkpoints
+relocated to \texttt{trained\_models/\_archive\_hybrid/}; configs to
+\texttt{configs/\_archive\_hybrid/}; module docstring updated
+(\href{run:../../experiments/gen_3/CLEANUP_LIST.md}{CLEANUP\_LIST} §§2.1, 3.1, 3.2).
+\item \textbf{Gen-3 MLP collapse diagnosed.} Root cause is the missing
+$z_0$ and the symmetric input layout under signed $\dz$
+(Section~\ref{sec:M1}). \texttt{mlp\_\{small,medium\}\_v1} marked
+\texttt{\_v1\_broken}; retraining as \texttt{\_v2} per Phase~R3
+(\href{run:../../experiments/gen_3/CLEANUP_LIST.md}{CLEANUP\_LIST} §2.3).
+\item \textbf{Gen-3 \texttt{README.md} re-anchored.} The M1 results table
+gains a ``Replacement?'' column; the thesis-section sketch reverses
+direction --- the open question is now whether scaled PINN\_v2 closes the
+0.1\,mm gate, not whether NeuralRK4 supplants PINN\_v2
+(\href{run:../../experiments/gen_3/CLEANUP_LIST.md}{CLEANUP\_LIST} §§4.1, 4.2).
+\item \textbf{\texttt{For\_Allen/PLAN.md} re-anchored.} Eight phases
+re-pointed from \texttt{nrk4\_tiny\_1step\_v1} to ``the §R4 PINN\_v2
+winner''. The Allen surface \texttt{NRKExtrapolator.cuh} is preserved as
+the right abstraction layer; its inner loop will be replaced by a generic
+\texttt{forward\_pass(weights, state)} call in a follow-up MR
+(\href{run:../../experiments/gen_3/CLEANUP_LIST.md}{CLEANUP\_LIST} §§1.1, 1.3, 4.3).
+\item \textbf{Loss-metric reform mandated project-wide.} MSE is no longer
+a valid selection metric for any candidate; log-cosh + median $|\Delta x|$
+is mandatory (Section~\ref{sec:L1};
+\href{run:../../experiments/gen_3/CLEANUP_LIST.md}{CLEANUP\_LIST} §0 prerequisites).
+\end{itemize}
+
+% ============================================================================
+\section*{References}
+\addcontentsline{toc}{section}{References}
+\begin{description}
+\item[PROJECT\_CONTEXT] \href{run:../../PROJECT_CONTEXT.md}{\texttt{PROJECT\_CONTEXT.md}} --- canonical project goal and architecture taxonomy.
+\item[REPLACEMENT\_PLAN] \href{run:../../experiments/gen_3/REPLACEMENT_PLAN.md}{\texttt{experiments/gen\_3/REPLACEMENT\_PLAN.md}} --- §§1, 2, 4, 5, 6 (R1--R6, R-X).
+\item[CLEANUP\_LIST] \href{run:../../experiments/gen_3/CLEANUP_LIST.md}{\texttt{experiments/gen\_3/CLEANUP\_LIST.md}} --- off-goal artefact inventory.
+\item[ADR 0009] \href{run:../../experiments/gen_3/For_Allen/docs/decisions/0009-replacement-goal-restated.md}{\texttt{For\_Allen/docs/decisions/0009-replacement-goal-restated.md}} --- controlling decision record.
+\item[ISSUES (gen-2)] \href{run:../../experiments/gen_2/ISSUES_WITH_PINNS_AND_RK_PINNS.md}{\texttt{experiments/gen\_2/ISSUES\_WITH\_PINNS\_AND\_RK\_PINNS.md}} --- legacy PINN / RK\_PINN pathology audit.
+\item[architectures.py] \href{run:../../experiments/gen_3/models/architectures.py}{\texttt{experiments/gen\_3/models/architectures.py}} --- \texttt{MLP} (line~178), \texttt{PINN\_v2} (line~232), \texttt{NeuralRK4} (line~415).
+\item[gen-3 M1 results] \href{run:gen3_m1_results.tex}{\texttt{docs/reports/gen3\_m1\_results.tex}} --- LaTeX preamble convention; M1 headline numbers.
+\item[gen-3 protocol] \href{run:gen3_protocol.tex}{\texttt{docs/reports/gen3\_protocol.tex}} --- notation conventions ($\qop$, $\dz$, $\state$, $\Jac$, $\loss$).
+\item[Companion (results)] \href{run:gen3_replacement_results_2026-05-19.tex}{\texttt{docs/reports/gen3\_replacement\_results\_2026-05-19.tex}} --- empirical companion to the present document.
+\end{description}
+
+\end{document}

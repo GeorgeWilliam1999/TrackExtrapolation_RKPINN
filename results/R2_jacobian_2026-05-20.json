@@ -1,0 +1,30 @@
+{
+  "pinn_v2_small_v1": {
+    "model_name": "pinn_v2_small_v1",
+    "n_tracks": 200,
+    "frob_rel_mean": 0.0009005699807071843,
+    "frob_rel_median": 0.0005200777349713134,
+    "frob_rel_p95": 0.0019882026900827554,
+    "off_max_frob_median": 0.00020457543048281972,
+    "off_max_frob_p95": 0.0004987468784099396,
+    "gate_frob": 0.05,
+    "gate_off_frob": 0.05,
+    "passes": true,
+    "verdict": "PASS",
+    "eval_time_s": 0.7106449604034424
+  },
+  "mlp_medium_v1_broken": {
+    "model_name": "mlp_medium_v1_broken",
+    "n_tracks": 200,
+    "frob_rel_mean": 0.2725662148820937,
+    "frob_rel_median": 0.06854660807056603,
+    "frob_rel_p95": 1.220945359956718,
+    "off_max_frob_median": 0.03739194186180214,
+    "off_max_frob_p95": 0.6794983568768975,
+    "gate_frob": 0.05,
+    "gate_off_frob": 0.05,
+    "passes": false,
+    "verdict": "FAIL: frob_rel_mean=0.2726 >= 0.05; off_max_frob_p95=0.6795 >= 0.05",
+    "eval_time_s": 0.42062950134277344
+  }
+}

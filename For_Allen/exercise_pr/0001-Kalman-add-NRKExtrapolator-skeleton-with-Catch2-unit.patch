@@ -1,0 +1,329 @@
+From ce2532b8ecafa0c6b6a71506c7b68310a3564c61 Mon Sep 17 00:00:00 2001
+From: GeorgeWilliam1999 <George.W.Scriven@gmail.com>
+Date: Sun, 10 May 2026 15:13:52 +0200
+Subject: [PATCH] Kalman: add NRKExtrapolator skeleton with Catch2 unit tests
+
+Adds a header-only Extrapolators::NRKExtrapolator struct in device/kalman/ParKalman/include/, mirroring the surface API of the existing RungeKuttaNystromExtrapolator but taking the magnetic-field vector as a direct argument (float3 B) instead of a MagneticField::Magfield grid. The body is a faithful restatement of RKN::make_fast_step and is numerically equivalent under identical inputs.
+
+No algorithm wrapper, no sequence wiring, no property hooks, no weights. The header is unreachable from any current Allen sequence and therefore cannot affect throughput or physics performance.
+
+Five Catch2 v3 unit tests register under tag [NRKExtrapolator] via the existing catch_discover_tests glob: zero-field straight line, sign symmetry, qop invariance, qop linearity at small step, and zero-step idempotency. unit_tests now links WrapperInterface so the ParKalman headers are visible.
+
+Local CI dry-run: lb-check-copyright master and lb-format -n on staged files both pass. Full build and ctest deferred to push.
+
+Signed-off-by: GeorgeWilliam1999 <George.W.Scriven@gmail.com>
+---
+ .../ParKalman/include/NRKExtrapolator.cuh     |  99 ++++++++++++
+ .../include/NRKExtrapolatorConstants.cuh      |  23 +++
+ test/unit_tests/CMakeLists.txt                |   2 +-
+ .../generic/src/TestNRKExtrapolator.cu        | 149 ++++++++++++++++++
+ 4 files changed, 272 insertions(+), 1 deletion(-)
+ create mode 100644 device/kalman/ParKalman/include/NRKExtrapolator.cuh
+ create mode 100644 device/kalman/ParKalman/include/NRKExtrapolatorConstants.cuh
+ create mode 100644 test/unit_tests/generic/src/TestNRKExtrapolator.cu
+
+diff --git a/device/kalman/ParKalman/include/NRKExtrapolator.cuh b/device/kalman/ParKalman/include/NRKExtrapolator.cuh
+new file mode 100644
+index 000000000000..c2390ffb3d2d
+--- /dev/null
++++ b/device/kalman/ParKalman/include/NRKExtrapolator.cuh
+@@ -0,0 +1,99 @@
++/*****************************************************************************\
++* (c) Copyright 2026 CERN for the benefit of the LHCb Collaboration           *
++*                                                                             *
++* This software is distributed under the terms of the Apache License          *
++* version 2 (Apache-2.0), copied verbatim in the file "LICENSE".              *
++*                                                                             *
++* In applying this licence, CERN does not waive the privileges and immunities *
++* granted to it by virtue of its status as an Intergovernmental Organization  *
++* or submit itself to any jurisdiction.                                       *
++\*****************************************************************************/
++#pragma once
++
++#include <BackendCommon.h>
++#include <ExtrapolatorCommon.cuh>
++#include <NRKExtrapolatorConstants.cuh>
++
++namespace Extrapolators {
++
++  /**
++   * NRKExtrapolator
++   *
++   * Neural-Runge-Kutta-Nyström extrapolator (research prototype).
++   *
++   * Surface API mirrors RungeKuttaNystromExtrapolator but takes the magnetic
++   * field vector directly as a function argument rather than looking it up in
++   * a field grid. This makes the extrapolator independently testable without
++   * a MagneticField::Magfield instance and provides the exact integration
++   * surface that a learnable (MLP-augmented) body will replace in a
++   * follow-up merge request.
++   *
++   * The current body is a faithful restatement of
++   * RungeKuttaNystromExtrapolator::make_fast_step with the field-grid lookup
++   * factored out, so behaviour is numerically equivalent to the existing
++   * Nyström step under identical inputs. No algorithm wrapper, no sequence
++   * wiring, no property hooks: this header is unreachable from any current
++   * Allen sequence and therefore cannot affect throughput or physics
++   * performance until it is explicitly wired in.
++   */
++  struct NRKExtrapolator {
++
++  private:
++    __host__ __device__ inline static float2 gamma(const float2 t, const float3 B)
++    {
++      const float norm = sqrtf(1.f + t.x * t.x + t.y * t.y);
++      return make_float2(
++        norm * (t.x * t.y * B.x - (1.f + t.x * t.x) * B.y + t.y * B.z),
++        norm * ((1.f + t.y * t.y) * B.x - t.x * t.y * B.y - t.x * B.z));
++    }
++
++    __host__ __device__ inline static void fillStages(
++      float2 k[NRKExtrapolatorConstants::n_stages],
++      const float2 t,
++      const float qop,
++      const float3 B,
++      const float dz)
++    {
++      k[0] = gamma(t, B);
++      k[0].x *= qop;
++      k[0].y *= qop;
++      for (int stage = 1; stage < NRKExtrapolatorConstants::n_stages; stage++) {
++        const float c = NRKExtrapolatorConstants::stage_offsets[stage];
++        const float2 t_eff = make_float2(t.x + k[stage - 1].x * dz * c, t.y + k[stage - 1].y * dz * c);
++        k[stage] = gamma(t_eff, B);
++        k[stage].x *= qop;
++        k[stage].y *= qop;
++      }
++    }
++
++  public:
++    /**
++     * Single Runge-Kutta-Nyström step with a directly-supplied field vector B.
++     *
++     * Equivalent to RungeKuttaNystromExtrapolator::make_fast_step evaluated
++     * with B = field at the step midpoint. The decoupling of the field
++     * lookup is the only behavioural difference from the in-tree RKN.
++     */
++    __host__ __device__ static inline void make_step(State& state, const float dz, const float3 B)
++    {
++      const float2 tn = make_float2(state.tx, state.ty);
++
++      float2 k[NRKExtrapolatorConstants::n_stages];
++      fillStages(k, tn, state.qop, B, dz);
++
++      const float2 dRn = make_float2(
++        tn.x * dz + (k[0].x + k[1].x + k[2].x) * (dz * dz * (1.f / 6.f)),
++        tn.y * dz + (k[0].y + k[1].y + k[2].y) * (dz * dz * (1.f / 6.f)));
++      const float2 dTn = make_float2(
++        (k[0].x + 2.f * k[1].x + 2.f * k[2].x + k[3].x) * (dz * (1.f / 6.f)),
++        (k[0].y + 2.f * k[1].y + 2.f * k[2].y + k[3].y) * (dz * (1.f / 6.f)));
++
++      state.x += dRn.x;
++      state.y += dRn.y;
++      state.z += dz;
++      state.tx += dTn.x;
++      state.ty += dTn.y;
++    }
++  };
++
++} // namespace Extrapolators
+diff --git a/device/kalman/ParKalman/include/NRKExtrapolatorConstants.cuh b/device/kalman/ParKalman/include/NRKExtrapolatorConstants.cuh
+new file mode 100644
+index 000000000000..b16254145f26
+--- /dev/null
++++ b/device/kalman/ParKalman/include/NRKExtrapolatorConstants.cuh
+@@ -0,0 +1,23 @@
++/*****************************************************************************\
++* (c) Copyright 2026 CERN for the benefit of the LHCb Collaboration           *
++*                                                                             *
++* This software is distributed under the terms of the Apache License          *
++* version 2 (Apache-2.0), copied verbatim in the file "LICENSE".              *
++*                                                                             *
++* In applying this licence, CERN does not waive the privileges and immunities *
++* granted to it by virtue of its status as an Intergovernmental Organization  *
++* or submit itself to any jurisdiction.                                       *
++\*****************************************************************************/
++#pragma once
++
++namespace Extrapolators {
++  namespace NRKExtrapolatorConstants {
++    // Number of Runge-Kutta-Nyström stages (classical 4-stage scheme).
++    constexpr int n_stages = 4;
++
++    // Stage offsets c_i used to advance the state slope before evaluating
++    // the next field-dependent acceleration. Identical to the in-tree
++    // RungeKuttaNystromExtrapolator::fillStages convention.
++    constexpr float stage_offsets[n_stages] = {0.f, 0.5f, 0.5f, 1.f};
++  } // namespace NRKExtrapolatorConstants
++} // namespace Extrapolators
+diff --git a/test/unit_tests/CMakeLists.txt b/test/unit_tests/CMakeLists.txt
+index 23a90218ee37..978ecfc0f43d 100644
+--- a/test/unit_tests/CMakeLists.txt
++++ b/test/unit_tests/CMakeLists.txt
+@@ -16,7 +16,7 @@ add_definitions(-D${TARGET_DEFINITION})
+ 
+ allen_add_executable(unit_tests ${generic_tests} ${cu_generic_tests})
+ 
+-target_link_libraries(unit_tests Catch2::Catch2WithMain HostEventModel EventModel Gear AllenCommon Backend HostCommon)
++target_link_libraries(unit_tests Catch2::Catch2WithMain HostEventModel EventModel Gear AllenCommon Backend HostCommon WrapperInterface)
+ 
+ if (NOT STANDALONE)
+   # Make test discovery work in stack builds
+diff --git a/test/unit_tests/generic/src/TestNRKExtrapolator.cu b/test/unit_tests/generic/src/TestNRKExtrapolator.cu
+new file mode 100644
+index 000000000000..1dcbb6a508fb
+--- /dev/null
++++ b/test/unit_tests/generic/src/TestNRKExtrapolator.cu
+@@ -0,0 +1,149 @@
++/*****************************************************************************\
++* (c) Copyright 2026 CERN for the benefit of the LHCb Collaboration           *
++*                                                                             *
++* This software is distributed under the terms of the Apache License          *
++* version 2 (Apache-2.0), copied verbatim in the file "LICENSE".              *
++*                                                                             *
++* In applying this licence, CERN does not waive the privileges and immunities *
++* granted to it by virtue of its status as an Intergovernmental Organization  *
++* or submit itself to any jurisdiction.                                       *
++\*****************************************************************************/
++#if __has_include(<catch2/catch.hpp>)
++// Catch2 v2
++#include <catch2/catch.hpp>
++namespace Catch {
++  using Detail::Approx;
++}
++#else
++// Catch2 v3
++#include <catch2/catch_approx.hpp>
++#include <catch2/catch_test_macros.hpp>
++#endif
++
++#include <NRKExtrapolator.cuh>
++
++using Catch::Approx;
++using Extrapolators::NRKExtrapolator;
++using Extrapolators::State;
++
++namespace {
++  // Tolerance for FP32 accumulation over a single step.
++  constexpr float k_tol = 1e-5f;
++
++  inline State make_state(float x, float y, float z, float tx, float ty, float qop)
++  {
++    State s;
++    s.x = x;
++    s.y = y;
++    s.z = z;
++    s.tx = tx;
++    s.ty = ty;
++    s.qop = qop;
++    return s;
++  }
++} // namespace
++
++// A2 - zero-field straight-line propagation.
++//
++// With B = 0 the gamma function vanishes, all RK stages are zero, and the
++// propagator must reduce to the analytic straight line:
++//   x' = x + tx * dz, y' = y + ty * dz, tx' = tx, ty' = ty, z' = z + dz.
++TEST_CASE("unit_tests.nrk_extrapolator.zero_field_straight_line", "[NRKExtrapolator]")
++{
++  const float3 B = make_float3(0.f, 0.f, 0.f);
++  const float dz = 100.f;
++  const float qop = 1e-3f;
++
++  State s = make_state(1.0f, 2.0f, 0.0f, 0.1f, -0.05f, qop);
++  const State s0 = s;
++  NRKExtrapolator::make_step(s, dz, B);
++
++  REQUIRE(s.x == Approx(s0.x + s0.tx * dz).margin(k_tol));
++  REQUIRE(s.y == Approx(s0.y + s0.ty * dz).margin(k_tol));
++  REQUIRE(s.z == Approx(s0.z + dz).margin(k_tol));
++  REQUIRE(s.tx == Approx(s0.tx).margin(k_tol));
++  REQUIRE(s.ty == Approx(s0.ty).margin(k_tol));
++  REQUIRE(s.qop == Approx(s0.qop).margin(0.f));
++}
++
++// A4 - sign symmetry.
++//
++// Under (x, tx) -> (-x, -tx) and B_y -> -B_y the equations of motion are
++// invariant up to overall sign, so the propagated x and tx flip sign while
++// y, ty remain unchanged. Tested at zero field where the symmetry is exact
++// independently of B.
++TEST_CASE("unit_tests.nrk_extrapolator.sign_symmetry_zero_field", "[NRKExtrapolator]")
++{
++  const float3 B = make_float3(0.f, 0.f, 0.f);
++  const float dz = 50.f;
++  const float qop = 1e-3f;
++
++  State sa = make_state(0.5f, 0.3f, 0.0f, 0.02f, 0.01f, qop);
++  State sb = make_state(-0.5f, 0.3f, 0.0f, -0.02f, 0.01f, qop);
++
++  NRKExtrapolator::make_step(sa, dz, B);
++  NRKExtrapolator::make_step(sb, dz, B);
++
++  REQUIRE(sa.x == Approx(-sb.x).margin(k_tol));
++  REQUIRE(sa.tx == Approx(-sb.tx).margin(k_tol));
++  REQUIRE(sa.y == Approx(sb.y).margin(k_tol));
++  REQUIRE(sa.ty == Approx(sb.ty).margin(k_tol));
++  REQUIRE(sa.z == Approx(sb.z).margin(k_tol));
++}
++
++// A1 - q/p row of the Jacobian.
++//
++// At zero field qop is a pure passenger: the propagated qop must equal the
++// input regardless of the other state components. This is the diagonal
++// element of the q/p row of the Jacobian.
++TEST_CASE("unit_tests.nrk_extrapolator.qop_invariant", "[NRKExtrapolator]")
++{
++  const float3 B = make_float3(0.1f, -0.2f, 0.05f);
++  const float dz = 25.f;
++
++  for (const float qop : {-1e-3f, 0.f, 1e-3f, 5e-3f}) {
++    State s = make_state(0.0f, 0.0f, 0.0f, 0.01f, -0.02f, qop);
++    NRKExtrapolator::make_step(s, dz, B);
++    REQUIRE(s.qop == Approx(qop).margin(0.f));
++  }
++}
++
++// A3 - linearity in qop at first order.
++//
++// In zero field the slope update vanishes for any qop. With non-zero field
++// and a small step we verify that the leading qop-dependence of (tx, ty) is
++// linear: doubling qop doubles the slope change to within the
++// quadratic-in-dz remainder.
++TEST_CASE("unit_tests.nrk_extrapolator.qop_linearity_small_step", "[NRKExtrapolator]")
++{
++  const float3 B = make_float3(0.0f, 0.5f, 0.0f);
++  const float dz = 1.f;
++  const float qop1 = 1e-4f;
++  const float qop2 = 2e-4f;
++
++  State s1 = make_state(0.f, 0.f, 0.f, 0.f, 0.f, qop1);
++  State s2 = make_state(0.f, 0.f, 0.f, 0.f, 0.f, qop2);
++
++  NRKExtrapolator::make_step(s1, dz, B);
++  NRKExtrapolator::make_step(s2, dz, B);
++
++  // Slope deflections should scale linearly with qop at lowest order.
++  REQUIRE(s2.tx == Approx(2.f * s1.tx).epsilon(1e-3));
++  REQUIRE(s2.ty == Approx(2.f * s1.ty).epsilon(1e-3));
++}
++
++// Smoke - dz = 0 must be a no-op.
++TEST_CASE("unit_tests.nrk_extrapolator.zero_step_is_identity", "[NRKExtrapolator]")
++{
++  const float3 B = make_float3(0.3f, -0.1f, 0.05f);
++  State s = make_state(1.f, -2.f, 10.f, 0.05f, 0.03f, 1e-3f);
++  const State s0 = s;
++  NRKExtrapolator::make_step(s, 0.f, B);
++
++  REQUIRE(s.x == Approx(s0.x).margin(0.f));
++  REQUIRE(s.y == Approx(s0.y).margin(0.f));
++  REQUIRE(s.z == Approx(s0.z).margin(0.f));
++  REQUIRE(s.tx == Approx(s0.tx).margin(0.f));
++  REQUIRE(s.ty == Approx(s0.ty).margin(0.f));
++  REQUIRE(s.qop == Approx(s0.qop).margin(0.f));
++}
+-- 
+2.47.3
+

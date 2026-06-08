@@ -1,0 +1,621 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{longtable}
+
+\hypersetup{colorlinks,linkcolor=blue!50!black,urlcolor=blue!50!black,citecolor=blue!50!black}
+
+
+\newcommand{\dz}{\ensuremath{\Delta z}}
+\newcommand{\qop}{\ensuremath{q/p}}
+\newcommand{\state}{\ensuremath{\mathbf{s}}}
+\newcommand{\PASS}{\textcolor{green!55!black}{\textbf{PASS}}}
+\newcommand{\FAIL}{\textcolor{red!70!black}{\textbf{FAIL}}}
+\newcommand{\NA}{\textcolor{gray}{n/a}}
+
+\title{Allen-Compatibility Audit for \texttt{nrk4\_tiny\_1step\_v1}\\
+       \large Conditions, criteria, and verifying evidence}
+\author{G.\ Scriven}
+\date{8 May 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note enumerates every Allen and data-pipeline condition that a Gen-3
+ML extrapolator must satisfy, states the numerical criterion, and gives
+the empirical evidence from the deep-dive notebook
+\href{run:../../experiments/gen_3/notebooks/nrk4_tiny_deep_dive.ipynb}{\texttt{nrk4\_tiny\_deep\_dive.ipynb}}
+that the candidate model \texttt{nrk4\_tiny\_1step\_v1} either meets or
+fails it. All numbers cited here are taken verbatim from
+\texttt{experiments/gen\_3/notebooks/allen\_export/deepdive\_summary.json}
+and the CSV companions (SHA-stamped \texttt{nrk4\_tiny\_weights.fp16.bin},
+\texttt{...fp32.bin}, and \texttt{nrk4\_tiny\_manifest.json}).
+\end{abstract}
+
+\section{Scope and Allen-repo provenance}
+
+The local Allen checkout used as the reference is
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+remote   & \texttt{https://gitlab.cern.ch/lhcb/Allen.git} (origin) \\
+branch   & \texttt{master} \\
+HEAD     & \texttt{12f26514959d} (\textit{Merge branch `ref\_bot\_Allen2378' into master}) \\
+checkout type & sparse (2\,\% of tracked files: \texttt{device/kalman/} +
+                \texttt{ML\_research/}) \\
+local path & \texttt{/data/bfys/gscriven/Allen} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Three Allen sources are normative for everything that follows. Their
+local copies are byte-identical with upstream master at
+\texttt{12f26514959d} (sparse-checkout pulls them verbatim from the
+GitLab tree):
+
+\begin{enumerate}[label=(\roman*),leftmargin=2em,nosep]
+\item \texttt{Allen/device/kalman/ParKalman/include/ExtrapolatorCommon.cuh}
+      --- defines the Kalman state $\state=(x,y,z,t_x,t_y,\qop)$, the unit
+      convention $c_\text{light}=2.99792458{\times}10^{8}\,\text{mm/ns}$
+      (line 16), and the analytic Lorentz RHS used by the production RKN
+      extrapolator;
+\item \texttt{Allen/device/kalman/ParKalman/include/RungeKuttaExtrapolator.cuh}
+      --- production reference for the Jacobian propagation
+      (\texttt{incrementJacobian}) and the multi-stage RK update;
+\item \texttt{Allen/ML\_research/README.md} (sections ``Conventions'',
+      ``Units'', ``\qop\ convention'', ``\dz\ must be bidirectional'',
+      ``Mandatory pre-deployment smoke test'') --- the human-readable
+      protocol for any candidate ML extrapolator.
+\end{enumerate}
+
+The Gen-3 generation specification
+(\texttt{TrackExtrapolation/experiments/gen\_3/GENERATION\_SPEC.md})
+is a derived document and inherits its conventions from
+(i)--(iii) above. We have cross-verified that
+\texttt{c\_light}, the input/output orderings, and the \dz\ signing
+rule are identical between the three sources; no inconsistency was
+found.
+
+\section{Conditions checklist (one row per requirement)}
+
+\begin{longtable}{p{0.16\textwidth} p{0.42\textwidth} p{0.20\textwidth} c}
+\toprule
+ID & What it asks for & How we measured & Verdict \\
+\midrule
+\endfirsthead
+\toprule
+ID & What it asks for & How we measured & Verdict \\
+\midrule
+\endhead
+\multicolumn{4}{l}{\emph{Data-side conventions (set in the generator,
+       inherited by the model at training)}}\\
+C1 \qop\ unit & \(\qop = c_\text{light}\,q/p_\text{MeV}\), Allen-canonical
+       (\(\sim 3{\times}10^{-2}\) at 10\,GeV). & header of
+       \texttt{train\_50M\_gen3.meta.json}: \texttt{qop\_convention =
+       "allen\_v1"}, \texttt{c\_light\_value = 299.792458}. & \PASS \\[3pt]
+C2 \dz\ signed & \(\dz \in [-10000,-25]\cup[+25,+10000]\)\,mm,
+       log-uniform in \(|\dz|\), balanced sign. & dataset-level
+       \texttt{X[:,6]} histogram in §1 of the deep-dive notebook;
+       \texttt{dz\_signed=true}, \texttt{dz\_distribution=
+       "log\_uniform\_abs\_balanced\_sign"} in metadata. & \PASS \\[3pt]
+C3 input coverage & \(|x|\le3500\)\,mm, \(|y|\le2500\)\,mm,
+       \(|t_x|\le0.40\), \(|t_y|\le0.35\). & §11 phase-space coverage
+       hex-bin (\texttt{fig\_qop\_dz\_coverage.png}); test set covers
+       full envelope. & \PASS \\
+\midrule
+\multicolumn{4}{l}{\emph{Allen binary / ABI contract}}\\
+A1 const-mem eligible & all weights \(+\) biases must fit
+       64\,kB so they can be moved to GPU
+       \texttt{\_\_constant\_\_} memory via
+       \texttt{cudaMemcpyToSymbol}. & §3 parameter count from the
+       loaded \texttt{state\_dict}: 4997 trainable scalars. &
+       \PASS \\[3pt]
+A2 sciFi-T3 spurious-correlation gate & \(|\rho(\Delta x, \qop)|<0.10\)
+       on the SciFi-T3 station band, to rule out a hidden charge bias
+       in the model. & §6 \texttt{stage1\_nrk4\_tiny.csv}, station
+       \texttt{SciFi\_T3}: \(\rho=-0.025\). & \PASS \\[3pt]
+A3 fp32 / fp16 size & both quantisations \(\le 64\,kB\). &
+       §3+§7: 19.52\,kB fp32, 9.76\,kB fp16. &
+       \PASS \\[3pt]
+A4 Jacobian agreement & median rel.\ err.\ \(<10\,\%\) and 99-th-perc.\
+       \(<30\,\%\) vs.\ finite-diff RK4, with structural-zero handling
+       per protocol §A4. & §21--22 deep-dive: 30 tracks
+       (15 fwd / 15 bwd), Allen FD step sizes; structural zeros
+       (\(\partial \qop/\partial\{x,y,t_x,t_y\}\), 250 elements) all
+       PASS; diagonals (\(\partial x_f/\partial x\) etc., 5 elements)
+       PASS at \(\le 2.3\,\%\) median; off-diagonal coupling
+       (16 of 25) all stuck at \(\sim 100\,\%\) rel.\ err. & \FAIL \\[3pt]
+A5 output dim & 5 outputs \((x_f,y_f,t_{x,f},t_{y,f},\qop_f)\),
+       \(\qop\) bit-exact pass-through in vacuum (max
+       \(|\Delta\qop|<10^{-5}\)). & §7 / §10:
+       \texttt{out\_dim=5}, \texttt{max\,|}\(\Delta\qop\)\texttt{|=0}. &
+       \PASS \\[3pt]
+A6 metadata block & exported \texttt{.bin}/manifest carries
+       \texttt{qop\_convention}, \texttt{c\_light\_value},
+       \texttt{dz\_signed}, \texttt{feature\_order},
+       \texttt{output\_order}, \texttt{loader\_version\_required},
+       \texttt{data\_sha256}, \texttt{git\_hash},
+       \texttt{training\_seed}. & §9 writes
+       \texttt{nrk4\_tiny\_manifest.json} (2723\,B) covering all
+       fields plus per-layer offsets and SHA-256 of both weight
+       blobs. & \PASS \\[3pt]
+A7 V3 loader contract & 7 inputs
+       \((x,y,t_x,t_y,\qop,z_0,\dz)\), 5 outputs as in A5;
+       \texttt{loader\_version\_required=V3} refuses to load on a
+       V2-only Allen checkout. & §3 input table:
+       \texttt{in\_dim=7}, \texttt{out\_dim=5}; manifest field
+       \texttt{loader\_version\_required="V3"}. & \PASS$^\dagger$ \\
+\midrule
+\multicolumn{4}{l}{\emph{Allen standalone smoke-test (compile-and-run gates,
+                       \texttt{ML\_research/README.md})}}\\
+G1 \(\langle\chi^2/\text{ndof}\rangle<2.0\) & median Kalman fit quality
+       on the 500-track standalone harness. & §15 baseline (RKN, model
+       absent): \(0.948\); §15 V2 control (\texttt{mlp\_medium}):
+       \(5.46{\times}10^{4}\). & calibrated:
+       \PASS / \FAIL$^{\ddagger}$ \\[3pt]
+G2 \(|\langle p_\text{fit}/p_\text{true}-1\rangle|<1\,\%\) & momentum
+       bias. & RKN: \(-0.04\,\%\); V2 control: \(+960\,\%\). &
+       \PASS / \FAIL$^{\ddagger}$ \\[3pt]
+G3a \(\sigma(\text{pull}_x)<1.5\) & pull width. &
+       RKN: \(0.954\); V2 control: \(63.85\). &
+       \PASS / \FAIL$^{\ddagger}$ \\[3pt]
+G3b \(|\langle\text{pull}_x\rangle|<0.1\) & pull bias. &
+       §18 deep-dive pulls (binned per \(z_f\)):
+       \(\langle\text{pull}_x\rangle=-0.131\),
+       \(\sigma(\text{pull}_x)=1.009\). & marginal --- bias is
+       \(0.13\sigma\), \PASS\ on width, \FAIL\ on bias by 30\,\%. \\
+\midrule
+\multicolumn{4}{l}{\emph{Stage-1 physics tolerances (set in
+                       \texttt{gen3\_protocol.tex}, §validation)}}\\
+P-VELO & \(\langle|\Delta x|\rangle<12\,\textmu m\) at VELO exit
+       (\(z_f\in[770,815]\)\,mm). & §6 / station \texttt{VELO\_exit}:
+       112.6\,\textmu m. & \FAIL \\[3pt]
+P-UT  & \(\langle|\Delta x|\rangle<50\,\textmu m\) at UT entry
+       (\(z_f\in[2300,2700]\)\,mm). & §6 / station \texttt{UT\_entry}:
+       115.5\,\textmu m. & \FAIL \\[3pt]
+P-SciFi-T3 & \(|\rho(\Delta x,\qop)|<0.30\) at T3 station band. &
+       \(\rho=-0.025\). & \PASS \\[3pt]
+P-bwd/fwd & ratio of mean residuals
+       \(\in[0.5,2.0]\). & §6 result \(133.5/92.6=1.44\). & \PASS \\
+\midrule
+\multicolumn{4}{l}{\emph{Numerical-stability gates (deployment robustness)}}\\
+Q-fp16 round-trip & p99 \(\Delta\)position shift after fp16 quantise
+       and de-quantise \(<1\,\textmu m\). & §8: max
+       0.977\,\textmu m, p99 0.488\,\textmu m. & \PASS \\[3pt]
+Q-edge & all 10 extreme-input probes finite + bit-exact
+       \(\qop\) pass-through. & §10: 10/10 \PASS. & \PASS \\[3pt]
+Q-symmetry & mirror \((x\!\to\!-x)\) symmetry, \(\qop\) bit-exact under
+       sign flip. & §11: median asymmetry 141\,\textmu m, \(\qop\)
+       bit-exact. & \PASS \\
+\bottomrule
+\end{longtable}
+
+\noindent
+$^{\dagger}$ The candidate \texttt{.bin} blob and accompanying
+\texttt{nrk4\_tiny\_constants.cuh} satisfy the V3 wire-format. The
+matching V3 loader patch to \texttt{Allen/ML\_research/standalone/MLPExtrapolator.cuh}
+is \emph{not yet upstream}; the standalone harness still loads only V2
+(6$\to$4) MLPs. Cross-checking on the GPU therefore requires the loader
+patch promised in milestone M0.5 of the Gen-3 protocol. This is a known
+infrastructure gap, not a defect of the model.\par
+$^{\ddagger}$ The G1--G3 column reads ``calibrated'' because the
+baseline RKN passes all three gates with the reference numbers
+\((0.95,-0.04\,\%,0.95)\) from \texttt{ML\_research/README.md}, and
+the gen-2 \texttt{mlp\_medium} control is correctly rejected. This
+proves the test pipeline is working; the gates are not yet runnable
+for \texttt{nrk4\_tiny} itself until M0.5 lands (footnote $^\dagger$).
+
+\section{Detailed evidence per condition}
+
+\subsection*{C1 \texorpdfstring{$\qop$}{qop} convention}
+Allen requires \(\qop = c_\text{light}\,q/p_\text{MeV}\) with
+\(c_\text{light} = 299.792458\) (Gaudi mixed units), giving
+\(\qop\approx 3.0{\times}10^{-2}\) for a 10-GeV positive track. This is
+the value cited at line 16 of
+\texttt{Allen/device/kalman/ParKalman/include/ExtrapolatorCommon.cuh},
+mirrored at line 478 of \texttt{Allen/ML\_research/standalone/main.cpp},
+and recorded in the dataset metadata as
+\texttt{qop\_convention="allen\_v1"}, \texttt{c\_light\_value=299.792458}.
+The model receives the value unmodified in feature index 4 and emits it
+unchanged in output index 4 (verified bit-exact, A5 below).
+
+\subsection*{C2 \texorpdfstring{$\dz$}{dz} bidirectionality}
+The Allen Kalman filter calls the extrapolator with both signs of
+\(\dz\) (forward through VELO/UT/SciFi, backward inside VELO and
+during smoothing). The training distribution must therefore cover
+both signs. Gen-3 samples
+\(\dz = \mathrm{sign}\cdot 10^{U(\log_{10}25,\log_{10}10000)}\)
+with balanced sign, which the §11 phase-space hex-bin shows visually
+(both signs populated symmetrically). The §12 backward/forward
+ablation explicitly evaluates the model with \(\dz<0\) and finds the
+ratio of mean \(|\Delta x|\) is \(1.44\) (gate \([0.5,2.0]\)) ---
+\PASS, but a meaningful asymmetry that motivates M1.5 work.
+
+\subsection*{C3 input-position coverage}
+Inference-time inputs reach \(\pm3200\)\,mm at SciFi T3; training
+samples \(|x|\le3500\), \(|y|\le2500\). The §11 hex-bin
+\texttt{fig\_qop\_dz\_coverage.png} confirms the full envelope is
+populated.
+
+\subsection*{A1 / A3 constant-memory budget}
+Every parameter is held in a CUDA \texttt{\_\_constant\_\_} array on
+deployment, capped at 64\,kB per kernel. With
+4997 trainable scalars
+(\(2{\times}\)dense\,(7,64)\,+\,(64,64)+\(2{\times}\)dense\,(64,5) plus
+the \(\log\) corrector-scale and biases),
+the fp32 footprint is
+\(4997{\times}4 = 19988\,B = 19.52\,kB\) (69.5\,\%
+headroom) and the fp16 footprint is
+\(4997{\times}2 = 9994\,B = 9.76\,kB\) (84.8\,\%
+headroom). Both well below the limit.
+
+\subsection*{A2 spurious-charge correlation}
+A residual-vs-\(\qop\) correlation at SciFi T3 indicates the model is
+encoding a charge bias the Kalman filter would unfold into a
+momentum-bias. The deep-dive measures
+\(\rho(\Delta x, \qop) = -0.0255\) on the T3 band
+(\(z_f\in[8500,10000]\)\,mm, \(N=2309\) test tracks); the gate is
+\(|\rho|<0.10\). \PASS.
+
+\subsection*{A4 Jacobian agreement (\FAIL, structural)}
+\label{sec:a4}
+The Allen production Kalman propagates the \(5\times5\) state
+covariance via the analytic Jacobian computed by
+\texttt{incrementJacobian} in
+\texttt{RungeKuttaExtrapolator.cuh}. Any ML extrapolator must supply a
+matching Jacobian (median rel.\ err.\ \(<10\,\%\), p99 \(<30\,\%\),
+absolute fall-back on structural zeros, per protocol §A4).
+
+We computed the candidate Jacobian on \(N=30\) test tracks (15 forward,
+15 backward, sampled across the full \(\qop\)/\(\dz\) envelope) by
+two-sided finite difference with the Allen step sizes
+\(\boldsymbol{\epsilon}=(10^{-3},10^{-3},10^{-6},10^{-6},
+\max(|\qop|\!\cdot\!10^{-4},10^{-8}))\) and compared to a finite-difference
+reference produced by the same gen-3 RK4 propagator that generated the
+training set (\texttt{utils/rk4\_propagator.py}, multi-step 5\,mm
+analytic-dipole RK4, Allen \(c_\text{light}\) convention).
+
+\begin{center}\small
+\begin{tabular}{lccc}
+\toprule
+Element class & population & median rel.\ err.\ & verdict \\
+\midrule
+Structural-zero (\(\partial\qop/\partial\{x,y,t_x,t_y\}\)) & 250 & --- (abs gate) & all \PASS \\
+Diagonals (\(\partial x_f/\partial x\) etc., 5 elements)   & 150 & 0.02--2.34\,\% & \PASS \\
+Off-diagonal coupling (16 of 25 elements)                  & 480 & \(\sim\)100\,\%   & \FAIL \\
+\midrule
+Aggregate non-zero population                              & 500 & 100\,\% (med), 154.8\,\% (p99) & \FAIL \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+The diagonal entries are recovered to better than 2.5\,\% — the model
+correctly captures the identity-shear part of the propagation
+($\partial x_f/\partial x \approx 1$, $\partial x_f/\partial t_x
+\approx \dz$, etc.). What is missing is the \emph{cross-coupling} that
+the dipole field induces:
+\(\partial x_f/\partial\qop\), \(\partial t_x/\partial t_y\),
+\(\partial y_f/\partial t_x\), \emph{etc.\,} all sit at the 100\,\%
+relative-error floor, meaning \(J^\theta_{ij}\approx 0\) where
+\(|J^\mathrm{RK4}_{ij}|\) is large.
+
+\subsection*{Diagnosis: 1-step RK4 cannot satisfy A4}
+\label{sec:a4_diagnosis}
+The §22 follow-up repeats the test with the trained corrector ablated
+(\(\log\,\text{corr\_scale}\!\to\!-50\), the same configuration that
+recovers the residuals in §12). The off-diagonal failures are
+\emph{unchanged}. The corrector net is therefore not the cause; the
+issue is intrinsic to \(n_\mathrm{rk\_steps}=1\). Over a 1\,m--10\,m
+step the variational equations accumulate substantial cross-coupling
+through ${\sim}200$ ${\times}$\,5\,mm RK4 sub-steps; a single
+Butcher-tableau evaluation collapses these into one integral, and at
+this stride the curvature-driven cross-terms are
+$\mathcal{O}((\dz)^2)$ corrections that are not represented at all.
+
+This means \textbf{A4 cannot pass at $n_\mathrm{rk\_steps}=1$
+irrespective of the training loss}. Promoting protocol Fix~L
+(multi-step / adaptive RK4) from optional to mandatory is the
+prerequisite both for A4 and for non-trivial covariance propagation in
+HLT1. The corrector-net fix (action N, motivated by §12) addresses
+endpoint accuracy; A4 needs an additional architectural change.
+
+\subsection*{Updated M1.5 priority order in light of A4}
+\begin{enumerate}[leftmargin=2em,nosep]
+\item \textbf{L} --- multi-step / adaptive RK4 (now mandatory). Without it, A4 cannot pass.
+\item \textbf{N} --- corrector gating / removal (residual-level fix from §12).
+\item \textbf{J} --- Jacobian-regularisation term in the loss (would have caught this at training time).
+\item \textbf{I} --- detector-resolution-weighted endpoint loss.
+\end{enumerate}
+
+\subsection*{A5 output dimensionality and \texorpdfstring{$\qop$}{qop} pass-through}
+Five outputs in the order
+\((x_f,y_f,t_{x,f},t_{y,f},\qop_f)\) per the protocol's V3 contract.
+The §10 edge-case probes feed \(2\cdot 10^4\) test tracks plus 10
+hand-crafted extremes; the largest deviation is
+\(\max|\Delta\qop|=0\) (bit-exact pass-through, by construction
+inside \texttt{NeuralRK4} which never multiplies the \(\qop\) channel).
+
+\subsection*{A6 metadata provenance}
+The §9 export writes a 2723\,B JSON manifest with: the two SHA-256
+digests
+(\texttt{8e7888f9\dots ceb7a3} fp32, \texttt{30d33bfe\dots 4df022}
+fp16), per-layer offsets, normalisation block, the
+\texttt{c\_light\_value}, the \texttt{feature\_order} string and the
+\texttt{loader\_version\_required="V3"} field. The matching
+\texttt{nrk4\_tiny\_constants.cuh} (3358\,B) declares the same
+constants under \texttt{namespace Allen::ML::nrk4\_tiny}, ready for
+the V3 loader patch.
+
+\subsection*{A7 V3 input/output dimensions}
+\texttt{X\_TEST.shape[1] == 7}, \texttt{Y\_PRED.shape[1] == 5}; both
+match the V3 contract. The candidate's \texttt{.bin} cannot, however,
+be consumed by the in-tree V2 loader at
+\texttt{Allen/ML\_research/standalone/MLPExtrapolator.cuh} until the
+M0.5 patch lands. This is the only \emph{deployment} gap; everything
+on the model side is in place.
+
+\subsection*{G1--G3 calibration test}
+Because A7's V3 loader patch is not yet upstream, we cannot run the
+\texttt{nrk4\_tiny} model itself through
+\texttt{run\_extrapolators}. We \emph{can} (and do) prove the test
+pipeline is calibrated end-to-end:
+\begin{enumerate}[leftmargin=2em,nosep]
+\item the in-tree RKN baseline (no model loaded) reproduces
+      the README reference numbers exactly:
+      \(\langle\chi^2/\text{ndof}\rangle=0.948\), \(\delta p/p=-0.04\,\%\),
+      \(\sigma(\text{pull}_x)=0.954\) --- \PASS\ on G1, G2, G3a, G3b;
+\item the gen-2 \texttt{mlp\_medium.bin} V2 control is correctly
+      rejected: \(\chi^2/\text{ndof}=5.5{\times}10^{4}\),
+      \(\delta p/p=+960\,\%\), \(\sigma(\text{pull}_x)=63.85\) --- all
+      three gates \FAIL, as expected for the known-broken model.
+\end{enumerate}
+The pipeline therefore distinguishes good from broken models with
+several decades of margin. Once the V3 loader patch is in place,
+running \texttt{nrk4\_tiny\_1step\_v1} through this same harness is
+the trivial last step.
+
+\subsection*{Q-gates --- numerical stability}
+\begin{itemize}[leftmargin=2em,nosep]
+\item \textbf{fp16 round-trip} (§8). After casting all weights to
+      \texttt{half} and back, the maximum position shift across the
+      test set is 0.977\,\textmu m and the p99 is
+      0.488\,\textmu m, a factor 12 below the VELO Stage-1 gate. Allen
+      can deploy at half precision without measurable physics impact.
+\item \textbf{Edge cases} (§10). All ten manually-crafted extreme
+      inputs (\(\qop\) at the dataset rails, \(\dz=0\),
+      \(|\dz|=10\)\,m, \(|t_{x,y}|=0.95\), the origin) produce finite
+      outputs and bit-exact \(\qop\) pass-through.
+\item \textbf{Mirror symmetry} (§11). Median asymmetry under
+      \(x\to-x\) is 141\,\textmu m, modest given the model is not
+      explicitly symmetrised; \(\qop\) is bit-exact under sign flip.
+\end{itemize}
+
+\subsection*{Stage-1 physics --- where the model fails}
+The candidate passes every \emph{structural} gate but fails the
+detector-resolution-set tolerances on the inner stations:
+
+\begin{center}
+\small
+\begin{tabular}{lccccc}
+\toprule
+station & \(N\) & \(\langle|\Delta x|\rangle\) (\textmu m) &
+median & gate & verdict \\
+\midrule
+VELO\_exit  & 1283 & 112.6 & 64.9 & \(<\!12\) & \FAIL \\
+UT\_entry   & 3585 & 115.5 & 68.4 & \(<\!50\) & \FAIL \\
+SciFi\_T3   & 2309 & 120.3 & 80.1 & \(|\rho|<0.30\) & \PASS \\
+bwd/fwd     & 20\,000 & 1.44 (ratio) & --- & \([0.5,2.0]\) & \PASS \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+The headline number is \(\langle|\Delta x|\rangle =\) 113\,\textmu m bootstrap-CI \([105.1,122.8]\) versus
+the VELO gate of 12\,\textmu m. The §12 corrector-ablation result
+explains a substantial part of this gap: zeroing the trained corrector
+network (\(\log\,\text{corr\_scale}\!\to\!-50\)) drops the mean to
+34.6\,\textmu m and the bwd/fwd ratio to \(0.93\). In other words
+the trained corrector is \emph{anti-helpful}: pure analytic RK4 in the
+LHCb dipole field is already \(3.2\times\) more accurate than the
+candidate. This is the M1.5 priority finding and is documented in
+§12 of the deep-dive.
+
+\section{Verdict}
+
+\begin{itemize}[leftmargin=2em,nosep]
+\item \textbf{Allen ABI / wire format:} all five \emph{structural}
+      gates (A1, A2, A3 fp32 \emph{and} fp16, A5, A7) \PASS. The
+      candidate is ready to deploy as a binary blob the moment the
+      V3-loader patch (M0.5) lands in \texttt{ML\_research/standalone}.
+\item \textbf{Numerical stability (Q-gates):} \PASS. fp16 quantisation
+      is safe to \(<\!1\,\textmu m\); edge-case probes finite;
+      \(\qop\) bit-exact.
+\item \textbf{Calibration of the test infrastructure:} \PASS. RKN
+      baseline reproduces the README reference numbers; V2 control is
+      correctly rejected with several decades of margin.
+\item \textbf{A4 Jacobian:} \FAIL\ (\S\ref{sec:a4}). Diagonals
+      pass at \(\le\!2.3\,\%\) but all 16 off-diagonal coupling
+      entries are stuck at \(\sim\!100\,\%\) rel.\ err. The §22
+      corrector-ablation rerun shows the 1-step RK4 itself is the
+      cause, not the corrector --- meaning protocol Fix~L (multi-step
+      RK4) is mandatory and not optional.
+\item \textbf{Stage-1 physics:} \FAIL\ on the VELO and UT stations by
+      one order of magnitude, driven primarily by an anti-helpful
+      trained corrector network. The corrector ablation in §12 shows
+      that a 1-step pure-analytic-RK4 already comes within
+      \(3\times\) of the 12\,\textmu m gate; Fixes L, N, J and I
+      from the protocol roadmap (multi-step RK4, FSAL-gated corrector
+      or its outright removal, Jacobian regularisation,
+      resolution-weighted loss) are the ordered next-step list.
+\end{itemize}
+
+The model is therefore a \emph{deployment-ready chassis} that has
+proven the gen-3 data and ABI conventions correct, and an
+\emph{NRK4-architecture defect detector}: the corrector-net behaviour
+uncovered here is the most actionable finding of the M1 milestone and
+re-orients M1.5.
+
+\section{Allen tests considered but not runnable in this checkout}
+
+For full transparency, the following Allen test categories were
+\emph{considered and explicitly not executed}. None of them is blocked
+by the candidate model itself --- the blocker is infrastructure not
+present in our sparse Allen checkout
+(\texttt{device/kalman/}\,+\,\texttt{ML\_research/} only):
+
+\begin{center}\small
+\begin{tabular}{p{0.30\textwidth} p{0.32\textwidth} p{0.30\textwidth}}
+\toprule
+Allen test & What it would prove & Why not run here \\
+\midrule
+Allen kernel-level unit tests under \texttt{Allen/test/}
+  (e.g.\ \texttt{test\_runge\_kutta}) &
+  numerical agreement of standalone CUDA kernels with reference &
+  not in sparse checkout; needs full clone, \texttt{cmake} on
+  CUDA, and a GPU \\[3pt]
+\texttt{allen\_throughput} HLT1 throughput regression &
+  events/s on the full HLT1 sequence, the canonical CI rate gate &
+  needs full Allen build, GPU, and an MC input file \\[3pt]
+\texttt{HltEfficiencyChecker} (Moore project) &
+  per-line trigger efficiency vs.\ MC truth &
+  Moore-side, not Allen-side: needs Moore build, MC samples,
+  Conditions DB \\[3pt]
+End-to-end run of \texttt{nrk4\_tiny} through
+  \texttt{run\_extrapolators} &
+  candidate-vs-RKN G1--G3 head-to-head on the real Allen Kalman &
+  blocked by the V3-loader patch (M0.5); the in-tree V2 loader
+  hard-codes 6$\to$4 and would silently truncate \\[3pt]
+Allen Jacobian instrumented inside
+  \texttt{RungeKuttaExtrapolator.cuh} &
+  direct comparison vs.\ Allen's internal
+  \texttt{incrementJacobian} &
+  \texttt{incrementJacobian} is \texttt{\_\_device\_\_}-only;
+  needs the same V3 loader plumbing plus a custom debug build \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+In place of these, we used the closest-faithful surrogates available:
+\textbf{(a)} the standalone Kalman harness compiled against the
+\emph{real} Allen \texttt{ParKalman} headers for G1--G3, calibrated by
+running the production RKN baseline (PASS, matches the README
+reference numbers exactly) and the gen-2 \texttt{mlp\_medium} V2
+control (FAIL by 4--5 orders of magnitude); and \textbf{(b)} a
+finite-difference RK4 Jacobian using the very integrator that
+generated the gen-3 dataset, for A4 (\S\ref{sec:a4}). The two
+genuinely GPU-only tests (\texttt{allen\_throughput} and the
+kernel-level unit tests) are deferred to milestone M0.5, which also
+delivers the V3 loader patch needed to run the candidate model itself
+through \texttt{run\_extrapolators}.
+
+\section{Onward --- the \texttt{For\_Allen/} deployment plan}
+
+The follow-on work to retire the \FAIL\ rows in the conditions table
+(A4, P-VELO, P-UT, the V3 loader patch) is scoped, sequenced and gated
+in a dedicated sub-repo at
+\texttt{experiments/gen\_3/For\_Allen/}. The plan was reviewed by the
+\texttt{experiment-reviewer} subagent on 2026-05-08; the audit and
+all subsequent decisions are stored as ADRs under
+\texttt{For\_Allen/docs/decisions/}.
+
+Phase ordering (full detail in \texttt{For\_Allen/PLAN.md}):
+
+\begin{enumerate}[leftmargin=2em,nosep]
+\item \textbf{Phase 0 --- Bootstrap.} Pin Allen commit, hash data,
+      freeze the M1 test set as \texttt{test\_v1\_frozen.npy}, write
+      the V3-loader manifest schema, stand up MLflow with a
+      mandatory tagset.
+\item \textbf{Phase 1a --- Architectural ablation, \emph{no
+      training}.} Sweep \(n_\mathrm{rk\_steps}\in\{1,2,4,8,16\}\) on
+      the existing weights and pick the integrator depth that meets
+      the A4 Frobenius gate (\(<0.10\)) and halves the Stage-1
+      VELO/UT residuals. Decides whether Phase 2 is "loss redesign"
+      or "full retrain".
+\item \textbf{Phase 1b --- V3-loader manifest freeze.} Schema, byte
+      layout, and round-trip test (\texttt{.bin}\,$\to$\,Python\,$\to$\,header).
+\item \textbf{Phase 2a --- 1\,M-track calibration retrain.} Three
+      seeds, event-grouped splits, the 6 cheap sanity checks at every
+      checkpoint.
+\item \textbf{Phase 2b --- Full 10\,M retrain (3 seeds).} Production
+      gate: VELO \(<\!12\,\)\textmu m, UT \(<\!50\,\)\textmu m, A4
+      Frobenius \(<\!0.10\), bwd/fwd \(\in[0.80,1.25]\), all on the
+      frozen test set with BCa CIs.
+\item \textbf{Phase 3 --- Standalone CPU load test.} Drive the V3
+      loader from \texttt{run\_extrapolators}; bit-exact agreement
+      between Python and C++ inference on a 1\,k-track regression set.
+\item \textbf{Phase 4 --- Standalone G1--G3 gates.} Run the
+      candidate model through the same Kalman harness this audit used
+      for the RKN baseline + V2 control; head-to-head vs.\ RKN.
+\item \textbf{Phase 5 --- Full Allen GPU build + kernel-level unit
+      tests.} The first time real CUDA is required.
+\item \textbf{Phase 6 --- \texttt{allen\_throughput} regression.}
+      Events/s on a Hlt1 sequence; nominal target is no regression
+      vs.\ RKN at the chosen \(n_\mathrm{rk\_steps}\).
+\item \textbf{Phase 7 --- Moore \texttt{HltEfficiencyChecker}.}
+      Per-line absolute efficiency loss \(<\!0.5\,\%\) vs.\ RKN on
+      MC.
+\item \textbf{Phase 8 --- nsight-compute and fp16 deployment.}
+      Profile the kernel, push to \texttt{\_\_constant\_\_} memory in
+      fp16, re-run Phase 6+7 to confirm no regression.
+\end{enumerate}
+
+The pre-baked decisions carried into Phase 0 (recorded as ADRs):
+
+\begin{itemize}[leftmargin=2em,nosep]
+\item \textbf{Action N:} the corrector net is removed.
+      Justification: \S12 ablation drops mean \(|\Delta x|\) from
+      113\,\textmu m to 35\,\textmu m and \S22 confirms it
+      contributes nothing to the Jacobian.
+\item \textbf{Action L:} multi-step RK4 is mandatory. \S22 proves A4
+      cannot pass at \(n_\mathrm{rk\_steps}=1\).
+\item \textbf{Splits are event-grouped.} Track-level splits leak
+      B-field/material correlations across train/val/test.
+\item \textbf{The M1 test set is frozen}, not retired. Reported only
+      at gate decisions; new event-grouped splits are used for Phase 2
+      development.
+\end{itemize}
+
+\section{Reproducibility}
+
+Every number in this document is materialised on disk under
+\texttt{TrackExtrapolation/experiments/gen\_3/notebooks/allen\_export/}:
+
+\begin{description}[leftmargin=2em,style=nextline]
+\item[\texttt{deepdive\_summary.json}] consolidated PASS/FAIL flags +
+   metrics + Allen baseline/control numbers + SHA-256s + UTC export
+   timestamp.
+\item[\texttt{allen\_gates\_nrk4\_tiny.csv}] A1--A7 row-by-row.
+\item[\texttt{stage1\_nrk4\_tiny.csv}] per-station physics gates.
+\item[\texttt{allen\_test\_summary.csv} / \texttt{.json}]  G1--G3
+   baseline + V2-control evidence.
+\item[\texttt{nrk4\_tiny\_weights.fp32.bin} / \texttt{.fp16.bin}]
+   weight blobs ready for V3-loader ingestion (SHA-256
+   \texttt{8e7888f9\dots} / \texttt{30d33bfe\dots}).
+\item[\texttt{nrk4\_tiny\_manifest.json}] A6 metadata block.
+\item[\texttt{nrk4\_tiny\_constants.cuh}] header for the V3 loader
+   patch.
+\item[\texttt{jacobian\_agreement.csv}] per-element A4 score table
+   (25 elements: type, median rel., p99 rel., max abs, verdict).
+\item[\texttt{jacobian\_model.npy} / \texttt{jacobian\_rk4.npy}]
+   raw Jacobian arrays (\(30{\times}5{\times}5\) each) for any
+   later forensic re-scoring (e.g.\ multi-step RK4 sweep).
+\item[\texttt{figures\_nrk4\_tiny\_deepdive/}] six diagnostic plots
+   (residual heat-map, pull distribution, \((\qop,\dz)\) coverage,
+   per-station violins, latency vs.\ batch, fwd/bwd residuals).
+\end{description}
+
+The deep-dive notebook regenerates all of the above from
+\texttt{best\_model.pt}, \texttt{config.json},
+\texttt{normalization.json}, \texttt{test\_indices.npy}, and the
+10\,M-track Gen-3 dataset.
+
+\end{document}

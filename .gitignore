@@ -1,0 +1,38 @@
+# === Large data — STAYS LOCAL, never committed (regenerable from docs/plans/GENERATION_SPEC.md) ===
+*.npz
+*.npy
+!candidate/**/test_indices.npy          # small (164 kB): the frozen split for the locked candidate
+data/
+**/data/
+field_maps/
+twodip.rtf
+
+# === Experiment tracking / heavy checkpoints (only the locked candidate is tracked) ===
+mlruns/
+trained_models/
+!candidate/                              # the ONE locked deployment candidate is tracked
+
+# === Python ===
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# === LaTeX build cruft (keep .tex + .pdf) ===
+*.aux
+*.log
+*.out
+*.toc
+*.nav
+*.snm
+*.vrb
+
+# === Compiled standalone harness binaries ===
+For_Allen/exercise_pr/standalone_test_nrk
+*.o
+run_extrapolators

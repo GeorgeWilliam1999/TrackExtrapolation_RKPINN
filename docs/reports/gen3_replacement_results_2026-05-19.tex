@@ -1,0 +1,617 @@
+% =============================================================================
+% Gen-3 consolidated replacement results (2026-05-19)
+% Preamble copied verbatim from gen3_m1_results.tex
+% =============================================================================
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=22mm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage{caption}
+\usepackage{hyperref}
+\usepackage{tabularx}
+\usepackage{array}
+\hypersetup{colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black}
+
+% Highlighted-row helper for the consolidated table
+\definecolor{rowhl}{HTML}{FFF6CC}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\title{Gen-3 Consolidated Results:\\
+       Status of the Full Neural Replacement of the LHCb RK Extrapolator}
+\author{TrackExtrapolation / gen-3 \\ \small consolidated 2026-05-19}
+\date{2026-05-19}
+
+\begin{document}
+\maketitle
+
+% -----------------------------------------------------------------------------
+\begin{abstract}
+We consolidate three generations of LHCb track-extrapolation experiments
+against the canonical project goal: \emph{replace} the C++ adaptive
+Runge--Kutta extrapolator with a neural network whose inference path
+contains no analytic Lorentz right-hand side and no magnetic-field
+lookup. Under this strict criterion, the best replacement candidate to
+date is \texttt{pinn\_v2\_small\_v1} at $\langle|\Delta x|\rangle =
+0.117$\,mm on the signed-$\Delta z$ test split, with 10\,372 trainable
+parameters
+[source: \texttt{experiments/gen\_3/README.md} \S M1 results].
+The previously-reported best, \texttt{nrk4\_tiny\_1step\_v1} at
+0.113\,mm, is \textbf{demoted from the deployment slot} by
+ADR~0009~\cite{adr0009} on the grounds that it evaluates the analytic
+Lorentz right-hand side and the field map at inference and therefore
+\emph{augments}, rather than \emph{replaces}, the classical
+extrapolator. The PROJECT\_CONTEXT.md minimum gate is $<0.10$\,mm
+position error (ideally $<0.05$\,mm)~\cite{projectcontext}; the current
+best replacement is $\sim 1.17\times$ above the minimum. The gap is
+closable through the six-phase roadmap (R1--R6) in
+REPLACEMENT\_PLAN.md~\cite{replacementplan}. This document supersedes
+the framing -- but not the numerical content -- of
+\texttt{gen3\_m1\_results.tex} (2026-05-08)~\cite{gen3m1}.
+\end{abstract}
+
+% =============================================================================
+\section{Goal and re-framing}\label{sec:goal}
+
+\paragraph{Canonical goal.} PROJECT\_CONTEXT.md states verbatim:
+
+\begin{quote}\itshape
+``Replace the C++ adaptive Runge-Kutta track extrapolator with a faster
+neural network that maintains high accuracy.''
+\hfill\cite{projectcontext}
+\end{quote}
+
+\paragraph{Replacement criterion.} A candidate is a true replacement
+iff, at inference time, the neural network is the \emph{entire}
+mapping
+\[
+  (x, y, t_x, t_y, q/p,\, z_{\mathrm{start}},\, \Delta z)
+  \;\longmapsto\;
+  (x_f, y_f, t_{x,f}, t_{y,f}, q/p_f),
+\]
+with \textbf{no field-map lookup} and \textbf{no analytic Lorentz
+step} on the forward path~\cite{replacementplan, adr0009}. Models
+that wrap a learned residual around a classical RK4 integrator of the
+analytic Lorentz ODE (the \texttt{NeuralRK4} family) are
+\emph{hybrids}: they may be useful as a scaffold or fallback, but they
+do not satisfy the replacement criterion and must not occupy the
+deployment slot.
+
+\paragraph{Re-framing relative to gen3\_m1\_results.tex.} The previous
+results document (\texttt{gen3\_m1\_results.tex}, dated
+2026-05-08~\cite{gen3m1}) presented \texttt{nrk4\_tiny\_1step\_v1} as
+the Stage-1 deployment candidate on the basis of its
+$\langle|\Delta x|\rangle = 113~\mu$m and its single-model passage of
+all four Allen ABI gates at fp32. The numerical content of that
+document is correct and is retained here unchanged; the
+\emph{deployment recommendation} is overturned by ADR~0009. This
+document is the post-ADR-0009 consolidated view. The detailed
+claim-by-claim re-mapping is in~\S\ref{sec:reconciliation}.
+
+% =============================================================================
+\section{Cross-generation results}\label{sec:xgen}
+
+Table~\ref{tab:xgen} lists the headline numbers for every named
+candidate across the three generations, ordered by generation and then
+by mean position error. The \emph{Replacement?} column applies the
+criterion of~\S\ref{sec:goal}: a~\checkmark{} indicates that the
+inference path contains neither field-map nor analytic-Lorentz step;
+a~$\times$ marks hybrids. The marker $\sim$ flags ``fixed-$\Delta z$
+only'' gen-1 numbers that are not directly comparable to the
+variable-$\Delta z$ test splits of gen-2 and gen-3.
+
+\begin{table}[h!]
+\centering
+\caption{Cross-generation replacement-candidate inventory.
+Position error is the mean $|\Delta x|$ on the per-generation test
+split. Gen-1 numbers are on the \emph{fixed} $\Delta z = 8000$\,mm
+slice (marker $\sim$) and are not directly comparable to gen-2/gen-3
+variable-$\Delta z$ numbers. The highlighted row is the current best
+true replacement.}
+\label{tab:xgen}
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\linewidth}{llYcrrY}
+\toprule
+Gen & Model & Family & Repl.? & Params & $\langle|\Delta x|\rangle$ & Source \\
+\midrule
+1 & \texttt{mlp\_tiny\_v1}                   & MLP        & \checkmark         &   2\,660 & $\sim\!22.8~\mu$m   & \cite{gen1eval} \\
+1 & \texttt{mlp\_xlarge\_v1}                 & MLP        & \checkmark         & 430\,980 & $\sim\!27.4~\mu$m   & \cite{gen1eval} \\
+\midrule
+2 & \texttt{mlp\_tiny}                       & MLP        & \checkmark         &   4\,868 & 0.387\,mm           & \cite{gen2readme} \\
+2 & \texttt{mlp\_medium}                     & MLP        & \checkmark         & 102\,788 & 0.305\,mm           & \cite{gen2readme} \\
+2 & \texttt{mlp\_large}                      & MLP        & \checkmark         & 401\,412 & 0.380\,mm           & \cite{gen2readme} \\
+2 & \texttt{pinn\_v2\_medium\_lam0.1}        & PINN\_v2   & \checkmark         &  68\,612 & 0.235\,mm           & \cite{gen2readme} \\
+2 & \texttt{pinn\_v2\_medium\_lam1.0}        & PINN\_v2   & \checkmark         &  68\,612 & 0.322\,mm           & \cite{gen2readme} \\
+2 & \texttt{neural\_rk4\_small\_1step}       & NeuralRK4  & $\times$ (hybrid)  &  17\,925 & 0.125\,mm           & \cite{gen2readme} \\
+\midrule
+3 & \texttt{mlp\_small\_v1\_broken}          & MLP        & \checkmark (broken)&  18\,076 & 18.41\,mm           & \cite{gen3readme} \\
+3 & \texttt{mlp\_medium\_v1\_broken}         & MLP        & \checkmark (broken)&  51\,076 & 5.57\,mm            & \cite{gen3readme} \\
+\rowcolor{rowhl}
+3 & \texttt{pinn\_v2\_small\_v1}             & PINN\_v2   & \checkmark \textbf{(best)} &  10\,372 & \textbf{0.117\,mm} & \cite{gen3readme} \\
+3 & \texttt{\_archive\_hybrid/nrk4\_tiny\_1step\_v1}  & NeuralRK4 & $\times$ (hybrid) &   4\,997 & 0.113\,mm & \cite{gen3readme} \\
+3 & \texttt{\_archive\_hybrid/nrk4\_small\_1step\_v1} & NeuralRK4 & $\times$ (hybrid) &  18\,181 & 0.210\,mm & \cite{gen3readme} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Reading the table.} Three observations.
+\begin{enumerate}
+\item Gen-1 MLPs reached tens of $\mu$m mean position error
+      \emph{on a fixed-$\Delta z$ slice with no $z_0$
+      dependence}~\cite{gen1eval}. That regime is not
+      representative of Allen's call pattern and the gen-1 numbers
+      must not be quoted out of context.
+\item Gen-2 demonstrated for the first time that a true replacement
+      (\texttt{pinn\_v2\_medium\_lam0.1}, 0.235\,mm) is within $\sim
+      2\times$ of the best hybrid
+      (\texttt{neural\_rk4\_small\_1step}, 0.125\,mm) on the
+      variable-$\Delta z$ contract~\cite{gen2readme}.
+\item Gen-3 closes that gap entirely: \texttt{pinn\_v2\_small\_v1}
+      at 0.117\,mm sits \emph{below} the best gen-2 hybrid and is
+      statistically indistinguishable from the best gen-3 hybrid
+      (\S\ref{sec:headline})~\cite{gen3readme}.
+\end{enumerate}
+
+% =============================================================================
+\section{Headline result: PINN\_v2 vs hybrid in gen-3}\label{sec:headline}
+
+The two best gen-3 candidates report~\cite{gen3readme}:
+\[
+\begin{array}{lrl}
+\texttt{pinn\_v2\_small\_v1} & 0.117~\text{mm mean }|\Delta x|,
+                              & 10\,372~\text{parameters (40.5\,kB fp32)} \\
+\texttt{nrk4\_tiny\_1step\_v1} & 0.113~\text{mm mean }|\Delta x|,
+                              & 4\,997~\text{parameters (19.5\,kB fp32)} \\
+\end{array}
+\]
+The difference of $\approx 4~\mu$m on a $\sim 117~\mu$m baseline is
+inside the noise budget of the F2 heavy-tail
+artefact~(\S\ref{sec:f2})~\cite{gen3readme}: the same
+\texttt{nrk4\_tiny\_1step\_v1} checkpoint measured on the
+train/val/test splits gives $|\Delta x|$ values of $125$/$122$/$113~\mu$m
+respectively -- a spread of $12~\mu$m on the same model and the same
+metric. The $4~\mu$m gap between PINN\_v2 and NRK4 is smaller than
+that intra-model split-to-split variability and is therefore not
+significant.
+
+\paragraph{Operational conclusion.} The principal reason to retain the
+hybrid -- a clear accuracy advantage at matched parameter count --
+\emph{has evaporated under the gen-3 data contract}. A true
+replacement is competitive with the best hybrid today, with only
+$\sim 17\%$ of headline error to close to reach the
+PROJECT\_CONTEXT.md $<0.10$\,mm minimum gate. The hybrid is no longer
+the deployment candidate~\cite{adr0009, cleanuplist}.
+
+% =============================================================================
+\section{What is known to be broken and why}\label{sec:broken}
+
+Three quantitative pathologies block the current best replacement
+from clearing the $<0.10$\,mm gate. Each has a specific fix scheduled
+in REPLACEMENT\_PLAN.md~\S 4~\cite{replacementplan}.
+
+\subsection{MLP collapse (Fix M1)}\label{sec:m1collapse}
+
+The gen-3 MLP recipe was inherited verbatim from gen-2 with a 6-dim
+input $[x, y, t_x, t_y, q/p, \Delta z]$. The gen-2 contract was
+forward-only ($\Delta z>0$) and depth-fixed, so the input was
+sufficient. The gen-3 contract is signed
+$\Delta z \in [-10\,000, +10\,000]$\,mm with $z_0$
+sampled across the full LHCb $z$-range~\cite{gen3readme}. With no
+sign or $z_0$ input, the network cannot distinguish forward from
+backward extrapolation and cannot account for the $\sim 15\times$
+variation of $|B_y|$ between the fringe and the field-map peak.
+
+The empirical signature is a 1--2 order-of-magnitude regression
+relative to the corresponding gen-2 MLP~\cite{gen2readme,
+gen3readme}:
+\[
+\underbrace{0.305~\text{mm}}_{\texttt{mlp\_medium}~\text{(gen-2)}}
+\;\longrightarrow\;
+\underbrace{5.57~\text{mm}}_{\texttt{mlp\_medium\_v1\_broken}~\text{(gen-3)}}
+\;\sim 18\times.
+\]
+Fix M1~\cite{replacementplan} prescribes a 7-dim input
+$[x, y, t_x, t_y, q/p, z_{\mathrm{start}}, \Delta z]$ plus
+engineered features $\log_{10}(|\Delta z|/100)$ and
+$\mathrm{sign}(\Delta z)$, training on the full 10\,M corpus rather
+than the 200\,k subset used in M1. The expected outcome is recovery
+to $\sim 0.3$\,mm at minimum, ideally $\sim 0.15$\,mm.
+
+\subsection{Loss heavy-tail (Fix L1)}\label{sec:f2}
+
+Quoted directly from gen-3 README~\S F2~\cite{gen3readme}: running
+the same \texttt{nrk4\_tiny\_1step\_v1} checkpoint through the same
+\texttt{validate()} function on each split gives
+\begin{center}
+\begin{tabular}{lrrr}
+\toprule
+Split & loss (squared, normalised) & $|\Delta x|$ (mm) & pos\_rms (mm) \\
+\midrule
+val   & $1.426\times 10^{-5}$ & 0.122 & 1.15 \\
+test  & $1.918\times 10^{-7}$ & 0.113 & 0.66 \\
+train & $2.162\times 10^{-4}$ & 0.125 & 2.64 \\
+\bottomrule
+\end{tabular}
+\end{center}
+The loss varies by a factor of $1100\times$ between splits while
+mean $|\Delta x|$ varies by less than $10\%$. The cause is a
+heavy-tail in the per-track residual: $\ll 1\%$ of high-$|q/p|$,
+large-$|\Delta z|$, backward-extrapolated tracks each contribute
+$\sim 10^4\times$ the weight of a typical track under squared-MSE,
+and the count of such tracks fluctuates between splits.
+
+\emph{Implication.} The squared-MSE loss is \textbf{not} a valid
+quantitative selection metric on the signed-$\Delta z$
+contract~\cite{gen3readme}. Fix L1~\cite{replacementplan} replaces
+it with log-cosh training loss and median-$|\Delta x|$ selection;
+all R1--R6 results will be reported with mean, median, 68\%, 95\%,
+99\% quantiles of $|\Delta x|$ and $|\Delta\,\text{slope}|$.
+
+\subsection{PINN\_v2 parameter starvation (Fix P1)}\label{sec:p1}
+
+\texttt{pinn\_v2\_small\_v1} has 10\,372 trainable parameters and
+was trained on a 200\,k-track subset of the 10\,M
+corpus~\cite{gen3readme}. The gen-2 PINN\_v2 family was at
+68\,612 parameters and trained on the full 50\,M; the closest
+analogue across the data-contract change is therefore severely
+under-scaled. Fix P1~\cite{replacementplan} sweeps
+\texttt{hidden\_dims} $\in
+\{[256,256], [256,256,128], [512,256,256]\}$ on the 10\,M corpus
+(largest variant $\sim 200$\,k parameters) at the gen-2-best
+$\lambda_{\mathrm{pde}}=0.1$, with a late-stage $\lambda_{\mathrm{pde}}$
+decay to $0.01$ over the final $20\%$ of training. The target is
+$0.08$--$0.10$\,mm at $\sim 100$--$200$\,k parameters, which would
+clear the PROJECT\_CONTEXT.md minimum gate~\cite{projectcontext}.
+
+% =============================================================================
+\section{What is known to be sound}\label{sec:sound}
+
+\subsection{Pure RK4 baseline on the gen-3 7-input contract}
+
+Pure classical RK4 of the analytic Lorentz ODE on the gen-3
+formulation -- i.e. \texttt{nrk4\_tiny\_1step\_v1} evaluated at
+epoch~1 \emph{before any learning has occurred} -- delivers
+$\langle|\Delta x|\rangle = 47~\mu$m on the test set with
+\textbf{zero trainable parameters}~\cite{gen3readme}. This is the
+gen-3 reference baseline against which all candidates must be
+measured. It is \emph{not} a deployment candidate: it is exactly the
+C++ classical-RK code we are replacing, instantiated in Python.
+
+\subsection{fp64-autograd Jacobian methodology (ADR 0007)}\label{sec:adr0007}
+
+The original ``structural A4 failure'' that motivated multi-step
+hybrid integrators~\cite{adr0007} was, on re-examination, an
+\textbf{fp32 + finite-difference numerical artefact}: with
+$\varepsilon \sim 10^{-3}$ on a fp32 model evaluated through a
+multi-metre propagation, the finite-difference signal in the small
+off-diagonal Jacobian entries sits at the fp32 round-off floor
+($\sim 10^{-7}$ of the output magnitude), and random sign noise
+produces $\sim 100\%$ relative error. Re-running with the model cast
+to fp64 and the Jacobian computed by autograd gives a Frobenius
+relative error of $7\times 10^{-9}$ against the RK4
+reference~\cite{adr0007}.
+
+This unlocks the use of A4 as a real quantitative gate on the
+\emph{replacement} candidates. The corresponding re-measurement
+across MLP and PINN\_v2 -- using the same fp64-autograd routine
+lifted into a generic \texttt{evaluate\_a4(model, test\_states)}
+utility -- is Phase R2 of the
+roadmap~\cite{replacementplan}.
+
+\subsection{V3 weight-blob export pipeline}
+
+The existing \texttt{For\_Allen/scripts/export\_bin.py} pipeline
+(V2 format on disk, V3 format specified in
+\texttt{For\_Allen/docs/decisions/} and the M1.5 audit) is
+format-compatible across the MLP, PINN\_v2, and NeuralRK4 families
+with only a small architecture-tag change in the
+header~\cite{gen3readme, cleanuplist}. The header magic becomes a
+generic \texttt{NN\_EXTRAP} marker with an \texttt{architecture}
+field $\in \{\texttt{MLP}, \texttt{PINN\_V2},
+\texttt{NRK4}\}$; the per-layer record layout, the fp32/fp16
+quantisation path, and the CRC32/git-hash footer all carry over
+unchanged. Phase R5 is therefore a small follow-up MR, not a
+re-implementation.
+
+% =============================================================================
+\section{Gates against PROJECT\_CONTEXT.md}\label{sec:gates}
+
+Table~\ref{tab:gates} maps the PROJECT\_CONTEXT.md success criteria,
+plus the seven Allen integration constraints A1--A7 inherited from
+the For\_Allen audit, onto the current best measured value. The
+table is the unambiguous answer to ``where do we stand against the
+project's own success criteria today.''
+
+\begin{table}[h!]
+\centering
+\caption{Gates against PROJECT\_CONTEXT.md and the Allen integration
+constraints. ``Unmeasured'' = the corresponding fp64-autograd
+measurement has not been performed on the replacement candidates
+since the methodology was unlocked (see~\S\ref{sec:adr0007}); it is
+scheduled for Phase R2.}
+\label{tab:gates}
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\linewidth}{lYll}
+\toprule
+Gate (source) & Threshold & Best current value & Status \\
+\midrule
+Mean $|\Delta x|$ minimum~\cite{projectcontext}
+   & $< 0.10$\,mm & 0.117\,mm (\texttt{pinn\_v2\_small\_v1})~\cite{gen3readme} & \textbf{close} \\
+Mean $|\Delta x|$ ideal~\cite{projectcontext}
+   & $< 0.05$\,mm & 0.117\,mm (same) & \textbf{fail} \\
+Per-track GPU cost~\cite{projectcontext}
+   & faster than $\sim 2.5~\mu$s C++ RK4 & not yet measured on replacement candidates & \textbf{unmeasured} \\
+Variable $\Delta z$ support~\cite{projectcontext}
+   & full signed $\Delta z \in [-10^4, 10^4]$\,mm & supported in gen-3 data contract & \textbf{pass} \\
+Allen integrable (\texttt{ITrackExtrapolator})~\cite{projectcontext}
+   & drop-in API & MLP family already wired via \texttt{TrackMLPExtrapolator.cpp} & \textbf{pass} (architecturally) \\
+\midrule
+A1 constant memory~\cite{replacementplan}
+   & no per-event alloc & both MLP and PINN\_v2 satisfy by construction & \textbf{pass} \\
+A2 fp32/fp16 round-trip~\cite{replacementplan}
+   & bit-exact reload & existing V3 pipeline & \textbf{pass} \\
+A3 weight blob~\cite{replacementplan}
+   & $\le 64$\,kB & 40.5\,kB (\texttt{pinn\_v2\_small\_v1}, fp32) & \textbf{pass} \\
+A4 Jacobian agreement~\cite{replacementplan, adr0007}
+   & Frob.~rel.~$<\!0.05$, off-diag rel.~$<\!0.20$ & not measured on replacement candidates with fp64-autograd & \textbf{unmeasured} \\
+A5 fp32 inference bit-bound~\cite{replacementplan}
+   & $\le 10^{-4}$ rel.~vs Python & MLP path proven; PINN\_v2 shares arithmetic & \textbf{pass} \\
+A6 GPU per-track cost~\cite{replacementplan}
+   & $\le$ classical RK4 cost & not yet measured & \textbf{unmeasured} \\
+A7 API drop-in~\cite{replacementplan}
+   & no Moore/Allen API change & \texttt{TrackMLPExtrapolator} signature reusable & \textbf{pass} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Status summary.} Three gates are unmeasured (A4, A6, and
+the GPU-cost row of the PROJECT\_CONTEXT.md block). One is fail
+(the $<0.05$\,mm ideal). One is close (the $<0.10$\,mm minimum, at
+$1.17\times$ the threshold). Six are pass. There is no gate that is
+known to be unreachable.
+
+% =============================================================================
+\section{What is next}\label{sec:next}
+
+The six-phase roadmap to deployment is REPLACEMENT\_PLAN.md
+\S 6~\cite{replacementplan}. Each phase produces a specific
+artefact; nothing proceeds without a written verdict from the
+preceding phase.
+
+\paragraph{Phase R1 -- loss metric reform.} Change
+\texttt{models/train.py} to log-cosh loss and \texttt{models/eval.py}
+to report median, 68\%, 95\%, 99\% quantiles of $|\Delta x|$ and
+$|\Delta\,\text{slope}|$; change all selection criteria from
+\texttt{val\_loss} to \texttt{median\_dx\_mm}. Re-evaluate (no
+retraining) the M1 checkpoints on the new metric.
+\emph{Artefact:} a frozen table of mean/median/95\%/99\% numbers
+for \texttt{mlp\_*\_v1}, \texttt{pinn\_v2\_small\_v1}, and the
+archived hybrid checkpoints.
+
+\paragraph{Phase R2 -- A4 Jacobian re-measurement.} Lift the
+fp64-autograd Jacobian routine from
+\texttt{phase1a\_arch\_ablation.py}~\cite{adr0007} into a generic
+\texttt{evaluate\_a4(model, test\_states)} utility; run it on
+\texttt{mlp\_medium\_v1} (broken), \texttt{pinn\_v2\_small\_v1}, and
+the cached fp64 RK45 reference Jacobian.
+\emph{Artefact:} pass/fail verdict on A4 for the two replacement
+candidates. If either passes, true-replacement feasibility is
+empirically established; if neither passes, escalate to Phase R-X
+(Jacobian co-supervision or straight-line residual
+output)~\cite{replacementplan}.
+
+\paragraph{Phase R3 -- MLP modernisation.} Change
+\texttt{models/architectures.py::MLP} input to the 7-dim contract
+plus the two engineered features of \S\ref{sec:m1collapse}; train
+\texttt{mlp\_\{small,medium,large\}\_v2} on the 10\,M corpus, 60
+epochs, log-cosh loss. \emph{Artefact:} at least one MLP at
+$<0.5$\,mm median $|\Delta x|$ with A3-compliant parameter budget,
+or a documented retirement of the MLP family.
+
+\paragraph{Phase R4 -- PINN\_v2 scaling.} Three-way width sweep
+$\times$ 10\,M corpus, 60 epochs, log-cosh loss, cosine-decayed
+$\lambda_{\mathrm{pde}}$ as in~\S\ref{sec:p1}. \emph{Artefact:} at
+least one PINN\_v2 at $<0.10$\,mm median $|\Delta x|$ that also
+passes A4 -- the deployment candidate.
+
+\paragraph{Phase R5 -- bin export + smoke-test bridge.} Re-anchor
+\texttt{For\_Allen/PLAN.md} onto the R4 winner; re-purpose
+\texttt{NRKExtrapolator.cuh} in Allen MR \texttt{!2497} so that the
+inner loop calls a generic \texttt{MLForwardPass(weights, state)}
+rather than the RKN4 ladder; re-run the bit-bound smoke test
+against the new candidate. \emph{Artefact:} V3 weight blob,
+\texttt{NeuralTrackExtrapolator.cuh}, smoke-test verdict
+$\|y_{\text{py}}-y_{\text{cpp}}\|_\infty < 10^{-6}$\,mm in $x,y$.
+
+\paragraph{Phase R6 -- Allen MR + Moore integration.} Standard
+Phases~5--8 of the existing \texttt{For\_Allen/PLAN.md}: throughput
+test in \texttt{hlt1\_pp\_default} (A6), Moore physics test
+acceptance (A4, A5), MR review. \emph{Artefact:} merged Allen MR
+and a Moore physics-test PR.
+
+% =============================================================================
+\section{Reconciliation with prior documents}\label{sec:reconciliation}
+
+This section is the explicit re-mapping between the abstract of
+\texttt{gen3\_m1\_results.tex} (2026-05-08)~\cite{gen3m1} and the
+post-ADR-0009 view. \textbf{The numerical content of the prior
+document is unchanged.} The \emph{deployment recommendation} is
+overturned. Table~\ref{tab:reconcile} is claim-by-claim.
+
+\begin{table}[h!]
+\centering
+\caption{Claim-by-claim reconciliation of
+\texttt{gen3\_m1\_results.tex} (2026-05-08) abstract with the
+post-ADR-0009 view (this document).}
+\label{tab:reconcile}
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\linewidth}{p{0.46\linewidth}p{0.10\linewidth}Y}
+\toprule
+Claim in gen3\_m1\_results.tex abstract & Numerical & Updated status \\
+\midrule
+``\texttt{nrk4\_tiny\_1step\_v1} achieves
+$\langle|\Delta x|\rangle\!\approx\!113~\mu$m at $\sim\!4\,997$
+trainable parameters.''
+   & correct
+   & Number stands. \textbf{Demoted} from M1 winner because it is a
+     hybrid~\cite{adr0009}. \\
+``Two orders of magnitude better than either pure-MLP control.''
+   & correct
+   & Number stands. The MLP controls were
+     \emph{broken}~(\S\ref{sec:m1collapse}); the 2-OOM gap is
+     against a pathological MLP, not against the MLP family
+     itself. Phase R3 will retest. \\
+``Of the five candidates, only \texttt{nrk4\_tiny\_1step\_v1}
+satisfies all four hard ABI gates (A2, A3, A5, A7) at fp32; two more
+become compliant at fp16.''
+   & correct
+   & Number stands. \textbf{Irrelevant} to the deployment slot:
+     ABI compliance of a hybrid does not make the hybrid a
+     replacement. \\
+``None of the five reaches the Stage-1 \emph{physics} tolerance of
+$|\Delta x|<12~\mu$m at the VELO exit.''
+   & correct
+   & Number stands. The Stage-1 $12~\mu$m gate corresponds to the
+     PROJECT\_CONTEXT.md $<0.05$\,mm ideal target~\cite{projectcontext}
+     and remains the stretch goal for Phase R4 / a follow-up
+     campaign. \\
+``M1 is architecturally green-lit but performance red-lit.''
+   & ---
+   & Re-cast: M1 \emph{architecturally surfaced} that the best true
+     replacement (PINN\_v2 at $0.117$\,mm) is already competitive
+     with the best hybrid (NRK4 at $0.113$\,mm), at one fewer order
+     of free parameters in the design space. The performance
+     red-light is real (\S\ref{sec:gates}) and is the target of
+     Phases R3--R4. \\
+``Eight-action M1.5 backlog (M--T) targeting heavy-tail, NRK4
+backward asymmetry, PINN $q/p$ bias, and the 10\,M corpus move.''
+   & ---
+   & Items \textbf{M}, \textbf{P} (loss reform, 10\,M training) are
+     subsumed by Phases R1, R3, R4~\cite{replacementplan}.
+     Items \textbf{N} (NRK4 corrector outside \texttt{\_rhs}) and
+     \textbf{Q} (NRK4 weight-blob export) are \emph{archived} with
+     the hybrid family~\cite{cleanuplist}; the underlying NRK4
+     work continues only as a research baseline. Items
+     \textbf{O} (PINN refactor) and \textbf{R}, \textbf{S},
+     \textbf{T} (Allen kernel, OOD test, MLflow tracking) carry
+     into the R-roadmap unchanged. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{One-line takeaway.} The \texttt{gen3\_m1\_results.tex}
+numbers are correct; its \emph{deployment recommendation} was based
+on a criterion (best ABI-compliant model irrespective of architecture
+class) that has since been tightened to the replacement criterion of
+\S\ref{sec:goal}~\cite{adr0009}. Under the tightened criterion the
+deployment candidate is the R4 PINN\_v2 winner, not
+\texttt{nrk4\_tiny\_1step\_v1}.
+
+% =============================================================================
+\section{Open questions and risks}\label{sec:risks}
+
+Reproduced from REPLACEMENT\_PLAN.md~\S 8~\cite{replacementplan}:
+
+\begin{enumerate}
+\item \textbf{Should we retain a small NeuralRK4 fallback in Allen?}
+      Pro: zero-risk safety net behind a property switch. Con:
+      maintenance burden, confuses the deployment story.
+      \emph{Recommendation:} keep the C++ surface
+      (\texttt{NRKExtrapolator.cuh}), remove the trained Python NRK4
+      from the production candidate list.
+\item \textbf{Is the 10\,M corpus sufficient at the widest PINN\_v2
+      variant?} Unknown: gen-3 has never trained
+      \texttt{[512,256,256]}. If validation curves are still
+      descending at epoch 60 of Phase R4, generate 20\,M.
+\item \textbf{Universal vs station-specialised models?} A single
+      universal model on signed $\Delta z \in [-10\,000, 10\,000]$\,mm
+      is the cleanest test; the $0.117$\,mm gen-3 result on
+      universal $\Delta z$ is the most stringent benchmark. Default
+      to universal until evidence forces a $z_{\mathrm{end}} \in
+      \{\text{VELO}, \text{UT}, \text{SciFi}\}$ split.
+\end{enumerate}
+
+\paragraph{Companion theory document.} A parallel document,
+\href{run:gen3_replacement_theory_2026-05-19.tex}{\texttt{gen3\_replacement\_theory\_2026-05-19.tex}},
+develops the theoretical case for each fix (L1, M1, P1) and for the
+Phase R-X contingency routes. The present document is the empirical
+inventory; the theory companion is the analytical justification.
+
+% =============================================================================
+\begin{thebibliography}{99}\small
+
+\bibitem{projectcontext}
+\emph{PROJECT\_CONTEXT.md}, canonical project goal, April 2026.
+\href{run:../../PROJECT_CONTEXT.md}{\texttt{TrackExtrapolation/PROJECT\_CONTEXT.md}}.
+
+\bibitem{replacementplan}
+\emph{REPLACEMENT\_PLAN.md} \S 3, \S 4, \S 6, \S 8, 2026-05-19.
+\href{run:../../experiments/gen_3/REPLACEMENT_PLAN.md}{\texttt{experiments/gen\_3/REPLACEMENT\_PLAN.md}}.
+
+\bibitem{cleanuplist}
+\emph{CLEANUP\_LIST.md} (hybrid demotion), 2026-05-19.
+\href{run:../../experiments/gen_3/CLEANUP_LIST.md}{\texttt{experiments/gen\_3/CLEANUP\_LIST.md}}.
+
+\bibitem{gen3readme}
+\emph{Gen-3 experiments README.md} \S\,``Headline numbers'',
+\S\,``Diagnoses (F1, F2, F3)'', \S\,``Likely thesis-section
+structure'', 2026-05-06.
+\href{run:../../experiments/gen_3/README.md}{\texttt{experiments/gen\_3/README.md}}.
+
+\bibitem{gen2readme}
+\emph{Gen-2 experiments README.md} \S\,``v2 sweep'' results table.
+\href{run:../../experiments/gen_2/README.md}{\texttt{experiments/gen\_2/README.md}}.
+
+\bibitem{gen1eval}
+\emph{Gen-1 evaluation report}, top-21 model ranking, 2026-01-15.
+\href{run:../../experiments/gen_1/archive/analysis_v2/evaluation_report.md}{\texttt{experiments/gen\_1/archive/analysis\_v2/evaluation\_report.md}}.
+
+\bibitem{gen3m1}
+\emph{Gen-3 Milestone-1 Track-Extrapolation Models}
+(\texttt{gen3\_m1\_results.tex}), 2026-05-08.
+\href{run:gen3_m1_results.tex}{\texttt{docs/reports/gen3\_m1\_results.tex}}.
+
+\bibitem{gen2newresults}
+\emph{Gen-2 on New Data: v2 Architectural Fixes and Final Results}
+(\texttt{gen2\_new\_data\_results.tex}).
+\href{run:gen2_new_data_results.tex}{\texttt{docs/reports/gen2\_new\_data\_results.tex}}.
+
+\bibitem{gen1results}
+\emph{First-Generation Neural Track Extrapolation for LHCb Allen HLT1}
+(\texttt{gen1\_results.tex}), April 2026.
+\href{run:gen1_results.tex}{\texttt{docs/reports/gen1\_results.tex}}.
+
+\bibitem{adr0007}
+ADR 0007 -- \emph{Phase 1a winner: \texttt{n\_rk\_steps = 2},
+corrector OFF}; fp64-autograd Jacobian methodology, 2026-05-12.
+\href{run:../../experiments/gen_3/For_Allen/docs/decisions/0007-phase1a-winner.md}{\texttt{For\_Allen/docs/decisions/0007-phase1a-winner.md}}.
+
+\bibitem{adr0009}
+ADR 0009 -- \emph{Replacement goal restated; hybrid demoted},
+2026-05-19.
+\href{run:../../experiments/gen_3/For_Allen/docs/decisions/0009-replacement-goal-restated.md}{\texttt{For\_Allen/docs/decisions/0009-replacement-goal-restated.md}}.
+
+\end{thebibliography}
+
+% =============================================================================
+% Outstanding items (this report)
+% -----------------------------------------------------------------------------
+% TODO: When Phase R1 completes, replace the mean-|Δx| numbers in
+%       Table \ref{tab:xgen} with median + 95% quantile per Fix L1.
+% TODO: When Phase R2 completes, fill the A4 row of Table \ref{tab:gates}
+%       with the fp64-autograd Frobenius numbers on PINN_v2 and MLP_v2.
+% TODO: When Phase R6 completes, fill the per-track GPU-cost row of
+%       Table \ref{tab:gates} from the hlt1_pp_default throughput report.
+% TODO: Cross-link the companion theory document
+%       gen3_replacement_theory_2026-05-19.tex once it lands.
+% =============================================================================
+
+\end{document}

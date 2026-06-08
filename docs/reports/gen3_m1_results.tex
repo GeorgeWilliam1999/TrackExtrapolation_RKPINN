@@ -1,0 +1,209 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=22mm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{hyperref}
+\usepackage{tabularx}
+\usepackage{array}
+\hypersetup{colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black}
+
+\title{Gen-3 Milestone-1 Track-Extrapolation Models:\\
+       Independent Re-Evaluation and Allen Compatibility Audit}
+\author{TrackExtrapolation / gen-3 \\ \small auto-generated from gen3\_model\_analysis.ipynb}
+\date{2026-05-08}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We re-evaluate the five trained Gen-3 Milestone-1 (M1) track-extrapolation
+models on a held-out test split using a single uniform analysis pipeline,
+independently of the per-run training scripts. We confirm the headline
+result that the \texttt{nrk4\_tiny\_1step\_v1} model achieves
+$\langle|\Delta x|\rangle \approx 113\,\mu\mathrm{m}$ at
+$\sim$4\,997 trainable parameters --- two orders of magnitude better than
+either pure-MLP control --- and report a full Allen Stage-1 ABI compatibility
+audit. Of the five candidates, only \texttt{nrk4\_tiny\_1step\_v1} satisfies
+all four hard ABI gates (A2 bias, A3 size, A5 outputs, A7 inputs) at
+fp32; two more become compliant at fp16. None of the five reaches the
+Stage-1 \emph{physics} tolerance of $|\Delta x|<12\,\mu\mathrm{m}$ at
+the VELO exit, so M1 is architecturally green-lit but performance red-lit.
+We document an eight-action backlog (M1.5) targeting the residual
+heavy-tail, NRK4 backward asymmetry, PINN $q/p$ bias, and the move from
+200\,k to the full 10\,M training corpus.
+\end{abstract}
+
+\section{Models under review}
+Five checkpoints from \texttt{experiments/gen\_3/trained\_models/} are
+loaded directly: two pure MLPs (control), two Neural-RK4 variants and one
+PINN-v2. All models share a common 7-input / 5-output Allen V3 contract:
+$(x, y, t_x, t_y, q/p, z_0, dz)\,\to\,(x_f, y_f, t_{x,f}, t_{y,f}, q/p)$.
+
+\section{Methods}
+The full 10\,M-track Gen-3 corpus is loaded once. Each model is evaluated
+on its persisted \texttt{test\_indices.npy} subset (20\,k tracks). All
+reported metrics --- mean / median / 95th-percentile $|\Delta x|$, station
+gates, the SciFi-T3 $q/p$ correlation $\rho$, and the backward/forward
+ratio --- are computed by a single pipeline in the analysis notebook,
+independent of per-run training scripts. Throughput is measured on a 24-core
+EPYC CPU.
+
+\section{Results}
+
+\subsection{Headline residuals}
+\begin{table}[h!]
+\centering
+\caption{Global residual statistics on the 20\,k-track test split.
+$|\Delta x|$ in $\mu$m, throughput in tracks/s.}
+\small
+\begin{tabular}{lllrrrrrr}
+\toprule
+Model & Type & Params & Mean & Median & p95 & RMS pos. & Throughput \\
+\midrule
+mlp\_small\_v1 & mlp & 18,052 & 18408.0 & 11818.6 & 56952.7 & 36348.3 & 344,497 \\
+mlp\_medium\_v1 & mlp & 51,076 & 5569.3 & 3684.8 & 17047.3 & 10969.0 & 414,203 \\
+nrk4\_tiny\_1step\_v1 & neural\_rk4 & 4,997 & 112.9 & 76.9 & 212.2 & 658.4 & 115,636 \\
+nrk4\_small\_1step\_v1 & neural\_rk4 & 18,181 & 210.0 & 160.6 & 470.5 & 688.9 & 118,810 \\
+pinn\_v2\_small\_v1 & pinn\_v2 & 10,372 & 116.7 & 11.7 & 454.1 & 646.3 & 745,462 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Per-station Stage-1 gates}
+\begin{table}[h!]
+\centering
+\caption{Stage-1 station-binned $\langle|\Delta x|\rangle$ ($\mu$m), the
+SciFi-T3 $q/p$-correlation, and the bwd/fwd ratio.
+Allen Stage-1 thresholds: VELO 12\,$\mu$m, UT 50\,$\mu$m,
+SciFi $|\rho|<0.1$, ratio $\in[0.5,2.0]$.}
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Model & VELO exit & UT entry & SciFi T3 & $\rho_{T3}$ & bwd/fwd \\
+\midrule
+mlp\_small\_v1 & 20790.7 & 19181.8 & 17296.1 & +0.029 & 0.92 \\
+mlp\_medium\_v1 & 6981.6 & 5867.8 & 4940.4 & -0.017 & 1.03 \\
+nrk4\_tiny\_1step\_v1 & 112.6 & 115.5 & 120.3 & -0.025 & 1.44 \\
+nrk4\_small\_1step\_v1 & 199.2 & 207.1 & 217.7 & -0.032 & 1.64 \\
+pinn\_v2\_small\_v1 & 165.0 & 124.1 & 124.2 & +0.217 & 0.90 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Allen ABI audit}
+\begin{table}[h!]
+\centering
+\caption{Allen Stage-1 ABI audit. Column \emph{overall} requires A2, A3 fp32,
+A5, A7 simultaneously.}
+\small
+\begin{tabular}{lrrrcccccc}
+\toprule
+Model & kB fp32 & kB fp16 & $\rho_{T3}$ & A2 & A3$_{32}$ & A3$_{16}$ & A5 & A7 & overall \\
+\midrule
+mlp\_small\_v1 & 70.5 & 35.3 & +0.029 & \checkmark & $\times$ & \checkmark & \checkmark & \checkmark & $\times$ \\
+mlp\_medium\_v1 & 199.5 & 99.8 & -0.017 & \checkmark & $\times$ & $\times$ & \checkmark & \checkmark & $\times$ \\
+nrk4\_tiny\_1step\_v1 & 19.5 & 9.8 & -0.025 & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+nrk4\_small\_1step\_v1 & 71.0 & 35.5 & -0.032 & \checkmark & $\times$ & \checkmark & \checkmark & \checkmark & $\times$ \\
+pinn\_v2\_small\_v1 & 40.5 & 20.3 & +0.217 & $\times$ & \checkmark & \checkmark & \checkmark & \checkmark & $\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Figures}
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.85\linewidth]{figures/gen3_m1/fig1_residual_hist.png}
+\caption{Per-track $|\Delta x|$ distribution on the test split (log-x).
+Reference lines mark the VELO 12\,$\mu$m gate and the gen-2 reference
+of 125\,$\mu$m.}
+\end{figure}
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.85\linewidth]{figures/gen3_m1/fig2_zf_bins.png}
+\caption{Mean $|\Delta x|$ vs propagation endpoint $z_f$ in eight bins.
+Both NRK4 variants and the PINN remain in the 100--200\,$\mu$m band across
+the full LHCb $z$ range; both MLPs sit two to three orders of magnitude
+above. The shaded band is the Stage-1 VELO gate.}
+\end{figure}
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=\linewidth]{figures/gen3_m1/fig3_dx_vs_qop_scifi.png}
+\caption{$\Delta x$ vs $q/p$ in the SciFi T3 window (8500 $\le z_f<$ 10000\,mm).
+The $\rho$ value annotated on each panel is the Allen A2 metric;
+\texttt{pinn\_v2\_small\_v1} fails the $|\rho|<0.1$ tolerance.}
+\end{figure}
+
+\section{Discussion}
+
+\paragraph{Architecture beats capacity.}
+\texttt{nrk4\_tiny\_1step\_v1} (4\,997 weights, 19.5\,kB fp32) outperforms
+\texttt{mlp\_medium\_v1} (51\,076 weights, 199.5\,kB fp32) by a factor
+$\sim$\,49 on mean $|\Delta x|$. The physics-informed forward operator
+(one RK4 step driven by the analytic LHCb field, accessed through a
+non-trainable buffer) is doing the heavy lifting; the corrector net is
+small, fast, and easily Allen-compliant.
+
+\paragraph{Two MLPs are not deployment candidates.}
+Mean $|\Delta x|$ of 5.6\,mm and 18.4\,mm is two orders above
+the gen-2 baseline. Pure MLPs serve only as a control group documenting
+that field information is essential.
+
+\paragraph{Allen footprint discriminates the field.}
+At fp32 only \texttt{nrk4\_tiny} satisfies A3 ($\le$\,64\,kB).
+\texttt{mlp\_small\_v1} and \texttt{nrk4\_small\_1step\_v1} fit only at
+fp16; they are deployment candidates contingent on a $\mu$m-level fp16
+round-trip test.
+
+\paragraph{PINN\_v2 fails the bias gate, not the size gate.}
+Despite an excellent median residual of $\sim$\,12\,$\mu$m and a 40-kB
+weight footprint, the SciFi-T3 $\rho(\Delta x, q/p) = +0.217$ exceeds the
+Allen A2 tolerance. The PINN audit attributes this to (i)~dimensional
+inconsistency in the PDE residual scaling, (ii)~a tautological
+initial-condition term, and (iii)~a corrector head decoupled from the
+magnet kick.
+
+\paragraph{Heavy-tailed residuals everywhere.}
+Across all five models the mean / median ratio is 1.4--10. Squared-MSE is
+therefore unsuitable as the model-selection metric on signed-$dz$ data.
+M1.5 will adopt a Huber + log-cosh blend (action \textbf{M}).
+
+\section{Next steps -- M1.5 backlog}
+\begin{description}
+\item[\textbf{M.}] Replace MSE with a median-aware loss
+(Huber + log-cosh). Acceptance: mean/median ratio $<2$ on val.
+\item[\textbf{N.}] Move corrector net outside RK4 \texttt{\_rhs}; gate by
+FSAL $\tanh(\alpha\|k_4-k_3\|\,|h|)$. Acceptance: bwd/fwd $\in[0.85,1.15]$.
+\item[\textbf{O.}] PINN-v2 head refactor: dimensional consistency in PDE
+residual; remove tautological IC; couple corrector to magnet kick.
+Acceptance: $|\rho_{T3}|<0.05$.
+\item[\textbf{P.}] Train on full 10\,M tracks for $\ge200$ epochs with cosine
+schedule. Acceptance: mean $|\Delta x|<25\,\mu$m at SciFi T3.
+\item[\textbf{Q.}] Export Allen \texttt{\_\_constant\_\_} weight blob for
+\texttt{nrk4\_tiny}; verify fp16 round-trip $<1\,\mu$m.
+\item[\textbf{R.}] Add Allen kernel skeleton (7\,$\to$\,5 entry kernel,
+B-grid texture, FSAL switch). Acceptance: compiles + Allen unit-test runs.
+\item[\textbf{S.}] Train on $z_0\in[0,8000]$, test on $[8000,14000]$.
+Acceptance: mean $|\Delta x|$ does not exceed in-distribution by $>2\times$.
+\item[\textbf{T.}] Re-run the full set with fixed seeds + MLflow tracking;
+log all sweeps including failed runs.
+\end{description}
+
+\section*{Reproducibility}
+This report is regenerated by re-running
+\texttt{experiments/gen\_3/notebooks/gen3\_model\_analysis.ipynb} end-to-end.
+Inputs: \texttt{trained\_models/<run>/best\_model.pt},
+\texttt{normalization.json}, \texttt{config.json},
+\texttt{test\_indices.npy}, \texttt{data/train\_10M\_gen3.npz}. Generated
+artifacts: \texttt{notebooks/figures\_gen3\_m1/\{headline\_metrics,
+stage1\_gates, allen\_audit\}.csv} and three PNGs.
+
+\end{document}

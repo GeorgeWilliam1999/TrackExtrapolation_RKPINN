@@ -1,0 +1,1289 @@
+% =============================================================================
+% Experimental Protocol: gen_3 Neural Track Extrapolation for LHCb Allen HLT1
+%
+% Author: G. Scriven
+% Date: April 2026
+%
+% Scope: forward-looking protocol for the third iteration. Priority is Allen
+% HLT1 deployability; Gen-3 takes the best model per family from Gen-2 and
+% isolates theoretical and data-side improvements within Allen constraints.
+% =============================================================================
+\documentclass[a4paper,11pt]{article}
+\usepackage[margin=2.5cm]{geometry}
+
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{array}
+\usepackage{bm}
+\usepackage{pifont}
+\usepackage{microtype}
+
+% siunitx not available -- same fallback macros as gen2 protocol
+\newcommand{\SI}[2]{#1~#2}
+\newcommand{\SIrange}[3]{#1--#2~#3}
+\newcommand{\num}[1]{#1}
+\newcommand{\si}[1]{#1}
+\newcommand{\kilo}{k}
+\newcommand{\byte}{B}
+\newcommand{\tesla}{T}
+\newcommand{\mega}{M}
+\newcommand{\hertz}{Hz}
+\newcommand{\giga}{G}
+\newcommand{\eV}{eV}
+\newcommand{\mm}{mm}
+\newcommand{\qop}{q/p}
+\newcommand{\dz}{\Delta z}
+\newcommand{\Bfield}{\mathbf{B}}
+\newcommand{\state}{\mathbf{y}}
+\newcommand{\Jac}{\mathbf{J}}
+\newcommand{\loss}{\mathcal{L}}
+\newcommand{\btheta}{\bm{\theta}}
+\newcommand{\cmark}{\checkmark}
+\newcommand{\xmark}{\ding{55}}
+
+\begin{document}
+
+\title{Experimental Protocol: Third-Generation Neural Track Extrapolation\\
+for the LHCb Allen HLT1 Trigger\\
+\large Allen-first iteration on Gen-2 best-of-family models}
+
+\author{G.~Scriven\\\small Maastricht University, UHasselt, Nikhef}
+\date{\today}
+
+\begin{abstract}
+This document specifies the \texttt{gen\_3} protocol for neural track
+extrapolation in the LHCb experiment.  Gen-3 is a targeted iteration on
+the Gen-2 best-of-family models with a single overriding design
+priority: \emph{delivering an extrapolator binary that passes the Allen
+HLT1 standalone smoke test}.  The Gen-2 audit
+(\texttt{gen2\_new\_data\_results.tex}, §5) showed that all eleven
+Gen-2 models fail Allen deployment, not because of architectural
+limits, but because of three data-generation bugs (C1--C3) and two
+model-level defects (A2, A4) that propagation accuracy numbers alone
+cannot detect.  Gen-3 freezes three model candidates --- one per
+family --- fixes the five blocking issues in dependency order, and
+adds four theoretical improvements derived directly from the Gen-2
+SciFi failure diagnostics.  The protocol specifies the data
+regeneration, the training changes, the Allen-side validation
+sequence, the hard gates each candidate must clear, and the
+milestones that gate deployment.
+\end{abstract}
+
+\maketitle
+
+% ============================================================================
+\section{Introduction and priority statement}\label{gen3:sec:intro}
+
+Gen-1 established that a $[64,64]$ MLP extrapolator can achieve
+\SI{0.49}{\mm} mean position error within the \SI{64}{\kilo\byte} CUDA
+\texttt{\_\_constant\_\_} memory budget.  Gen-2 extended this to five
+MLP sizes, three PINN\_v2 configurations, and three NeuralRK4
+configurations on a new \num{50e6}-track dataset with $\dz \in
+[25,10000]$\,mm, and performed a full detector-level
+characterisation against the VELO, UT and SciFi stations.
+
+The Gen-2 conclusion is unambiguous: \textbf{the bottleneck is not the
+neural architecture}.  The accuracy-ceiling Gen-2 candidate
+(\texttt{nrk4\_small\_1step}, \num{17925} float32 params $=$
+\SI{71.7}{\kilo\byte}) achieves \SI{0.125}{\mm} mean position error;
+the deployable candidate that simultaneously satisfies the A2
+($q/p$-decorrelation) and A3 (\SI{64}{\kilo\byte}) gates is
+\texttt{nrk4\_tiny\_1step} (\num{4869} params $=$ \SI{19.5}{\kilo\byte},
+$\langle|\Delta x|\rangle \approx \SI{0.13}{\mm}$).  What blocks
+deployment is
+
+\begin{enumerate}
+  \item the training dataset uses a $qop$ convention incompatible
+        with Allen (C1),
+  \item the training dataset does not cover the signed-$\dz$ and
+        wide input-coverage regimes that the Allen Kalman filter
+        actually queries (C2, C3), and
+  \item the best-accuracy candidate either overshoots the memory
+        budget (A3) or carries an uncorrected deterministic
+        $q/p$-linear error at the SciFi stations (A2).
+\end{enumerate}
+
+\noindent\textbf{Gen-3 priority.}  Allen HLT1 deployability is the
+\emph{primary} design variable; propagation accuracy is secondary.
+Every protocol decision below is justified against the Allen
+\texttt{ML\_research/README.md} convention requirements and the three
+smoke-test gates, not against mean position error.
+
+\subsection{Research questions}
+
+\noindent\textbf{RQ1 --- Deployment.}  After fixing the five blocking
+issues identified in Gen-2, does at least one best-of-family model
+pass the three Allen smoke-test gates
+($\chi^2/\mathrm{ndof}<2.0$, $|\delta p/p|<1\,\%$,
+$\sigma(\mathrm{pull}_x)<1.5$) when connected to the standalone
+Kalman filter?
+
+\noindent\textbf{RQ2 --- Which family wins in-situ.}  Which of
+\{NeuralRK4, PINN\_v2, MLP\} generalises best to the in-situ Allen
+distribution (signed $\dz$, $\pm3200$\,mm inputs, Allen $qop$), as
+opposed to the restricted distribution the Gen-2 models were trained
+on?
+
+\noindent\textbf{RQ3 --- Theoretical improvements.}  Do the four
+targeted theoretical changes (Sec.~\ref{gen3:sec:theory}) --- (i)
+fixing the PINN\_v2 $q/p$-linear magnet-kick bug, (ii) adding
+$z_\mathrm{start}$ to the input, (iii) detector-$\sigma$-weighted
+loss, (iv) optional Jacobian regularisation against finite-difference
+RK4 --- each individually reduce at least one of the Gate-1/2/3
+metrics on the same model?
+
+\section{Allen deployment constraints (hard gates)}\label{gen3:sec:allen}
+
+All constraints in this section come from
+\texttt{Allen/ML\_research/README.md} and
+\texttt{Allen/ML\_research/gen2\_true\_data\_deep\_dive.md}.  They are
+\emph{mandatory}; a Gen-3 candidate does not ``partially satisfy''
+them.
+
+\subsection{Conventions (C1--C3)}
+
+\begin{description}
+  \item[C1 --- $qop$ convention.] The feature-space variable the
+        model consumes must be
+        \begin{equation}
+          qop \;=\; c_\text{light} \cdot q / p_\text{MeV},
+          \qquad c_\text{light} = 299.792458\ \mathrm{mm\,ns^{-1}\,eplus^{-1}}.
+          \label{eq:qop}
+        \end{equation}
+        This is Allen's canonical unit; a factor of $\sim300$ larger
+        than the Gen-2 training convention.  The fix is in the data
+        generator; no runtime conversion inside the model loader is
+        permitted.
+  \item[C2 --- signed $\dz$.]  The Allen Kalman filter performs
+        forward \emph{and backward} passes.  The training
+        distribution must therefore cover both signs:
+        \begin{equation}
+          \dz \sim \text{sign}\cdot\text{LogU}(25,\,10000)\ \mathrm{mm},
+          \qquad \text{sign} \sim \{-1,+1\}\ \text{(balanced)}.
+          \label{eq:dz_signed}
+        \end{equation}
+        Log-uniform in $|\dz|$ over-represents the short VELO
+        inter-sensor steps (\SIrange{25}{30}{\mm}).
+  \item[C3 --- input coverage.]  Inference-time inputs reach $\pm
+        3200$\,mm after the first forward Kalman update; training
+        must cover at least this range.  Two acceptable strategies:
+        \emph{(a)} harvest $(x_\mathrm{in},y_\mathrm{in})$ pairs from
+        a real Allen reconstruction at every layer interface, or
+        \emph{(b)} uniform sampling over the detector envelope
+        $|x|\le3500$\,mm, $|y|\le2500$\,mm.  Strategy~(a) is
+        preferred because it preserves the joint density on
+        $(x,y,t_x,t_y,q/p)$.
+\end{description}
+
+\subsection{Allen binary contract (A-series)}
+
+\begin{description}
+  \item[A3 --- memory budget.] Parameters + biases must fit in
+        \SI{64}{\kilo\byte} CUDA \texttt{\_\_constant\_\_} memory,
+        i.e.\ $\le$\num{16384} \texttt{float32} scalars.  Quantisation
+        to \texttt{float16} doubles the budget but must be preceded
+        by a numerical-stability check
+        (Sec.~\ref{gen3:sec:validation}).
+  \item[A4 --- Jacobian correctness.]  The $5\times 5$ Jacobian
+        $\Jac = \partial\state_f/\partial\state_0$ with
+        $\state = (x,y,t_x,t_y,qop)$ (Allen Kalman state;
+        the $z_0$ and $\dz$ inputs of Fix~H are book-keeping
+        variables and are \emph{not} differentiated) must agree
+        element-wise with a finite-difference RK4 reference.
+        Per-input FD step sizes follow Allen's own
+        \texttt{compute\_jacobian} convention
+        $\bm{\epsilon} = (10^{-3}\,\mathrm{mm},\,10^{-3}\,\mathrm{mm},\,10^{-6},\,10^{-6},\,\max(|qop|\cdot 10^{-4},\,10^{-8}))$.
+        Structural-zero elements (where $|\Jac^\mathrm{RK4}_{ij}| <
+        \epsilon^\mathrm{abs}_i$, with $\epsilon^\mathrm{abs} =
+        (10^{-6},10^{-6},10^{-8},10^{-8},10^{-10})$ for the five
+        output rows) are scored on absolute error $|J^{\btheta} -
+        J^\mathrm{RK4}| < 3\epsilon^\mathrm{abs}_i$; the remainder
+        are scored on relative error.  Median relative error must be
+        $<10\,\%$ and 99th-percentile $<30\,\%$.  Frobenius-norm
+        agreement is \emph{not} sufficient (Gen-1/Gen-2 lesson).
+  \item[A5 --- output dimension.]  The Allen
+        \texttt{MLPExtrapolator.cuh} V2 format expects \emph{five}
+        outputs $(x_f,y_f,t_{x,f},t_{y,f},qop_{\!f})$.  Gen-2 models
+        output four.  Gen-3 candidates must emit the fifth component;
+        for NeuralRK4 this is identity ($qop$ conserved in vacuum),
+        for PINN\_v2 and MLP it is an additional regression head.
+  \item[A6 --- metadata block.] Each exported binary carries a
+        provenance block: \texttt{qop\_convention},
+        \texttt{c\_light\_value}, \texttt{dz\_signed},
+        \texttt{feature\_order}, \texttt{polarity} (\texttt{MagDown}
+        only in baseline Gen-3), \texttt{loader\_version\_required},
+        \texttt{data\_sha256}, \texttt{git\_hash},
+        \texttt{training\_seed}.  Mismatch against the Allen Kalman
+        state at load time is a hard error.
+  \item[A7 --- loader V3 patch.]  The existing Allen loader
+        \texttt{MLPExtrapolator.cuh} hard-codes \texttt{float
+        input[6]} and \texttt{float output[4]} in
+        \texttt{propagate()} / \texttt{propagate\_multistep()}; it
+        reads \texttt{input\_size} from the binary header and so
+        does \emph{not} crash on $7$-input / $5$-output models, but
+        silently reads uninitialised stack memory for the 7th input
+        and silently discards the 5th output.  Gen-3 therefore
+        delivers a V3 patch to \texttt{MLPExtrapolator.cuh} (inputs
+        $(x,y,t_x,t_y,qop,z_0,\dz)$ in that order; outputs
+        $(x_f,y_f,t_{x,f},t_{y,f},qop_f)$) \emph{as part of the
+        milestone M0.5}.  A binary advertising
+        \texttt{loader\_version\_required=V3} refuses to load on a
+        V2-only Allen checkout.
+\end{description}
+
+\subsection{Smoke-test gates (G1--G3)}
+
+Defined in \texttt{ML\_research/README.md}; baseline is the
+production RKN extrapolator.
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Gate & Metric & Threshold \\
+\midrule
+G1 & $\langle\chi^2/\mathrm{ndof}\rangle$ over standalone Kalman fit & $<2.0$ \\
+G2 & $|\langle p_\mathrm{fit}/p_\mathrm{true}-1\rangle|$            & $<1\,\%$ \\
+G3a & $\sigma(\mathrm{pull}_x)$                                      & $<1.5$ \\
+G3b & $|\langle\mathrm{pull}_x\rangle|$                             & $<0.1$ \\
+\midrule
+RKN baseline & ($0.95\pm0.20$,\; $-0.04\,\%$,\; $0.95$) & PASS \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+G3 is split into G3a (width) and G3b (bias): a model with
+$\langle\mathrm{pull}_x\rangle=-2$, $\sigma=1.4$ would pass the
+width-only version of G3 but is clearly mis-calibrated.  G3b
+catches this.
+
+% ============================================================================
+\section{Selected best-of-family candidates}\label{gen3:sec:candidates}
+
+Gen-3 iterates on three model candidates drawn from the Gen-2
+detector-level audit (\texttt{gen2\_new\_data\_results.tex}, §4.5, §5).
+Rationale for each:
+
+\begin{description}
+\item[Primary: \texttt{nrk4\_tiny\_1step}.]  \num{4869} params,
+      \SI{19.5}{\kilo\byte} (\emph{fits A3 with headroom}),
+      $\rho(\Delta x,q/p)=+0.02$ at SciFi T3 (\emph{passes A2}),
+      $\langle|\Delta x|\rangle \approx \SI{0.13}{\mm}$ one-shot.
+      The \emph{only} Gen-2 model that satisfies both A2 and A3
+      without further intervention; first candidate to attempt the
+      smoke test.
+\item[Accuracy ceiling: \texttt{nrk4\_small\_1step}.]  \num{17925}
+      params, \SI{71.7}{\kilo\byte} (\emph{violates A3 by 12\,\%}),
+      $\rho=+0.03$ (\emph{passes A2}), $\SI{4.9}{\mu m}$ at VELO exit,
+      $\SI{25.3}{\mu m}$ at UT entry.  Deployment via
+      \texttt{float16} quantisation (\SI{35.9}{\kilo\byte}); provides
+      an upper bound on what the NeuralRK4 family can deliver.
+\item[PINN representative: \texttt{pinn\_v2\_lam0.1}.]  \num{68612}
+      params, best Gen-2 SciFi position accuracy.  Carries the
+      $\rho(\Delta x,q/p)=+0.92$ magnet-kick bug
+      (diagnostic ii of Gen-2 §4.5.1); blocked on A2 until the PDE
+      residual is re-audited.  Kept in Gen-3 to test whether fixing
+      the physics-residual formulation (Fix~G below) can rescue the
+      physics-informed route.
+\item[Reference only: \texttt{mlp\_medium}.]  \num{101k} params,
+      best Gen-2 MLP on validation loss but fails A3 by a large
+      factor.  Retained as a no-physics control; not a deployment
+      target.
+\end{description}
+
+The legacy RK\_PINN, legacy PINN, and the remaining four MLP sizes are
+\emph{not carried forward} --- Gen-2 already showed they are
+dominated by the four above on at least one of the three Allen gates.
+
+% ============================================================================
+\section{Data improvements: fixing C1--C3 and A5}\label{gen3:sec:data}
+
+The Gen-3 training dataset \texttt{train\_50M\_gen3.npz} is
+regenerated from scratch.  Changes relative to
+\texttt{train\_50M\_dz25.npz}:
+
+\subsection{Generator patches}
+
+\begin{enumerate}
+  \item \textbf{C1 --- $qop$ convention.}  Replace the scalar
+        computation in \texttt{utils/rk4\_propagator.py}:
+        \begin{verbatim}
+# old
+qop = charge / p_MeV
+# new  (Gaudi mixed units: (mm ns^-1 eplus) / MeV)
+qop = 2.99792458e+2 * charge / p_MeV   # ~= 3e-2 at p = 10 GeV
+        \end{verbatim}
+        Sanity arithmetic: $c_\text{light}/\SI{10000}{MeV} =
+        299.792458/10\,000 \approx 3.00\times 10^{-2}$, matching the
+        \texttt{ML\_research/README.md} worked example.  The
+        previous draft coefficient \texttt{2.99792458e-1} was a
+        factor $10^{3}$ too small --- worse than the Gen-2
+        convention.  \textbf{Companion edit in the integrator}:
+        replace \texttt{C\_LIGHT = 2.99792458e-4} in
+        \texttt{utils/magnetic\_field.py} with \texttt{C\_LIGHT =
+        1.0e-6} so that $\kappa = c_\text{light}\cdot qop$ evaluates
+        to the \emph{same} number as the Gen-2 expression
+        $\kappa = (2.99792458\times 10^{-4})\cdot (q/p_\text{MeV})$,
+        i.e.\ $c_\text{light}$ is absorbed into $qop$ exactly once.
+        \textbf{Regression test (closed-form).}  Uniform
+        $B_y=-1\,\mathrm{T}$, $B_x=B_z=0$, $q=+1$,
+        $p=\SI{10}{GeV}$, $\dz=\SI{1000}{mm}$, initial
+        $(x_0,y_0,t_{x,0},t_{y,0})=(0,0,0,0)$: the analytic
+        trajectory is a circular arc of radius $R = p/(cB) =
+        33.356\,\mathrm{m}$ giving $x_f = R(1-\cos(\dz/R)) =
+        \SI{14.990}{\mu m}$ to six figures. Pass tolerance
+        $|\Delta x_f|<\SI{1}{\mu m}$ at this test point, spot-checked
+        on 10\,k tracks.  A second closed-form test with
+        $B_x=+1\,\mathrm{T}$ (everything else zero) isolates the
+        $B_x$ branch of the Lorentz RHS --- required because Fix~G
+        depends on all three field components being correctly
+        evaluated.
+  \item \textbf{C2 --- signed $\dz$.}  Replace
+        $\dz \sim \mathcal{U}(25,10000)$ with
+        \begin{equation}
+          \dz = \epsilon \cdot 10^{u},
+          \quad \epsilon\sim\{-1,+1\},\ u\sim\mathcal{U}(\log_{10}25,\,\log_{10}10000).
+        \end{equation}
+        The RK4 integrator handles negative $\dz$ by stepping with
+        $-h$; the magnetic-field module is independent of step sign.
+  \item \textbf{C3 --- full input coverage.}  Extend the sampling
+        envelope to
+        $x_0\sim\mathcal{U}(-3500,+3500)$\,mm,
+        $y_0\sim\mathcal{U}(-2500,+2500)$\,mm, and widen the slopes
+        to $t_{x,0}\sim\mathcal{U}(-0.4,0.4)$,
+        $t_{y,0}\sim\mathcal{U}(-0.35,0.35)$ to accommodate Kalman
+        states that extrapolate \emph{off-axis and wide-angle}
+        simultaneously.  Retain the $|x|,|y|<\SI{5000}{\mm}$,
+        $|t|<2.0$ post-integration rejection.  The log-momentum
+        range $p\in[1,200]$\,GeV/$c$ is unchanged.
+  \item \textbf{A5 --- fifth output.}  Add $qop_f$ to the output
+        array $\mathbf{Y}\in\mathbb{R}^{N\times 5}$.  For vacuum
+        propagation $qop_f\equiv qop_0$; this column is kept
+        explicitly so the Allen binary contract is honoured without
+        a loader-side synthetic column.
+\end{enumerate}
+
+\subsection{Data provenance hardening}
+
+Alongside the regenerated \texttt{.npz} file, write
+\texttt{train\_50M\_gen3.meta.json} capturing
+\texttt{qop\_convention=allen\_v1},
+\texttt{dz\_signed=True},
+\texttt{x\_range=[-3500,3500]},
+\texttt{generator\_git\_hash},
+\texttt{field\_map\_sha256},
+\texttt{batch\_seeds=\{42 + 7919 i\}},
+\texttt{n\_batches},
+\texttt{created\_utc}.  This metadata is passed through to the Allen
+binary's A6 block on export.
+
+\subsection{Optional: realism extensions (deferred to Gen-3.1)}
+
+The following are \emph{not} in the baseline Gen-3 dataset but are
+staged for Gen-3.1 once the Allen smoke test passes on the vacuum
+dataset:
+
+\begin{itemize}
+  \item Multiple scattering: Highland formula applied as a random
+        slope kick at each RK4 sub-step.
+  \item Energy loss: Bethe--Bloch $dE/dx$ applied between sub-steps;
+        makes $qop_f \ne qop_0$ and activates the A5 output.
+  \item Mixed magnet polarity (MagUp via $B_y \to -B_y$).
+\end{itemize}
+
+% ============================================================================
+\section{Theoretical improvements}\label{gen3:sec:theory}
+
+Each item is derived from a specific diagnostic in Gen-2 §4.5.1 and
+§5.  Numbering continues from the Gen-2 fix labels (A--F).
+
+\subsection{Fix G --- PINN\_v2 PDE residual re-audit (A2)}
+
+Gen-2 measured $\rho(\Delta x, qop) = +0.92,\; +0.92,\; +0.99$ for
+PINN\_v2 with $\lambda\in\{0.1,1.0,10.0\}$.  The correlation
+\emph{grows with $\lambda$}, which rules out a pure data-fit
+explanation and implicates the PDE residual itself.  Two candidate
+causes:
+\begin{enumerate}
+  \item The field-interpolation module returns only $B_y$, and the
+        Lorentz RHS (Eqs.\,\ref{eq:dtx}--\ref{eq:dty} of Gen-2
+        protocol) is evaluated with $B_x = B_z = 0$ by default.  The
+        measured field map has $|B_x|$ up to \SI{0.15}{\tesla} in
+        the fringe regions that the SciFi-station tracks traverse.
+  \item The non-dimensionalisation factor $\sigma_k/\dz$
+        (Eq.~5.9 of Gen-2 protocol) does not remove the $q/p$
+        dependence of the residual scale, so the penalty is
+        effectively weighted by $|q/p|$.
+\end{enumerate}
+Action: (i) restore all three field components in
+\texttt{models/pinn\_v2.compute\_physics\_loss}; (ii) unit-test the
+PDE residual against the analytic uniform-$B_y$ trajectory
+(closed-form circular arc) to confirm the residual is identically
+zero on the analytic ground truth.  Pass criterion: $\rho(\Delta x,
+qop)<0.1$ at SciFi T3 on the Gen-3 test split.
+
+\subsection{Fix H --- add $z_\mathrm{start}$ to the input}
+
+The field map is strongly $z$-dependent ($|B_y|$ peaks at
+$z\simeq\SI{5007}{\mm}$) but the Gen-2 input vector
+$\mathbf{x}=(x_0,y_0,t_{x,0},t_{y,0},qop,\dz)$ does \emph{not}
+carry $z_0$.  All Gen-2 models implicitly assume $z_0=0$; the RK4
+ground truth does not.  This produces a deterministic
+$z_0$-dependent residual visible in the per-station error growth
+(Gen-2 Tab.~\ref{gen2new:tab:error_legs}).  Gen-3 extends the input
+to $\mathbf{x}\in\mathbb{R}^{7}$:
+\begin{equation}
+  \mathbf{x} = (x_0,\,y_0,\,t_{x,0},\,t_{y,0},\,qop,\,z_0,\,\dz).
+\end{equation}
+The $z_0$ column already exists in the Gen-2 $\mathbf{Z}$ array; the
+regenerated Gen-3 dataset includes it in $\mathbf{X}$ directly.  Cost:
+one extra first-layer weight column per neuron; negligible
+memory impact.
+
+\subsection{Fix I --- detector-$\sigma$-weighted endpoint loss}
+
+Gen-2 uses a plain component-weighted MSE
+(Eq.~5.7 of Gen-2 protocol) with weights $1/\sigma_k$ taken from the
+\emph{training-set} standard deviation.  This produces uniform
+tolerance across all $\dz$ and all momenta.  But the downstream
+Kalman filter evaluates residuals in \emph{detector-resolution
+units}:
+$(\sigma^\mathrm{VELO}_x,\sigma^\mathrm{VELO}_y)=(\SI{12}{\mu m},\SI{12}{\mu m})$,
+$(\sigma^\mathrm{UT}_x,\sigma^\mathrm{UT}_y)=(\SI{50}{\mu m},\SI{5}{\mu m})$ (stereo UT layers; $y$-strips),
+$(\sigma^\mathrm{SciFi}_x,\sigma^\mathrm{SciFi}_y)=(\SI{60}{\mu m},\SI{500}{\mu m})$ (stereo SciFi layers).
+Slope tolerances are set by differentiating position resolution over
+typical inter-station lever arms: $\sigma_{t_x}=\SI{1e-4}{}$ (VELO/UT), $\SI{3e-5}{}$ (UT$\to$SciFi), $\sigma_{t_y}$ identical scale.
+Gen-3 replaces the training loss with
+\begin{equation}
+  \loss_\mathrm{det}
+  \;=\;
+  \frac{1}{N}\sum_i \sum_{k\in\{x,y,t_x,t_y\}}
+      \Big(\frac{\hat{y}_{ik} - y_{ik}}{\sigma^\mathrm{det}_k(z_f^i)}\Big)^{\!2},
+  \label{eq:det_loss}
+\end{equation}
+where $\sigma^\mathrm{det}_k(z)$ is the detector resolution of the
+\emph{nearest station} to $z_f$.  This directly couples the training
+objective to the quantity Allen Gate~G3 measures.  Expected effect:
+pull-width narrowing at VELO and UT at the cost of mild degradation
+in the SciFi-interior region where no station provides a hit.
+
+\subsection{Fix J --- Jacobian regularisation via finite-diff RK4
+(A4)}
+
+Gen-2 §6 (Jacobian Frobenius norms) showed all models sit within a
+factor of~2 of the RK4 reference on $\|\Jac\|_F$, but this is a
+scalar summary; element-wise Jacobian agreement was never measured.
+The Kalman covariance update is linear in the Jacobian, so an
+element-wise bias of even \num{20}\,\% can inflate $\sigma(\mathrm{pull}_x)$
+past Gate~G3.  Gen-3 adds an optional regulariser:
+\begin{equation}
+  \loss_\mathrm{Jac}
+  \;=\;
+  \lambda_J \cdot
+  \bigg\|
+     \frac{\partial f_{\btheta}}{\partial \mathbf{x}_0}
+     \,-\,
+     \frac{\partial f_\mathrm{RK4}}{\partial \mathbf{x}_0}
+  \bigg\|_F^{\,2},
+  \label{eq:jac_loss}
+\end{equation}
+with $\partial f_{\btheta}/\partial\mathbf{x}_0$ computed by
+\texttt{torch.func.jacfwd} and the RK4 Jacobian by centred finite
+differences using Allen's per-input step sizes
+$\bm{\epsilon}=(10^{-3},10^{-3},10^{-6},10^{-6},\max(|qop|\cdot 10^{-4},10^{-8}))$
+(\emph{not} a flat $10^{-4}$, which would be noise-dominated on the
+slope and $qop$ rows).  Activated on a \num{5e3}-sample mini-batch every
+\num{10} optimiser steps to amortise the finite-difference cost.
+$\lambda_J$ swept in $\{0,\,10^{-3},\,10^{-2},\,10^{-1}\}$.
+The 10-step amortisation cadence is a throughput/signal trade-off:
+every optimiser step logs $\loss_\mathrm{Jac}$ (even on steps where
+it is not applied) via a cached previous-value so that post-hoc
+diagnostic plots can detect drift between the data gradient and the
+Jacobian gradient.
+
+\subsection{Fix K --- optional: predict residual to straight-line
+ansatz}
+
+For the MLP family specifically, the PINN\_v2 envelope trick
+(prediction = straight line + learnable correction) provides a
+\num{10}\,\%-level accuracy improvement when the straight-line
+baseline already captures the ballistic component.  Gen-3 adds an
+ablation in which \texttt{mlp\_medium} is trained to emit
+$\bm{\delta}=\hat{\state}-\state_\text{base}$ instead of
+$\hat{\state}$ directly.  This is a pure output-space transformation;
+no architectural change.
+
+\subsection{Fix L --- optional: non-uniform multi-step NeuralRK4}
+
+\texttt{nrk4\_small\_2step} underperformed \texttt{1step} on SciFi
+($\rho=-0.49$); the suspected cause is that the step split is
+uniform in $\dz$, so both RK4 sub-steps see similar field gradients.
+A non-uniform split with an internal breakpoint at the magnet peak
+$z\simeq\SI{5000}{\mm}$ is staged as a Gen-3.1 ablation if
+\texttt{1step} fails at the SciFi-interior.
+
+\section{Model-level changes per candidate}\label{gen3:sec:model_changes}
+
+\begin{center}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{l p{4.3cm} p{4.3cm} p{3.2cm}}
+\toprule
+Model & Gen-3 architectural change & Gen-3 loss change & New params \\
+\midrule
+\texttt{nrk4\_tiny\_1step} &
+  $\mathbf{x}\in\mathbb{R}^{7}$ (Fix H); 5-output head (A5). &
+  Fix I; Fix J at $\lambda_J\in\{0,10^{-3},10^{-2}\}$. &
+  $\approx$\num{5000}; \SI{20}{\kilo\byte}. \\
+\texttt{nrk4\_small\_1step} &
+  As above + float16 export. &
+  Fix I; Fix J. &
+  $\approx$\num{18}k; \SI{36}{\kilo\byte} (fp16). \\
+\texttt{pinn\_v2\_lam0.1} &
+  Fix G (re-audited PDE residual + full $\Bfield$); Fix H; 5-output head. &
+  Fix I; Fix G (unit-tested residual); $\lambda_\mathrm{pde}$ swept
+  $\{0.03, 0.1, 0.3\}$ only. &
+  $\approx$\num{69}k; \emph{reference only}. \\
+\texttt{mlp\_medium} &
+  Fix H; 5-output head; Fix K ablation. &
+  Fix I. &
+  $\approx$\num{101}k; \emph{reference only}. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ============================================================================
+\section{Training protocol}\label{gen3:sec:training}
+
+Largely inherited from Gen-2 §6.  Explicit Gen-3 deltas:
+
+\begin{itemize}
+  \item \textbf{Split.}  80/10/10 on the regenerated dataset, seed
+        42, stratified by $\text{sign}(\dz)$ so that the backward
+        pass is represented in validation and test.
+  \item \textbf{Optimiser.}  AdamW, $\beta=(0.9,0.999)$, weight
+        decay $10^{-4}$.  Base learning rate $10^{-3}$ for
+        NeuralRK4/MLP, $5\times 10^{-4}$ for PINN\_v2.  Cosine
+        annealing, 5-epoch linear warm-up, max 200 epochs, early
+        stop on validation loss with patience 30 (NeuralRK4/MLP) /
+        40 (PINN\_v2).
+  \item \textbf{Batch size.}  2048 for NeuralRK4/MLP, 1024 for
+        PINN\_v2, reduced to 512 on mini-batches that evaluate
+        Fix~J.
+  \item \textbf{Seeds.}  Global seed 42; dataset seed 42; per-batch
+        seeds $s_i = 42 + 7919 i$ (unchanged from Gen-2).
+  \item \textbf{Infrastructure.}  Nikhef HTCondor cluster;
+        \texttt{condor/submit\_gen3.sub}.  MLflow experiment
+        \texttt{gen\_3\_track\_extrapolation}.
+\end{itemize}
+
+% ============================================================================
+\section{Validation protocol}\label{gen3:sec:validation}
+
+Gen-3 validation is a three-stage funnel.  A candidate that fails any
+earlier stage does not proceed to the next.
+
+\subsection{Stage 1 --- propagation-level sanity (reuse Gen-2
+characterisation)}
+
+On the Gen-3 test split, compute the Gen-2 detector-level metrics:
+per-station $\langle|\Delta x|\rangle$,
+$\rho(\Delta x,qop)$ at SciFi T3, per-leg residual growth,
+two-dimensional residual heatmap in $(\dz, p)$.  Pass criteria:
+\begin{itemize}
+  \item VELO exit: $\langle|\Delta x|\rangle < \SI{12}{\mu m}$
+        (VELO $\sigma$).
+  \item UT entry:  $\langle|\Delta x|\rangle < \SI{50}{\mu m}$
+        (UT $\sigma$).
+  \item SciFi T3: $|\rho(\Delta x,qop)|<0.1$ for PINN\_v2; $<0.3$
+        otherwise.
+  \item Backward pass ($\dz<0$) metrics within a factor~2 of forward.
+\end{itemize}
+
+\subsection{Stage 2 --- Jacobian correctness (A4)}
+
+On \num{1000} randomly selected test samples, compute the
+$5\times 5$ Jacobian $\Jac_{\btheta}$ via
+\texttt{torch.func.jacfwd} over the Allen Kalman state
+$(x,y,t_x,t_y,qop)$ only (not $z_0$, $\dz$) and
+$\Jac_\mathrm{RK4}$ by centred finite differences with Allen's
+per-input step sizes (A4).  Pass criterion per A4: median
+element-wise relative error $<10\,\%$, 99th-percentile $<30\,\%$
+on the non-structural-zero elements; structural zeros scored on
+absolute error.  Report $(\Jac_{\btheta} -
+\Jac_\mathrm{RK4})/\Jac_\mathrm{RK4}$ per matrix element so that
+any systematic bias is visible.
+
+\subsection{Stage 2.5 --- exported binary round-trip}
+
+Load the exported \texttt{.bin} into a reference
+\texttt{numpy}-only loader
+(\texttt{scripts/load\_allen\_v3\_ref.py}) and evaluate 100 test
+tracks.  Assert bitwise agreement ($|\Delta| < 10^{-6}$ relative)
+with the PyTorch forward pass on the same inputs.  This catches the
+class of failure where Stage 3 regresses for loader reasons rather
+than model reasons --- the single most common Gen-1/Gen-2 deployment
+bug.
+
+\subsection{Stage 3 --- Allen standalone smoke test (G1--G3)}
+
+Export the model to the \texttt{MLPExtrapolator.cuh} V2 binary via
+\texttt{scripts/export\_allen\_v2.py} and run
+\texttt{ML\_research/standalone/run\_extrapolators} against the RKN
+baseline.  Record G1/G2/G3 on the same sample of
+$\mathcal{O}(10^5)$ tracks.  A candidate is declared \emph{deployment
+ready} if and only if all three gates pass simultaneously.
+
+\subsection{Validation harness outputs}
+
+Each candidate produces:
+\texttt{gen3\_candidate\_\{name\}\_stage1.csv} (per-station metrics),
+\texttt{\dots\_stage2.csv} (Jacobian element-wise stats),
+\texttt{\dots\_stage3\_smoketest.log} (Allen harness stdout),
+\texttt{\dots.bin} (exported weights), and
+\texttt{\dots.meta.json} (A6 provenance block).
+
+% ============================================================================
+\section{Iteration plan}\label{gen3:sec:iteration}
+
+Dependency-ordered; later milestones assume earlier ones pass.
+
+\begin{enumerate}
+  \item \textbf{M0 --- data regeneration.} Patch generator for
+        C1/C2/C3/A5, regenerate \num{50e6} tracks
+        (\texttt{condor/submit\_gen3\_datagen.sub}); verify
+        closed-form uniform-$B_y$ and uniform-$B_x$ tests
+        (§\ref{gen3:sec:data}) with tolerance
+        $|\Delta x_f|<\SI{1}{\mu m}$ at $(p,\dz)=(\SI{10}{GeV},\SI{1}{m})$.
+        \emph{Gate: dataset SHA-256 recorded; both closed-form tests
+        pass; spot-check 10k tracks match the Allen-convention
+        reference.}
+  \item \textbf{M0.5 --- Allen loader V3 patch (A7).}  Patch
+        \texttt{MLPExtrapolator.cuh} \texttt{propagate()} /
+        \texttt{propagate\_multistep()} to accept the
+        $7$-input / $5$-output format; add the
+        \texttt{loader\_version\_required} header field; add
+        \texttt{compute\_jacobian} extension to the $5\times 5$
+        Kalman-state Jacobian.  \emph{Gate: unit test loading a
+        Gen-3 placeholder binary into a local Allen build succeeds;
+        reference Python loader
+        (\texttt{scripts/load\_allen\_v3\_ref.py}) and C++ loader
+        produce bitwise-identical outputs on 100 test tracks.}
+  \item \textbf{M1 --- baseline re-training.}  Train
+        \texttt{nrk4\_tiny\_1step} with Fix~H only
+        (see M1 post-mortem below; Fix~I deferred to M2, Fix~J and
+        Fix~G not active).
+        \emph{Gate: Stage~1 passes.}
+  \item \textbf{M2 --- Jacobian validation.}  Run Stage~2 on the M1
+        model.  If median element-wise error $>10\,\%$, add Fix~J
+        (Jacobian regulariser) and retrain.  \emph{Gate: Stage~2
+        passes.}
+  \item \textbf{M3 --- first smoke test.}  Export M2 model and run
+        Stage~3.  \emph{Gate: at least one of G1/G2/G3 is closer to
+        baseline than the Gen-2 true-data result
+        (Tab.~\ref{gen2new:tab:allen_prev} in Gen-2 report).}
+  \item \textbf{M4 --- smoke-test pass.}  Iterate on $\lambda_J$ and
+        hidden-dim choice until all three gates pass.  \emph{Gate:
+        G1$<2.0$, $|$G2$|<1\,\%$, G3$<1.5$ simultaneously.}
+  \item \textbf{M5 --- accuracy ceiling.}  Repeat M1--M4 for
+        \texttt{nrk4\_small\_1step} with float16 export.  \emph{Gate:
+        same three gates pass at higher accuracy margin.}
+  \item \textbf{M6 --- PINN\_v2 rescue.}  Train
+        \texttt{pinn\_v2\_lam0.1} with Fix~G + Fix~H + full
+        $\Bfield$.  \emph{Gate: $\rho(\Delta x,qop)<0.1$; if not,
+        PINN\_v2 is retired.}
+  \item \textbf{M7 --- Kalman integration.}  Replace the RKN
+        extrapolator in the Allen HLT1 sequence with the M4/M5
+        model; record event-throughput impact and end-to-end
+        physics performance (tracking efficiency, fake rate,
+        momentum resolution).  \emph{Gate: no regression in
+        tracking efficiency; per-track inference time $\le$ RKN
+        baseline on the target HLT1 GPU (A5000 assumed; re-state
+        on the actual deployment GPU if different); throughput
+        improvement measurable at the event level.}
+\end{enumerate}
+
+% ============================================================================
+\subsection{M1 post-mortem and gen-2 inheritance audit}
+\label{gen3:sec:m1_postmortem}
+
+An initial Gen-3 M1 attempt (commit prior to the present revision)
+failed to learn: after 28~epochs on \num{1.4e6} training tracks the
+\texttt{nrk4\_tiny\_1step} correction scale
+($\exp \mathtt{log\_corr\_scale}$) regressed toward zero, i.e.\ the
+network actively suppressed its own correction branch and fell back to
+the pure RK4 baseline ($\sim\SI{164}{\mu m}$ mean $|\Delta x|$ on
+signed-$\dz$ tracks).  Root-cause analysis against the Gen-2 training
+recipe (\texttt{Quantum\_Track\_Reconstruction/Recreating\_paper\_results/gen2\_new\_data\_results.tex})
+identified three unjustified departures from the recipe that had
+shipped 0.125\,mm in Gen-2:
+
+\begin{enumerate}
+  \item \textbf{Loss change.}  Fix~I (detector-$\sigma$ loss) was
+        active on M1.  Detector resolutions
+        $\sigma \sim \mathcal{O}(\SI{10}{\mu m})$ at VELO make those
+        residuals dominate the objective, and the pure RK4 baseline
+        for large signed $|\dz|$ sits at $\sim\SI{164}{\mu m}$
+        --- more than an order of magnitude above the VELO target.
+        The optimiser's fastest route to loss reduction is to
+        \emph{shrink} the correction branch before the network has
+        learnt a useful correction; that is the observed failure
+        mode.  Gen-2 used a \emph{data-driven} normalised MSE
+        ($\sum_k ((y_k-\hat y_k)/\sigma^{\mathrm{data}}_k)^2$)
+        which weights each output by its empirical spread and is
+        therefore soft on the regions where the pure-RK4 floor is
+        unavoidable.  \textbf{Resolution:} M1 reverts to the Gen-2
+        normalised MSE.  Fix~I is deferred to M2, where it may be
+        introduced as a secondary objective after the correction
+        branch has converged.
+  \item \textbf{Hardcoded $z$-normalisation.}  The NeuralRK4
+        correction network previously assumed $z_0\in[0,\SI{10}{m}]$
+        and used a fixed $(z-\num{5000})/\num{5000}$ normaliser.
+        With the Gen-3 signed-$\dz$ data (Fix~C2) $z_0$ can be up
+        to $\SI{14}{m}$, violating that assumption.
+        \textbf{Resolution:} the normaliser now reads the dataset
+        mean/std from the model's \texttt{input\_mean}/
+        \texttt{input\_std} buffers, consistent with the treatment
+        of every other input component.
+  \item \textbf{Correction network blind to $\dz$.}  In Gen-2 the
+        $\dz$ values were unsigned and bounded ($\in[25,
+        \SI{10000}]\,\SI{}{mm}$), so the correction network's
+        inputs $(x,y,t_x,t_y,z,q/p)$ were sufficient.  In Gen-3
+        with signed $\dz$ the same state maps to two qualitatively
+        different propagations (forward vs backward), and the pure
+        RK4 residual grows as $\mathcal{O}(\dz^5)$ --- so the
+        correction network \emph{must} see $\dz$ to scale its own
+        output.  \textbf{Resolution:} the correction MLP input is
+        extended from 6 to 8 features, adding
+        $(\log_{10}|\dz|/100,\,\operatorname{sign}\dz)$.  This is
+        the only new \emph{architectural} change in Gen-3 relative
+        to the Gen-2 recipe; all other differences are data or
+        loss.  It is covered by Fix~C2 rather than a new Fix letter.
+\end{enumerate}
+
+\noindent After these three corrections, M1 smoke tests
+(\SI{80}{kilo} tracks $\times$ 3 epochs, CPU) produce:
+
+\begin{center}
+\small
+\begin{tabular}{lccc}
+\toprule
+Model & initial pos-rms & epoch-3 pos-rms & epoch-3 $|\Delta x|$ \\
+\midrule
+\texttt{mlp\_small}             & \SI{2569}{mm}  & \SI{1755}{mm}   & --- \\
+\texttt{nrk4\_small\_1step}     & \SI{785}{\mu m}& \SI{785}{\mu m} & \SI{47}{\mu m} \\
+\texttt{pinn\_v2\_small}        & \SI{860}{\mu m}& \SI{1515}{\mu m}& \SI{615}{\mu m} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The numbers confirm that (i) NeuralRK4 initialises at the
+pure-RK4 floor (correct behaviour from the 1-step integrator;
+correction branch gated by \texttt{log\_corr\_scale$\to\!-\infty$}
+until data loss warrants activation); (ii) the MLP learns from
+scratch on a non-trivial trajectory and is therefore still far from
+the floor at 3 epochs, as expected; and (iii) PINN\_v2 is still
+inside its physics-loss warm-up ramp ($\lambda_\mathrm{pde}$ at
+0.4--0.6 of target) and shows the classic PINN early-training
+divergence --- Gen-2 observed the same behaviour and recovered by
+epoch $\sim 20$.  None of these smoke-test points are gated
+results; full M1--M4 training is required before any verdict.
+
+\subsubsection{M1 full-run outcome (\texttt{*\_v1}, 200\,k tracks
+$\times$ 40 epochs, CPU; training 2026-04-24, audit \& writeup
+2026-05-06)}
+\label{gen3:sec:m1_v1_outcome}
+
+The full M1 campaign completed on 2026-04-24.  Headline numbers
+on the held-out test split:
+
+\begin{center}
+\small
+\begin{tabular}{lcccc}
+\toprule
+Run & trainable & best ep & mean $|\Delta x|$ & wall \\
+\midrule
+\texttt{mlp\_small\_v1}        & 18\,076 (\SI{70.6}{\kilo\byte}) & 40/40 & \SI{18.41}{\mm}    & 6.3\,m \\
+\texttt{nrk4\_tiny\_1step\_v1} &  4\,997 (\SI{19.5}{\kilo\byte}) &  4/21 & \SI{0.113}{\mm}     & 20.4\,m \\
+\texttt{nrk4\_small\_1step\_v1}& 18\,181 (\SI{71.0}{\kilo\byte}) &  4/21 & \SI{0.210}{\mm}     & 20.6\,m \\
+\texttt{pinn\_v2\_small\_v1}   & 10\,372 (\SI{40.5}{\kilo\byte}) & 16/25 & \SI{0.117}{\mm}     & 54.1\,m \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The triage of these results identified three issues
+that together explain why none of them passes the Stage-1 gate:
+
+\paragraph{F1 --- checkpoint $\neq$ weight memory (resolved, no
+bug).}  All four \texttt{best\_model.pt} files are 11\,MB on disk
+because the LHCb field grid (\texttt{field.B\_grid}, shape
+$1\times 3\times 146\times 81\times 81$, $\sim$\SI{11}{\mega\byte})
+is registered as a non-trainable buffer.  Trainable-parameter
+counts are the protocol-budget numbers in the table above; the
+Allen export pipeline strips the \texttt{field.*} keys so this is
+not a deployment-budget concern.
+
+\paragraph{F2 --- the data-MSE loss is heavy-tail dominated.}
+Re-running \texttt{validate()} on \texttt{nrk4\_tiny\_1step\_v1}
+across all three splits with the saved checkpoint gives:
+
+\begin{center}
+\small
+\begin{tabular}{lccc}
+\toprule
+Split & loss & mean $|\Delta x|$ & RMS pos\\
+\midrule
+val   & $1.43\!\times\!10^{-5}$ & \SI{0.122}{\mm} & \SI{1.15}{\mm}\\
+test  & $1.92\!\times\!10^{-7}$ & \SI{0.113}{\mm} & \SI{0.66}{\mm}\\
+train & $2.16\!\times\!10^{-4}$ & \SI{0.125}{\mm} & \SI{2.64}{\mm}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The loss varies by a factor of \num{1100} between splits; mean
+$|\Delta x|$ varies by $<10\,\%$.  The cause is a heavy tail in the
+residual distribution: a sub-percent fraction of high-$|q/p|$,
+large-$|\dz|$, backward-extrapolated tracks produce
+$\mathcal{O}(\mathrm{cm})$ errors, and the squaring in the
+$\sigma_\mathrm{data}$-normalised MSE makes a single such event
+worth $\sim 10^4$ typical events.  The number of tail events
+varies between splits at a level that swamps the body
+distribution.  \emph{Implication}: the squared-loss is unsuitable
+as a model-selection metric on Gen-3 signed-$\dz$ data, and the
+``best epoch by val\_loss'' criterion that worked on Gen-2 is no
+longer reliable.  This is a genuine Gen-3-specific finding ---
+Gen-2's bounded unsigned $|\dz|$ regime did not encounter it.
+The M1.5 fix (Fix~M, below) is to switch the selection metric to
+median $|\Delta x|$ and to wrap the residual in a $\log\cosh$
+non-linearity that has $L^2$ behaviour on the body and $L^1$
+asymptote on the tail.
+
+\paragraph{F3 --- the correction net destabilises pure RK4 under
+LR warm-up.}  The full per-epoch trace of
+\texttt{nrk4\_tiny\_1step\_v1} reads (on val):
+
+\begin{center}
+\small
+\begin{tabular}{ccccc}
+\toprule
+ep & lr & val\_loss & pos\_rms & $|\Delta x|$\\
+\midrule
+ 1 & $1.0\!\times\!10^{-4}$ & $1.0\!\times\!10^{-5}$ & \SI{1142}{\mu m} & \textbf{\SI{47.4}{\mu m}}\\
+ 2 & $2.0\!\times\!10^{-4}$ & $1.0\!\times\!10^{-5}$ & \SI{1142}{\mu m} & \SI{52.9}{\mu m}\\
+ 3 & $3.0\!\times\!10^{-4}$ & $1.0\!\times\!10^{-5}$ & \SI{1143}{\mu m} & \SI{72.1}{\mu m}\\
+ 4 & $4.0\!\times\!10^{-4}$ & $1.0\!\times\!10^{-5}$ & \SI{1146}{\mu m} & \SI{121.7}{\mu m}\\
+ 5 & $5.0\!\times\!10^{-4}$ & $1.0\!\times\!10^{-5}$ & \SI{1174}{\mu m} & \SI{254.4}{\mu m}\\
+ \multicolumn{5}{c}{\dots monotone degradation \dots}\\
+21 & $2.8\!\times\!10^{-4}$ & $1.7\!\times\!10^{-5}$ & \SI{8561}{\mu m} & \SI{7.1}{\mm}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Pure RK4 (epoch 1, LR still in warm-up at $10^{-4}$)
+delivers \textbf{\SI{47}{\mu m}} mean $|\Delta x|$ --- already
+\emph{below} the gen-2 converged \SI{125}{\mu m} reference, with
+zero learnable parameters.  As the cosine schedule ramps the LR
+through $5\!\times\!10^{-4}$ the correction branch fires and the
+network monotonically erases this gain, ending at \SI{7.1}{\mm}
+when early-stopping triggers.  The recorded ``best ep~4'' is an
+artefact of F2 (val\_loss is constant in the noise floor while
+mean $|\Delta x|$ is already drifting at epoch 2).
+
+\noindent The interpretation is direct: the \emph{dz-aware}
+correction-net features
+$(\log_{10}|\dz|/100,\,\operatorname{sign}\dz)$ added in Gen-3
+(Fix~K) span three orders of magnitude in scale, and at peak LR
+the network learns large corrections appropriate for the heavy
+tail and applies them to the body of the distribution.  Gen-2 with
+six bounded inputs did not encounter this regime.
+
+\subsection{M1.5 plan: principled improvement, not redesign}
+\label{gen3:sec:m1_5_plan}
+
+The M1 finding is that pure RK4 on the 7-input formulation
+(Fix~H) is already \emph{better} than the gen-2 corrected
+benchmark on the body of the distribution; the open problem is
+the long-$|\dz|$ tail.  M1.5 is therefore aimed at \emph{not
+breaking} pure RK4 on the body while letting the network correct
+the tail.  The four interventions below are dependency-ordered
+and individually motivated by an M1 finding.
+
+\begin{description}
+  \item[Fix~M --- $\log\cosh$ on detector-$\sigma$-normalised
+    residuals + median early-stop.]
+    Replace $((y-\hat y)/\sigma_\mathrm{data})^2$ with
+    $\log\cosh\!\big((y-\hat y)/\sigma_\mathrm{target}\big)$, which
+    is $L^2$ for small residuals (preserves the gen-2 convergence
+    on the body) and $L^1$-asymptotic for large residuals (caps
+    the tail's contribution to gradients).  Replace the val\_loss
+    early-stop / best-epoch criterion with median $|\Delta x|$ on
+    the val split.  Addresses F2.
+  \item[Fix~N --- truncation-error-gated correction.]
+    Replace the additive correction
+    $\Delta\mathbf{x}=s\cdot \mathrm{NN}(\dots)$ with the
+    multiplicative form
+    $\Delta\mathbf{x}=s\cdot \mathrm{NN}(\dots)\cdot\hat\sigma_{RK4}$,
+    where $\hat\sigma_{RK4}$ is an analytical local-truncation
+    estimate (proportional to $|\dz|^5$ and to the FSAL
+    difference $\|\mathbf{k}_4-\mathbf{k}_3\|$).  This gates the
+    correction off where pure RK4 is already accurate (the body)
+    and lets it act where RK4 is provably weak (the tail).
+    Addresses F3 structurally.
+  \item[Fix~O --- correction-input rescaling and \texttt{sign}-removal.]
+    Drop $\operatorname{sign}\dz$ from the correction-net input
+    (it is already encoded in the RK4 step direction).  Z-score
+    the $\log_{10}|\dz|/100$ feature using the training
+    statistics so the correction MLP's first-layer gradients are
+    isotropic.  Reduces input-feature dimension to seven and
+    removes a known source of correction-branch overshoot.
+  \item[Fix~P --- separate-LR optimiser groups + grad-norm guard.]
+    Optimise the correction MLP at $\mathrm{lr}_\mathrm{corr}=
+    \mathrm{lr}_\mathrm{main}/5$.  Add a moving-median gradient-norm
+    backstop: if $\|\nabla(\mathrm{correction\_net})\|>
+    10\times\mathrm{median}$ for three consecutive batches,
+    freeze \texttt{log\_corr\_scale} for one epoch.  Operational
+    safety net against the F3 runaway.
+\end{description}
+
+The MLP and PINN tracks are advanced in parallel: the MLP is
+deepened to a 4-layer recipe (matching gen-2 \texttt{mlp\_medium});
+the PINN is held at M1 results until Fix~G's PDE-residual
+unit-test (\texttt{tests/test\_pinn\_residual.py}) is implemented
+and passes.  These are necessary preconditions, not part of the
+M1.5 NRK4 thrust.
+
+\subsection*{Gen-3 thesis-defensible findings (settled by M1)}
+
+\begin{enumerate}
+  \item Pure RK4 on the 7-input (Fix~H) formulation achieves
+        \SI{47}{\mu m} mean $|\Delta x|$ on signed-$\dz$ data
+        with zero learnable parameters --- below the gen-2
+        corrected reference of \SI{125}{\mu m}.  This becomes
+        the new gen-3 baseline.
+  \item The Gen-2 squared-MSE loss with data-spread normalisation
+        is heavy-tail dominated under signed $\dz$ and is unsuitable
+        as a model-selection metric in the gen-3 regime
+        (factor-1100 inter-split variance vs $<10\,\%$ on
+        median residuals).
+  \item The Gen-2 correction-net architecture does \emph{not}
+        generalise verbatim to signed $\dz$: under the same
+        LR schedule it monotonically degrades pure RK4 on
+        the body of the distribution.  The required structural
+        change is a truncation-error-gated multiplicative
+        correction (Fix~N), not a feature addition.
+\end{enumerate}
+
+% ============================================================================
+\section{Known limitations carried forward}\label{gen3:sec:limits}
+
+\begin{itemize}
+  \item \textbf{Material effects --- confounder for G2.}  Baseline
+        Gen-3 trains on vacuum propagation; Bethe--Bloch and
+        Highland are staged for Gen-3.1.  This is a test-design
+        confounder, not just a limitation: a failing G2 at M4 cannot
+        be attributed to the extrapolator versus missing $dE/dx$.
+        The mitigation adopted here is to run Stage~3 with
+        \emph{material effects disabled in the standalone Kalman
+        filter at M4}, re-enabling them only at Gen-3.1.  A
+        light-weight Bethe--Bloch correction in the generator
+        ($dE/dx$ between RK4 sub-steps, makes $qop_f\ne qop_0$ and
+        exercises the A5 output head) is kept as a fallback if
+        Stage~3 with material-off indicates residual $\delta p/p$
+        sensitivity.
+  \item \textbf{Single polarity, symmetry assumption.}  MagDown
+        only; MagUp would be exact under $qop\to-qop$ only for a
+        pure $B_y$ field.  With the real interpolated field map
+        ($B_x,B_z$ non-zero in fringes) the symmetry is approximate.
+        MagUp training is staged for Gen-3.1; the A6 \texttt{polarity}
+        header field ensures a MagUp Allen run loading a MagDown
+        binary raises a hard error.
+  \item \textbf{Field-map uncertainty.}  Gen-3 treats the
+        \texttt{twodip.rtf} field map as ground truth; its measured
+        RMS error is ${\sim}1.3\,\%$.  A 1\,\% field error maps
+        directly to a $\sim 1\,\%$ $\delta p/p$ bias in G2
+        regardless of extrapolator quality; Gate~G2 should be read
+        modulo this irreducible floor.
+  \item \textbf{Slope-rejection cut.}  The Gen-2
+        post-integration rejection $|t|<2.0$ is retained but
+        tightened to $|t|<0.5$, comfortably above the LHCb
+        geometrical acceptance of ${\sim}0.3$\,rad and the training
+        envelope of $\pm 0.4/0.35$.
+  \item \textbf{No measurement noise.}  The data generator emits
+        exact RK4 trajectories; Allen feeds Kalman-estimated
+        states with covariance.  The training-inference mismatch
+        on input distribution is mitigated by C3 (wide sampling) but
+        not eliminated.
+  \item \textbf{Fix~J cost.} Jacobian regulariser is expensive;
+        per-epoch training time projected at $2\text{--}3\times$
+        baseline.  Acceptable within the long-queue HTCondor
+        policy.
+\end{itemize}
+
+% ============================================================================
+\section{Reproducibility}\label{gen3:sec:repro}
+
+\begin{itemize}
+  \item \textbf{Environment.}  \texttt{TE} conda env; PyTorch
+        2.9.1+cu128; Python 3.10; identical to Gen-2.
+        \texttt{environment.yml} and \texttt{requirements.txt}
+        pinned.
+  \item \textbf{Code.}  Branch \texttt{gen\_3} of
+        \texttt{TrackExtrapolation}.  New modules:
+        \texttt{experiments/gen\_3/utils/rk4\_propagator.py}
+        (C1-patched), \texttt{utils/magnetic\_field.py} (shared with
+        Gen-2), \texttt{models/architectures.py} (Fix H input shape,
+        A5 output head), \texttt{models/train.py} (Fix I
+        detector-$\sigma$ loss, Fix J Jacobian regulariser).
+  \item \textbf{Configs.}  \texttt{experiments/gen\_3/configs/}
+        with one JSON per candidate; each declares
+        \texttt{applied\_fixes=[C1,C2,C3,A5,H,I,\dots]} and
+        \texttt{supersedes=\{gen2\_experiment\_id\}}.
+  \item \textbf{MLflow.} Experiment
+        \texttt{gen\_3\_track\_extrapolation}; run tags include
+        \texttt{applied\_fixes}, \texttt{supersedes},
+        \texttt{loader\_version}, \texttt{dataset\_sha256},
+        \texttt{generator\_git\_hash}, \texttt{polarity}.
+        Metrics (floats, not booleans) include
+        \texttt{stage1\_velo\_mean\_dx},
+        \texttt{stage1\_ut\_mean\_dx},
+        \texttt{stage1\_scifi\_rho\_dx\_qop},
+        \texttt{stage1\_backward\_pass\_ratio},
+        \texttt{stage2\_jac\_median\_rel\_err},
+        \texttt{stage2\_jac\_p99\_rel\_err},
+        \texttt{smoketest\_g1\_chi2ndof},
+        \texttt{smoketest\_g2\_dpp\_bias},
+        \texttt{smoketest\_g3a\_pull\_std},
+        \texttt{smoketest\_g3b\_pull\_mean},
+        \texttt{throughput\_per\_track\_ns}.  Two passing candidates
+        must be rank-orderable from MLflow alone.
+  \item \textbf{Data.}  \texttt{train\_50M\_gen3.npz} +
+        \texttt{\dots.meta.json}.  SHA-256 logged in MLflow and
+        written into every exported Allen binary (A6).
+  \item \textbf{Allen binaries.}  Written to
+        \texttt{Allen/ML\_research/models/gen3/} with the filename
+        pattern \texttt{\{candidate\}\_\{applied\_fixes\}\_\{git\_hash\}.bin}.
+\end{itemize}
+
+% ============================================================================
+\section{Summary}\label{gen3:sec:summary}
+
+Gen-3 is a \emph{deployment-first} iteration.  The protocol does not
+introduce new model families; instead it takes the best Gen-2
+candidate per family, patches the five blocking issues identified in
+the Gen-2 §5 Allen-readiness audit (C1, C2, C3, A2, A3), adds four
+theoretical improvements (Fixes G--J) derived from the Gen-2 §4.5.1
+SciFi failure diagnostics, and runs each candidate through a
+three-stage validation funnel terminating in the Allen standalone
+smoke test.  The primary success metric is binary: at least one
+candidate passes G1+G2+G3 simultaneously at milestone M4.
+
+\begin{itemize}
+\item \textbf{Primary candidate:}  \texttt{nrk4\_tiny\_1step} with
+      Fixes C1+C2+C3+A5+H+I; first to attempt the smoke test
+      because it is the only Gen-2 model that satisfies A2 and A3
+      simultaneously.
+\item \textbf{Accuracy ceiling:}  \texttt{nrk4\_small\_1step} with
+      the same fixes plus float16 export.
+\item \textbf{Physics-informed rescue:}  \texttt{pinn\_v2\_lam0.1}
+      with Fix~G; if the $\rho(\Delta x,qop)$ criterion is not met
+      after Fix~G, PINN\_v2 is retired from the deployment path.
+\item \textbf{Reference only:}  \texttt{mlp\_medium} with Fix~K
+      ablation; not a deployment target.
+\end{itemize}
+
+A Gen-3.1 follow-up is staged to address material effects
+(Bethe--Bloch, Highland) and mixed magnet polarity once the vacuum
+deployment is proven.
+
+\paragraph{Reviewer pass-through.}  This protocol incorporates
+blocking issues B1--B4 (C1 coefficient factor-$10^3$ error, Allen
+loader V3 contract, Jacobian dimensionality, component-dependent
+detector $\sigma$) and advisable items N1--N15 from the
+\texttt{experiment-reviewer} audit (2026-04-23); all pre-M0 gates
+have been hardened to numerically enforceable thresholds.
+
+% ============================================================================
+\begin{thebibliography}{9}
+
+\bibitem{gen1report}
+G.~Scriven, \emph{Gen-1 neural track extrapolation for Allen HLT1},
+internal note, 2026.
+
+\bibitem{gen2report}
+G.~Scriven, \emph{Gen-2 neural track extrapolation on the
+\texttt{train\_50M\_dz25} dataset}, internal note,
+\texttt{gen2\_new\_data\_results.tex}, 2026.
+
+\bibitem{gen2protocol}
+G.~Scriven, \emph{Gen-2 experimental protocol}, internal note,
+\texttt{gen2\_experimental\_protocol.tex}, 2026.
+
+\bibitem{AllenREADME}
+LHCb Allen team, \emph{ML\_research: machine-learning extrapolator
+integration in Allen HLT1}, \texttt{Allen/ML\_research/README.md},
+2026.
+
+\bibitem{AllenDeepDive}
+G.~Scriven, \emph{Gen-2 true-data Allen deep dive},
+\texttt{Allen/ML\_research/gen2\_true\_data\_deep\_dive.md}, 2026.
+
+\end{thebibliography}
+
+% ============================================================================
+\section{Audit addendum (2026-05-06): PINN\_v2 / NeuralRK4 code review and
+         Allen deployment kernel}\label{gen3:sec:audit-addendum}
+
+A focused source-level audit of
+\texttt{models/architectures.py} and the Allen
+\texttt{ParKalman/include/} headers, performed on 2026-05-06,
+adds three architectural findings that supplement F1--F3 of
+\S\ref{gen3:sec:m1-v1-outcome} and crystallises the deployment
+kernel design.
+
+\paragraph{PINN\_v2 magnet-kick term verified correct.}  Direct
+comparison of the cross-product expressions in the gen-3 PDE
+residual against (i) the gen-3 RK4 propagator and (ii)
+Allen's \texttt{ExtrapolatorCommon::derivative} confirms that the
+gen-2 \S4.5.1 $\rho(\Delta x, qop) = +0.92$ bias does \emph{not}
+arise from a sign or factor error in the residual.  It originates
+from three structural defects:
+\begin{enumerate}\setlength{\itemsep}{0pt}
+  \item Dimensionally inhomogeneous PDE weighting
+        (\texttt{pde\_scale = output\_std[:4] / |dz|}) mixes
+        mm-scale $(x,y)$ with dimensionless $(t_x,t_y)$ entries
+        and produces an asymmetric $|\dz|$-weighting that
+        dominates the loss in the high-$|qop|$ tail.
+  \item The IC envelope guarantees
+        $\mathrm{forward\_at\_z}(z_\mathrm{frac}=0)\equiv$
+        initial state by construction; the IC loss has no
+        gradient and \texttt{lambda\_ic} is operationally inert.
+  \item The 4-output head writes independently into
+        $(x,y,t_x,t_y)$, so $\mathrm{d}/\mathrm{d}z\,(x_\mathrm{out})\neq t_{x,\mathrm{out}}$ even
+        at $z_\mathrm{frac}=1$.  The network can satisfy the
+        data loss while violating its own ODE.
+\end{enumerate}
+PINN\_v2 is therefore retired from the M1.5 deployment path; Fix~G
+alone does not stabilise it.  A closed-form unit test on a
+uniform $B_y$ helix (sagitta $1.499{\times}10^{-2}$~mm at
+$\dz=1$~m, $q/p=1/(10\,\mathrm{GeV})$) is the gate before any PINN
+retrain.
+
+\paragraph{NeuralRK4 correction applies inside \texttt{\_rhs} at
+every RK4 stage; \emph{not} truncation-gated.}  The current
+implementation evaluates the same correction MLP at $k_1,k_2,k_3,k_4$
+and rescales by $\exp(s_\mathrm{corr})\cdot
+\mathrm{output\_std}/|\dz|_\mathrm{clamp}$.  The scaling is
+unbounded: a $\sim 1.5$~nat upward drift in $s_\mathrm{corr}$
+drives the per-stage correction to $\mathcal{O}(\mathrm{output\_std})\sim\SI{10}{mm}$,
+quantitatively explaining the F3 \SI{7.1}{mm} blow-up.  Fix~N is
+implemented by moving the correction \emph{outside} \texttt{\_rhs},
+applying it once per RK4 step on the state increment, and gating
+it by an FSAL-style estimator
+$\sigma=\tanh\!\bigl(\alpha\,\|k_4-k_3\|\,|h|\bigr)$.  Of the three
+estimators considered (FSAL, closed-form $|\dz|^5$, Richardson
+half-step), FSAL is recommended: zero extra field calls, tracks
+the true local truncation error rather than the structural
+$|\dz|^5$ proxy, and naturally amplifies near the magnet centre.
+
+\paragraph{Allen deployment kernel.}
+\begin{itemize}\setlength{\itemsep}{0pt}
+  \item No GPU MLP/NN extrapolator currently exists in Allen;
+        \texttt{ML\_research/standalone/MLPExtrapolator.cuh} is
+        host-only.  The new kernel
+        \texttt{NeuralRK4Extrapolator.cuh} is to live alongside
+        \texttt{RungeKuttaExtrapolator.cuh}.
+  \item Weights in CUDA \texttt{\_\_constant\_\_} memory (gate~A1).
+        Concrete budgets:
+        \texttt{nrk4\_tiny\_1step}\ $=$\ 20\,084~B
+        ($\SI{31}{\percent}$ of the \SI{64}{kB} A3 budget);
+        \texttt{nrk4\_small\_1step} fp32 $=$ 72\,824~B
+        (violates A3 by $\SI{14}{\percent}$); fp16 weights
+        with fp32 accumulators $=$ 36\,512~B (passes A3 with
+        $\SI{43}{\percent}$ headroom).
+  \item Field grid \emph{not} shipped with the model:
+        \texttt{Magfield::fieldVectorLinearInterpolation(float3)}
+        is the on-device API; Allen already carries the
+        $1{\times}3{\times}146{\times}81{\times}81$~fp32 grid
+        in texture memory.  This closes F1: the \SI{11}{MB} bulk
+        of the gen-3 checkpoints is the
+        \texttt{field.B\_grid} buffer, which is stripped at
+        export.
+  \item Latency on A5000: 4 field lookups $+\,\sim\!5\,000$
+        fp32 MACs $\approx \SI{0.3}{\mu s}$ per track,
+        comfortably inside the single-digit-$\mu$s envelope.
+  \item Jacobian (gate~A7): hand-unrolled forward-mode AD
+        recommended.  Allen's
+        \texttt{RungeKuttaNystromExtrapolator::incrementJacobian}
+        already implements the closed-form RK4 path; we extend it
+        with a 5-wide tangent through each $\mathrm{Linear}+\tanh$
+        of the correction MLP (5$\times$ MLP cost
+        $\approx\SI{150}{ns}$).  Finite-difference (5$\times$
+        cost; pull-width artefacts) and \texttt{torch.func.jvp}
+        (libtorch on-device) are rejected.
+\end{itemize}
+
+\paragraph{V3 loader binary contract.}  Little-endian, 32~B fixed
+header (\texttt{magic = 0x4E524B34}, \texttt{version = 3},
+\texttt{model\_kind} $\in\{\mathrm{MLP},\mathrm{PINN\_v2},\mathrm{NeuralRK4},\mathrm{NeuralRK4{+}FixN}\}$,
+$\mathrm{input\_dim}=7$, $\mathrm{output\_dim}=5$,
+\texttt{weight\_dtype}, \texttt{activation},
+$n_\mathrm{layers}$), per-layer records, normalisation buffers,
+NRK4 extras (\texttt{log\_corr\_scale},
+$\alpha_\mathrm{FixN}$, $n_\mathrm{rk\_steps}$), SHA-256 of the
+training data, git hash, CRC32 of preceding bytes.  V2 files
+without magic remain readable for back-compatibility.
+
+\paragraph{Smoke-test bridge.}  A bitwise-identical
+Python$\leftrightarrow$C++ comparison on a fixed 100-track set
+gates any Allen merge:
+$\|y_\mathrm{py}-y_\mathrm{cpp}\|_\infty < \SI{e-6}{mm}$ in
+$(x,y)$ and $<10^{-9}$ in $(t_x,t_y)$.
+
+\paragraph{Capacity-only MLP probe completed.}  The planned
+4-layer $\times$ 128 MLP retrain (\texttt{mlp\_medium\_v1}) has now
+completed on the same 200k-track / 80-epoch CPU protocol.  The
+result is materially better than \texttt{mlp\_small\_v1} but still
+far from the physics-aware baselines: mean
+$|\Delta x|=\SI{5.569}{mm}$, mean $|\Delta y|=\SI{4.318}{mm}$,
+RMS position error $=\SI{10.969}{mm}$ on the test split, versus
+\SI{18.41}{mm} / \SI{13.86}{mm} / \SI{36.3}{mm} for
+\texttt{mlp\_small\_v1}.  This is a $\sim 3.3\times$ gain from
+capacity alone, but still $\sim 49\times$ worse than the pure-RK4
+baseline (\texttt{nrk4\_tiny\_1step\_v1} at \SI{0.113}{mm}).  The
+correct conclusion is that extra MLP capacity helps but does not
+address the underlying signed-$\dz$ tail structure; M1.5 effort
+should remain concentrated on the NRK4 path.
+
+\paragraph{M1.5 next-action backlog (dependency-ordered).}
+\begin{enumerate}\setlength{\itemsep}{0pt}
+  \item Replace dimensionally inhomogeneous \texttt{pde\_scale};
+        rebuild IC envelope as boundary collocation at
+        $z_\mathrm{frac}=1$ (architectures.py L325--373).
+  \item Add closed-form \texttt{test\_uniform\_By\_helix} unit
+        test before any PINN retrain.
+  \item Apply Fix~N (truncation-gated correction outside
+        \texttt{\_rhs}) and Fix~O (drop $\mathrm{sign}(\dz)$,
+        $z$-score $\log_{10}|\dz|/100$); init
+        $s_\mathrm{corr}=-5$ with \texttt{clamp\_max(0)}
+        (architectures.py L709--820).
+  \item Implement Fix~M ($\log\cosh$ + median-$|\Delta x|$
+        early-stop) and Fix~P (separate-LR groups, grad-norm
+        guard) in \texttt{models/train.py}.
+  \item Write \texttt{scripts/export\_v3.py} (strip
+        \texttt{field.B\_grid}; emit V3 binary).
+  \item Add \texttt{NeuralRK4Extrapolator.cuh} with
+        hand-unrolled forward-mode AD Jacobian.
+  \item Patch \texttt{MLPExtrapolator.cuh} to V3
+        (magic header, fp32 native, 7-in/5-out).
+  \item Smoke-test bridge:
+        \texttt{dump\_smoke\_tracks.py},
+        \texttt{test\_nrk4\_v3.cpp},
+        \texttt{nrk4\_smoke\_compare.ipynb}; merge gate as above.
+\end{enumerate}
+Items 1--4 are training-side; 5--8 are deployment-side and may
+proceed in parallel once the V3 export contract (item 5) is
+fixed.
+
+\end{document}

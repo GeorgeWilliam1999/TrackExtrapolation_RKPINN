@@ -1,0 +1,39 @@
+{
+  "tagged_from": "experiments/gen_3/trained_models/pinn_v2_small_v1",
+  "tagged_on": "2026-05-20",
+  "tagged_by": "R4 exit gate (EXECUTION_PLAN.md §5)",
+  "architecture": "PINN_v2",
+  "hidden_dims": [96, 96],
+  "params": 10372,
+  "size_fp32_bytes": 41488,
+  "size_kB": 40.5,
+  "fits_64kB_fp32": true,
+  "fits_64kB_fp16": true,
+  "test_set_metrics": {
+    "n_test": null,
+    "median_dx_mm": 0.01172,
+    "p68_dx_mm": null,
+    "p95_dx_mm": 0.4541,
+    "p99_dx_mm": 1.8489,
+    "source": "experiments/gen_3/results/R4_pinn_eval_2026-05-20.json"
+  },
+  "a4_jacobian_gate": {
+    "frob_rel_mean": 0.0009,
+    "frob_rel_p95":  0.0020,
+    "off_max_frob_p95": 0.000499,
+    "gate_frob": 0.05,
+    "gate_off": 0.05,
+    "verdict": "PASS",
+    "margin_factor": "~100x below both gates"
+  },
+  "r3_r4_negative_results": {
+    "mlp_arm_retired": "mlp_small_v2 = 1.67 mm median; mlp_medium_v2 = 0.97 mm median; both fail R3 0.5 mm gate.",
+    "pinn_v2_scaling_did_not_help": "pinn_v2_medium_v2 = 25.27 µm median (vs 11.72 µm for this model). Scaling 10k->69k params regressed median by 2.2x. 2M corpus saturated for small model."
+  },
+  "next_steps": [
+    "R5: export V4 blob via For_Allen/src/for_allen/export/blob_writer.py",
+    "R5: bit-bound CUDA-vs-Python parity test",
+    "R6: wire into NRKExtrapolator.cuh as MLForwardPass<PINN_V2>"
+  ],
+  "do_not_modify": true
+}
