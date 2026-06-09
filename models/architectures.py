@@ -256,6 +256,9 @@ class PINN_v2(BaseTrackExtrapolator):
         lambda_ic: float = 0.1,
         n_collocation: int = 2,
         field_model: Optional[nn.Module] = None,
+        kick_scaled_head: bool = False,
+        pde_scale_mode: str = "legacy",
+        pde_ref_length: float = 5213.0,
     ):
         super().__init__(input_dim=7, output_dim=5)
         self.hidden_dims = list(hidden_dims)
@@ -264,6 +267,10 @@ class PINN_v2(BaseTrackExtrapolator):
         self.lambda_pde = float(lambda_pde)
         self.lambda_ic = float(lambda_ic)
         self.n_collocation = int(n_collocation)
+        # --- 2026-06-08 model-improvement flags (default off == locked candidate) ---
+        self.kick_scaled_head = bool(kick_scaled_head)   # couple correction to qop*dz magnet kick (q/p-bias fix)
+        self.pde_scale_mode = str(pde_scale_mode)        # "legacy" | "fixed_L"
+        self.pde_ref_length = float(pde_ref_length)      # reference length for fixed_L PDE scaling [mm]
 
         self.field = field_model if field_model is not None else get_field_torch(
             use_interpolated=True, polarity=-1
@@ -281,6 +288,12 @@ class PINN_v2(BaseTrackExtrapolator):
         self.encoder = nn.Sequential(*enc_layers)
         self.correction_head = nn.Linear(prev, 4)
         self._init_weights()
+        if self.kick_scaled_head:
+            # Per-channel learnable gain (init exp(0)=1) so the optimiser calibrates
+            # the kick magnitude. The correction is multiplied by the qop-scaled kick
+            # (kappa = qop * c, NO field lookup), so the network learns only a
+            # dimensionless O(1) shape and the q/p magnitude is exact by construction.
+            self.kick_loggain = nn.Parameter(torch.zeros(4))
 
     def _init_weights(self) -> None:
         for m in self.encoder.modules():
@@ -311,10 +324,23 @@ class PINN_v2(BaseTrackExtrapolator):
         zf = z_frac.squeeze(1)
         delta_z = zf * dz
 
-        x_out  = x0p + tx0 * delta_z + corr[:, 2] * zf * dz
-        y_out  = y0p + ty0 * delta_z + corr[:, 3] * zf * dz
-        tx_out = tx0 + corr[:, 0] * zf
-        ty_out = ty0 + corr[:, 1] * zf
+        if self.kick_scaled_head:
+            # Couple the correction to the leading-order magnet kick. kappa = qop * c
+            # (Allen units) carries the full q/p dependence, so the network only has to
+            # learn a dimensionless O(1) shape; the q/p magnitude is built in. No field
+            # lookup -> still a true replacement. IC preserved: every term carries zf.
+            qop = x0[:, 4]
+            kappa_dz = (_ALLEN_KAPPA_PREFACTOR * qop) * dz       # slope-kick scale  [B]
+            g = torch.exp(self.kick_loggain)                     # per-channel gain  [4]
+            tx_out = tx0 + zf * g[0] * kappa_dz * corr[:, 0]
+            ty_out = ty0 + zf * g[1] * kappa_dz * corr[:, 1]
+            x_out  = x0p + tx0 * delta_z + g[2] * kappa_dz * delta_z * corr[:, 2]
+            y_out  = y0p + ty0 * delta_z + g[3] * kappa_dz * delta_z * corr[:, 3]
+        else:
+            x_out  = x0p + tx0 * delta_z + corr[:, 2] * zf * dz
+            y_out  = y0p + ty0 * delta_z + corr[:, 3] * zf * dz
+            tx_out = tx0 + corr[:, 0] * zf
+            ty_out = ty0 + corr[:, 1] * zf
         return torch.stack([x_out, y_out, tx_out, ty_out], dim=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -388,7 +414,16 @@ class PINN_v2(BaseTrackExtrapolator):
         dy_dz_phys = dy_dz_frac / torch.where(
             dz_rep.abs() < 25.0, torch.sign(dz_rep) * 25.0, dz_rep
         ).unsqueeze(1)
-        pde_scale = self.output_std[:4].unsqueeze(0) / dz_abs_safe.unsqueeze(1)
+        if self.pde_scale_mode == "fixed_L":
+            # Non-dimensionalise the derivative residual by a *fixed* reference length
+            # rather than per-sample |dz|. The legacy sigma/|dz| scaling amplifies
+            # large-|dz| tracks ~linearly, over-weighting exactly the high-bend / heavy-
+            # tail population implicated in the q/p residual bias (gen3_m1 audit). A
+            # fixed L makes every track's residual comparable.
+            pde_scale = (self.output_std[:4] / float(self.pde_ref_length)).unsqueeze(0)
+            pde_scale = pde_scale.expand(dz_abs_safe.shape[0], -1)
+        else:
+            pde_scale = self.output_std[:4].unsqueeze(0) / dz_abs_safe.unsqueeze(1)
 
         r_x  = ((dy_dz_phys[:, 0] - dx_exp ) / pde_scale[:, 0]).pow(2)
         r_y  = ((dy_dz_phys[:, 1] - dy_exp ) / pde_scale[:, 1]).pow(2)
@@ -415,7 +450,12 @@ class PINN_v2(BaseTrackExtrapolator):
             "lambda_pde": self.lambda_pde,
             "lambda_ic": self.lambda_ic,
             "n_collocation": self.n_collocation,
-            "fixes_applied": ["A_jvp", "B_stochastic_colloc", "C_z_dependent_trunk", "H_z_start"],
+            "kick_scaled_head": self.kick_scaled_head,
+            "pde_scale_mode": self.pde_scale_mode,
+            "pde_ref_length": self.pde_ref_length,
+            "fixes_applied": ["A_jvp", "B_stochastic_colloc", "C_z_dependent_trunk", "H_z_start"]
+                + (["K_kick_scaled_head"] if self.kick_scaled_head else [])
+                + (["L_fixed_pde_scale"] if self.pde_scale_mode == "fixed_L" else []),
             "parameters": self.count_parameters(),
         }
 

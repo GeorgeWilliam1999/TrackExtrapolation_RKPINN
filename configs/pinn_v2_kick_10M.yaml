@@ -1,0 +1,58 @@
+# =============================================================================
+# 2026-06-08 model-improvement run: q/p-bias fix.
+#
+# Same architecture as the locked candidate pinn_v2_small_v1 ([96,96] tanh,
+# 10,372 params) but with TWO new flags:
+#   * kick_scaled_head=true  -> the correction is multiplied by the qop-scaled
+#     magnet kick (kappa = qop*c, NO field lookup), so the network learns only a
+#     dimensionless shape and the q/p magnitude is exact by construction. This
+#     directly targets the SciFi-T3 bias rho(dx,q/p)=+0.217 (gen3_m1 audit) and
+#     the 287 um UT->T tail. Adds 4 learnable gain params (-> 10,376).
+#   * pde_scale_mode=fixed_L -> non-dimensionalise the PDE residual by a fixed
+#     reference length (UT->T Delta z) instead of per-sample |dz|, which removes
+#     the large-|dz| over-weighting that correlates with the bias.
+#
+# Trained on the FULL 10M corpus (the locked candidate only ever saw a 200k/2M
+# subset). Still a true replacement: no field map at inference. A4 must be
+# re-checked after training (run_r2_jacobian.py).
+# =============================================================================
+
+seed: 42
+data_path: /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3/data/train_10M_gen3.npz
+max_samples: 10000000
+train_fraction: 0.8
+val_fraction: 0.1
+
+model_type: pinn_v2
+hidden_dims: [96, 96]
+activation: tanh
+dropout: 0.0
+lambda_pde: 0.1
+lambda_ic: 0.01
+n_collocation: 2
+physics_warmup_epochs: 10
+
+# --- new model-improvement flags ---
+kick_scaled_head: true
+pde_scale_mode: fixed_L
+pde_ref_length: 5213.0
+
+batch_size: 4096
+epochs: 80
+learning_rate: 0.0005
+weight_decay: 0.0001
+warmup_epochs: 5
+grad_clip: 1.0
+patience: 25
+min_delta: 1.0e-7
+
+loss: log_cosh
+
+checkpoint_dir: /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3/trained_models
+experiment_name: pinn_v2_kick_10M
+use_mlflow: true
+mlflow_experiment_name: gen_3_track_extrapolation
+
+device: cuda         # GPU submit (condor/train_gpu.sub)
+num_workers: 2
+pin_memory: true

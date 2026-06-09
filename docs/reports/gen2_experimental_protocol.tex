@@ -1,0 +1,1434 @@
+% =============================================================================
+% Experimental Protocol: gen_2 Neural Track Extrapolation for LHCb Allen HLT1
+%
+% Author: G. Scriven
+% Date: April 2026
+% =============================================================================
+\documentclass[a4paper,11pt]{article}
+\usepackage[margin=2.5cm]{geometry}
+
+% --- Packages ---
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{algorithm}
+%\usepackage{algpseudocode}  % not available
+%\usepackage{multirow}  % not available
+\usepackage{array}
+\usepackage{bm}
+\usepackage{microtype}          % improves line breaking / reduces overfull boxes
+
+% Custom commands — SI unit replacements (siunitx not available)
+\newcommand{\SI}[2]{#1~#2}
+\newcommand{\SIrange}[3]{#1--#2~#3}
+\newcommand{\num}[1]{#1}
+\newcommand{\si}[1]{#1}
+\newcommand{\kilo}{k}
+\newcommand{\byte}{B}
+\newcommand{\tesla}{T}
+\newcommand{\mega}{M}
+\newcommand{\hertz}{Hz}
+\newcommand{\giga}{G}
+\newcommand{\eV}{eV}
+\newcommand{\mm}{mm}
+\newcommand{\minute}{min}
+\newcommand{\qop}{q/p}
+\newcommand{\dz}{\Delta z}
+\newcommand{\Bfield}{\mathbf{B}}
+\newcommand{\state}{\mathbf{y}}
+\newcommand{\Jac}{\mathbf{J}}
+\newcommand{\loss}{\mathcal{L}}
+\newcommand{\btheta}{\bm{\theta}}
+
+\begin{document}
+
+% ============================================================================
+\title{Experimental Protocol: Second-Generation Neural Track Extrapolation\\
+for the LHCb Allen HLT1 Trigger}
+
+\author{G.~Scriven\\\small Maastricht University, UHasselt, Nikhef}
+
+\date{\today}
+
+\begin{abstract}
+This document specifies the experimental protocol for the \texttt{gen\_2}
+study of neural network--based track extrapolation in the LHCb experiment.
+The study trains multi-layer perceptrons (MLPs), physics-informed neural
+networks (PINNs), and Runge-Kutta--structured PINNs (RK\_PINNs) to
+approximate the fourth-order Runge-Kutta (RK4) numerical extrapolator that
+propagates charged-particle states through the LHCb dipole magnetic field.
+Nine model configurations are trained on \num{50e6} RK4-generated tracks
+spanning $\dz \in [25, 10000]$~mm and $p \in [1, 200]$~GeV/$c$.  The
+protocol addresses two research questions: (RQ1) whether GPU-deployable
+models ($\leq$~\SI{64}{\kilo\byte}) achieve accuracy competitive with RK4
+for integration into Allen HLT1, and (RQ2) whether physics-informed
+training improves accuracy-per-parameter relative to purely data-driven
+training.  All data generation parameters, model architectures, loss
+functions, training hyperparameters, evaluation metrics, known confounds,
+and reproducibility provisions are specified in full.
+\end{abstract}
+
+\maketitle
+
+% ============================================================================
+\section{Introduction}
+\label{sec:introduction}
+
+The LHCb detector~\cite{LHCb_detector} reconstructs the trajectories of
+charged particles produced in proton--proton collisions at the Large Hadron
+Collider.  Track reconstruction requires propagating particle states
+through the inhomogeneous LHCb dipole magnetic field from one detector
+element to another---a procedure called \emph{track extrapolation}.  The
+production extrapolator is a fourth-order Runge-Kutta (RK4)
+integrator~\cite{RK4_extrapolator} that evaluates the Lorentz force
+equation at each integration step, with the magnetic field obtained by
+trilinear interpolation of a measured three-dimensional field
+map~\cite{LHCb_field_map}.
+
+In the upgraded LHCb detector operating at Run~3 and beyond, the
+first-level software trigger (HLT1) runs entirely on
+GPUs~\cite{Allen_GPU}.  The Allen framework executes real-time pattern
+recognition at the full \SI{30}{\mega\hertz} bunch-crossing rate.  Track
+extrapolation---called $\mathcal{O}(10^6)$ times per event---is a
+significant contributor to the per-event processing time.  Replacing the
+RK4 integrator with a neural network that can be evaluated efficiently in
+GPU registers or constant memory offers a potential throughput improvement,
+provided the accuracy degradation is acceptable for the downstream Kalman
+filter~\cite{Kalman_filter}.
+
+This document defines the protocol for \texttt{gen\_2}, the second
+generation of this investigation.  The first generation
+(\texttt{gen\_1})~established feasibility: a two-layer MLP with
+architecture $[64, 64]$ achieved a mean position error of \SI{0.49}{\mm}
+and was deployable within the \SI{64}{\kilo\byte} CUDA \texttt{\_\_constant\_\_}
+memory limit.  However, \texttt{gen\_1} had two shortcomings: (i)~training
+data used $\dz_\text{min} = \SI{100}{\mm}$, which does not cover the
+\SIrange{25}{30}{\mm} spacing between VELO silicon pixel sensors, and
+(ii)~the larger models that achieved better accuracy exceeded the
+\SI{64}{\kilo\byte} deployment constraint.
+
+\texttt{gen\_2} addresses both issues by extending the $\dz$ range down
+to \SI{25}{\mm} and constraining all model architectures to
+$\leq$~\SI{64}{\kilo\byte}.  It further introduces physics-informed
+training as a mechanism to improve accuracy without increasing model size.
+
+\subsection{Research Questions}
+
+\noindent\textbf{RQ1 --- Engineering viability.}
+Are GPU-deployable models ($\leq$~\SI{64}{\kilo\byte}) accurate enough for
+integration into the Allen HLT1 workflow?  Specifically, does the MLP
+extrapolator achieve position and slope accuracy competitive with the RK4
+ground truth, particularly at the short $\dz$ values
+(\SIrange{25}{100}{\mm}) relevant to VELO track fitting?
+
+\noindent\textbf{RQ2 --- Physics-informed training.}
+For a given architecture size, does embedding the Lorentz force ordinary
+differential equation (ODE) as a soft constraint during training (PINN,
+RK\_PINN) yield a model that generalises better---measured by
+accuracy-per-parameter---compared to purely data-driven (MLP) training?
+
+% ============================================================================
+\section{Data Generation Protocol}
+\label{sec:data_generation}
+
+\subsection{Ground-Truth Integrator}
+
+Training data are generated by a fixed-step-size RK4 integrator
+(\texttt{experiments/\allowbreak gen\_2/\allowbreak utils/\allowbreak rk4\_propagator.py}) that propagates the
+five-dimensional state vector
+$\state = (x, y, t_x, t_y, q/p)$
+through the LHCb magnetic field from an initial longitudinal position
+$z_0$ to $z_f = z_0 + \dz$.  The integration step size is
+$h = \SI{5}{\mm}$, chosen to be well within the stability region of RK4
+for the field gradients encountered in the LHCb tracking
+volume~\cite{RK4_extrapolator}.  Momentum ($q/p$) is conserved along the
+trajectory (no material interactions).
+
+\subsection{Magnetic Field Map}
+
+The magnetic field is evaluated by trilinear interpolation of the measured
+field map \texttt{twodip.rtf}, which tabulates $B_x$, $B_y$, $B_z$ on an
+$81 \times 81 \times 146$ Cartesian grid:
+\begin{itemize}
+  \item $x, y \in [-4000, 4000]$~mm at \SI{100}{\mm} spacing,
+  \item $z \in [-500, 14000]$~mm with variable spacing,
+  \item peak $|B_y| \approx \SI{1.03}{\tesla}$ at $z \approx \SI{5007}{\mm}$.
+\end{itemize}
+The same interpolation module
+(\texttt{experiments/gen\_2/utils/magnetic\_field.py}) is used for data
+generation (NumPy backend) and for physics-informed training (PyTorch
+backend with \texttt{torch.nn.functional.grid\_sample}), ensuring
+consistency between the ground truth and the PDE residual computation.
+
+\subsection{Sampling Strategy}
+
+Each training sample consists of a randomly drawn initial state and step
+size.  The parameter ranges and sampling distributions are:
+\begin{align}
+  z_0        &\sim \mathcal{U}(0,\; 14000 - \dz) \text{ mm}, \label{eq:z0} \\
+  \dz        &\sim \mathcal{U}(25,\; 10000) \text{ mm}, \label{eq:dz} \\
+  p          &\sim \text{LogU}(1,\; 200) \text{ GeV}/c, \label{eq:p} \\
+  x_0        &\sim \mathcal{U}(-300,\; 300) \text{ mm}, \label{eq:x0} \\
+  y_0        &\sim \mathcal{U}(-250,\; 250) \text{ mm}, \label{eq:y0} \\
+  t_{x,0}    &\sim \mathcal{U}(-0.3,\; 0.3), \label{eq:tx0} \\
+  t_{y,0}    &\sim \mathcal{U}(-0.25,\; 0.25), \label{eq:ty0}
+\end{align}
+where $\mathcal{U}$ denotes uniform sampling and $\text{LogU}$ denotes
+log-uniform (uniform in $\log p$).  The charge sign is fixed to $q = -1$
+(MagDown polarity).  Tracks that diverge beyond $|x|$ or $|y| >
+\SI{5000}{\mm}$, or whose slopes exceed $|t_x|$ or $|t_y| > 2.0$, are
+rejected as unphysical.
+
+The extension of $\dz_\text{min}$ from \SI{100}{\mm} (\texttt{gen\_1}) to
+\SI{25}{\mm} is motivated by the VELO sensor pitch: the Kalman filter
+propagates states between consecutive VELO planes separated by
+\SIrange{25}{30}{\mm}, and the neural extrapolator must handle these
+short steps.
+
+\subsection{Input and Output Representation}
+\label{sec:io_format}
+
+The neural network input is a six-dimensional vector:
+\begin{equation}
+  \mathbf{x} = (x_0,\; y_0,\; t_{x,0},\; t_{y,0},\; q/p,\; \dz),
+  \label{eq:input}
+\end{equation}
+with units $(\text{mm},\; \text{mm},\; -,\; -,\; \text{MeV}^{-1},\;
+\text{mm})$.  The output is the four-dimensional extrapolated state:
+\begin{equation}
+  \mathbf{y} = (x_f,\; y_f,\; t_{x,f},\; t_{y,f}),
+  \label{eq:output}
+\end{equation}
+omitting $q/p$ (conserved) and $z_f$ (deterministic: $z_f = z_0 + \dz$).
+
+\subsection{Dataset Construction}
+
+A total of \num{50e6} tracks are generated in 2000 parallel HTCondor
+batches of \num{25000} tracks each
+(\texttt{condor/submit\_datagen.sub}).  Each batch uses a
+deterministic seed:
+\begin{equation}
+  s_i = 42 + i \times 7919, \quad i = 0, 1, \ldots, 1999,
+  \label{eq:seed}
+\end{equation}
+where 7919 is a large prime chosen to space seeds far apart in the
+pseudorandom number generator's period.  After all batches complete, the
+individual \texttt{.npz} files are merged
+(\texttt{data/merge\_batches.py}) into a single dataset
+\texttt{train\_50M\_dz25.npz} containing arrays:
+\begin{itemize}
+  \item $\mathbf{X} \in \mathbb{R}^{N \times 6}$: input states,
+  \item $\mathbf{Y} \in \mathbb{R}^{N \times 4}$: output states,
+  \item $\mathbf{P} \in \mathbb{R}^{N}$: momenta (GeV/$c$),
+  \item $\mathbf{Z} \in \mathbb{R}^{N}$: initial $z_0$ positions.
+\end{itemize}
+The dataset is split by random permutation (seed~42) into:
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+Split & Fraction & Samples \\
+\midrule
+Train      & 80\% & \num{40e6} \\
+Validation & 10\% & \num{5e6}  \\
+Test       & 10\% & \num{5e6}  \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ============================================================================
+\section{Physics: Equations of Motion}
+\label{sec:physics}
+
+A charged particle traversing the LHCb magnetic field $\Bfield =
+(B_x, B_y, B_z)$ follows the Lorentz force law.  In the LHCb
+$z$-parameterisation~\cite{RK4_extrapolator}, where $z$ (the beam axis)
+serves as the independent variable, the equations of motion are:
+\begin{align}
+  \frac{dx}{dz}   &= t_x, \label{eq:dx} \\
+  \frac{dy}{dz}   &= t_y, \label{eq:dy} \\
+  \frac{dt_x}{dz} &= \kappa \, \mathcal{N}
+    \bigl[ t_x t_y B_x - (1 + t_x^2) B_y + t_y B_z \bigr],
+    \label{eq:dtx} \\
+  \frac{dt_y}{dz} &= \kappa \, \mathcal{N}
+    \bigl[ (1 + t_y^2) B_x - t_x t_y B_y - t_x B_z \bigr],
+    \label{eq:dty}
+\end{align}
+where
+\begin{equation}
+  \kappa = \frac{q}{p} \times c_\text{light},
+  \qquad
+  \mathcal{N} = \sqrt{1 + t_x^2 + t_y^2},
+  \label{eq:kappa}
+\end{equation}
+and $c_\text{light} = 2.99792458 \times 10^{-4}$~mm/(MeV\,$\cdot$\,T)
+is the conversion factor from SI to LHCb internal units.  The dominant
+field component is $B_y$ (vertical), which causes horizontal ($x$)
+bending.  The slopes $t_x = dx/dz$ and $t_y = dy/dz$ are dimensionless
+direction tangents.
+
+Equations~\eqref{eq:dx}--\eqref{eq:dty} define the ODE system
+$d\state/dz = \mathbf{F}(\state, z; \Bfield)$ that underpins both the
+RK4 data generation and the physics-informed loss terms.
+
+% ============================================================================
+\section{Model Specifications}
+\label{sec:models}
+
+All architectures inherit from a common base class that provides
+$z$-score input normalisation
+$\tilde{\mathbf{x}} = (\mathbf{x} - \bm{\mu}_x) / \bm{\sigma}_x$
+and output denormalisation
+$\hat{\mathbf{y}} = \bm{\sigma}_y \tilde{\mathbf{y}} + \bm{\mu}_y$,
+computed from the training set.  All trainable parameters use Xavier
+uniform initialisation~\cite{Glorot2010} unless otherwise stated.
+
+\subsection{MLP (Multi-Layer Perceptron)}
+\label{sec:mlp}
+
+The MLP is a standard feedforward network:
+\begin{equation}
+  \hat{\mathbf{y}}
+  = W_{L+1}\,
+    \sigma\!\bigl(W_L \cdots \sigma(W_1 \tilde{\mathbf{x}} + b_1) \cdots + b_L\bigr)
+    + b_{L+1},
+  \label{eq:mlp}
+\end{equation}
+where $\sigma$ is the SiLU (Swish) activation~\cite{SiLU}
+$\sigma(x) = x \cdot \text{sigmoid}(x)$, and output denormalisation is
+applied after the final linear layer.  Dropout is set to zero for all
+\texttt{gen\_2} configurations.
+
+The training loss is purely data-driven:
+\begin{equation}
+  \loss_\text{MLP} = \frac{1}{4N}\sum_{i=1}^{N}\sum_{k=1}^{4}
+    \left(\frac{\hat{y}_{ik} - y_{ik}}{\sigma_k}\right)^{\!2},
+  \label{eq:loss_mlp}
+\end{equation}
+where $\sigma_k$ is the standard deviation of output component~$k$ in
+the training set ($k \in \{x,y,t_x,t_y\}$).
+
+\paragraph{Component-weighted MSE.}
+The network output is denormalised before loss computation.  Because the
+physical magnitudes of the four output components span many orders of
+magnitude---$|\Delta x| \sim \mathcal{O}(1)\;\mm$, $|\Delta t_x| \sim
+\mathcal{O}(10^{-3})$---a plain MSE in physical space assigns the
+position components $\sim10^6$ times more gradient weight than the slopes.
+Dividing each component error by its training-set standard deviation
+$\sigma_k$ is equivalent to computing MSE in normalised (z-score) space,
+which restores gradient balance across all four components.  This is
+consistent with the non-dimensionalisation approach recommended for
+multi-scale PINN losses~\cite{Wang2021,Krishnapriyan2021}.
+
+\subsection{PINN (Physics-Informed Neural Network)}
+\label{sec:pinn}
+
+The PINN uses a residual formulation that guarantees satisfaction of the
+initial condition (IC) by construction.  The architecture decomposes the
+prediction into a physics-based baseline (straight-line extrapolation)
+plus a learned correction modulated by the fractional propagation
+distance $\zeta = z/\dz \in [0, 1]$:
+\begin{equation}
+  \hat{\mathbf{y}}(\zeta) = \mathbf{y}_\text{base}(\zeta)
+    + \zeta \cdot \bm{\delta}_{\btheta}(\mathbf{x}_0),
+  \label{eq:pinn_residual}
+\end{equation}
+where
+\begin{equation}
+  \mathbf{y}_\text{base}(\zeta) =
+  \begin{pmatrix}
+    x_0 + t_{x,0}\,\zeta\,\dz \\
+    y_0 + t_{y,0}\,\zeta\,\dz \\
+    t_{x,0} \\
+    t_{y,0}
+  \end{pmatrix},
+  \label{eq:baseline}
+\end{equation}
+and $\bm{\delta}_{\btheta}$ is the output of a correction network.
+At $\zeta = 0$, $\hat{\mathbf{y}} = \mathbf{y}_\text{base}(0) =
+(x_0, y_0, t_{x,0}, t_{y,0})$, satisfying the IC identically.  The
+correction $\bm{\delta}_{\btheta}$ is predicted by an encoder that takes
+only the five-dimensional initial state
+$\mathbf{x}_0 = (x_0, y_0, t_{x,0}, t_{y,0}, q/p)$ as input (excluding
+$\dz$), followed by a linear correction head:
+\begin{equation}
+  \bm{\delta}_{\btheta} = W_\text{head}\,
+    \phi_L \circ \cdots \circ \phi_1(\tilde{\mathbf{x}}_0) + b_\text{head},
+  \label{eq:correction}
+\end{equation}
+where each $\phi_l(\mathbf{h}) = \tanh(W_l \mathbf{h} + b_l)$.  The
+$\tanh$ activation is used instead of SiLU to ensure smooth derivatives
+for automatic differentiation of the PDE residual via
+\texttt{torch.autograd.grad} with \texttt{create\_graph=True}.
+
+The PINN training loss is:
+\begin{equation}
+  \loss_\text{PINN} = \loss_\text{data}
+    + \lambda_\text{ic}\,\loss_\text{ic}
+    + \lambda_\text{pde}\,\loss_\text{pde},
+  \label{eq:loss_pinn}
+\end{equation}
+where each term is non-dimensionalised by the output standard deviations
+$\sigma_k$ from the training set, following the gradient-balancing
+prescription of Wang et al.~\cite{Wang2021}:
+\begin{itemize}
+  \item $\loss_\text{data}$ is the component-weighted endpoint MSE
+    (Eq.~\ref{eq:loss_mlp}), identical across all three model types;
+
+  \item $\loss_\text{ic}$ is the initial-condition loss, computed in the
+    same normalised space:
+    \begin{equation}
+      \loss_\text{ic} = \frac{1}{4N}\sum_{i=1}^{N}\sum_{k=1}^{4}
+        \left(\frac{\hat{y}_{ik}(\zeta{=}0) - y_{0,ik}}{\sigma_k}
+        \right)^{\!2}.
+      \label{eq:loss_ic}
+    \end{equation}
+    Because of the residual formulation (Eq.~\ref{eq:pinn_residual}),
+    $\hat{\mathbf{y}}(\zeta{=}0) \equiv \mathbf{y}_0$ exactly, so
+    $\loss_\text{ic} = 0$ by construction and serves as a sanity check.
+
+  \item $\loss_\text{pde}$ is the PDE residual loss.  Define the raw
+    residual vector at collocation point~$k$ and sample~$i$:
+    \begin{equation}
+      \mathbf{r}_{ik} = \frac{\partial\hat{\mathbf{y}}}{\partial z}
+        \bigg|_{\zeta_k}
+        - \mathbf{F}\bigl(\hat{\mathbf{y}}(\zeta_k),\;
+          z_0 + \zeta_k\dz;\; \Bfield\bigr),
+      \label{eq:pde_raw_residual}
+    \end{equation}
+    where $\mathbf{F}$ is the right-hand side of the ODE system
+    (Eqs.~\ref{eq:dx}--\ref{eq:dty}).  The raw residuals for each
+    component have different physical dimensions and magnitudes:
+    $r^{(x)} \sim \mathcal{O}(t_x) \sim 0.1$ (dimensionless),
+    while $r^{(t_x)} \sim \mathcal{O}(\kappa B) \sim 10^{-5}\;\mm^{-1}$.
+    To bring all four components to $\mathcal{O}(1)$, we
+    non-dimensionalise by the characteristic derivative scale
+    $\sigma_k / \dz_i$:
+    \begin{equation}
+      \bar{r}_{ik,j} = \frac{r_{ik,j}}{\sigma_j / \dz_i},
+      \qquad j \in \{x, y, t_x, t_y\},
+      \label{eq:pde_nondim}
+    \end{equation}
+    which follows from introducing $\bar{s}_j \equiv s_j / \sigma_j$,
+    $\bar{z} \equiv z / \dz$, so that $d\bar{s}_j/d\bar{z} =
+    (\dz/\sigma_j)(ds_j/dz)$ is $\mathcal{O}(1)$ when the trajectory is
+    well-described by the training distribution.  The PDE loss is then:
+    \begin{equation}
+      \loss_\text{pde} = \frac{1}{4\,n_c\,N}\sum_{k=1}^{n_c}\sum_{i=1}^{N}
+        \sum_{j=1}^{4} \bar{r}_{ik,j}^{\,2},
+      \label{eq:loss_pde}
+    \end{equation}
+    evaluated at $n_c = 8$ collocation points uniformly spaced in
+    $\zeta \in [0.1, 1.0]$.  Because $\dz_i$ varies per sample, the
+    non-dimensionalisation automatically applies looser absolute
+    tolerances for long propagation paths while maintaining the same
+    relative tolerance.
+\end{itemize}
+
+\paragraph{Note on PDE residual composition.}
+All four ODE equations are enforced: two kinematic ($dx/dz = t_x$,
+$dy/dz = t_y$) and two Lorentz
+(Eqs.~\ref{eq:dtx}--\ref{eq:dty}).  Although the kinematic residuals
+provide redundant gradient signal on the slopes (which are already
+trained by $\loss_\text{data}$), they enforce internal consistency of
+the trajectory---i.e.\ that the network's position and slope outputs
+are mutually consistent along the full path, not just at the endpoints.
+This is standard practice in the PINN literature~\cite{Raissi2019}.
+
+\paragraph{Note on clamping.}
+No output clamping is applied before computing the PDE residual.
+Earlier code used \texttt{torch.clamp} to restrict predictions to a
+physical range, but this breaks the \texttt{autograd} computation graph
+(zero gradient outside the clamp bounds), silently zeroing the PDE loss
+for out-of-range predictions.
+
+At each collocation point, the PDE residual requires: one forward pass to
+obtain $\hat{\mathbf{y}}(\zeta_k)$, four calls to
+\texttt{torch.autograd.grad} to obtain $\partial\hat{y}_j/\partial\zeta$
+for $j = 1, \ldots, 4$, a conversion
+$\partial\hat{\mathbf{y}}/\partial z = (\partial\hat{\mathbf{y}}/\partial\zeta) / \dz$,
+a magnetic field evaluation at
+$(x_k, y_k, z_0 + \zeta_k \dz)$, and the Lorentz residual from
+Eqs.~\eqref{eq:dx}--\eqref{eq:dty}.
+
+The correction head weights are initialised uniformly in $[-0.01, 0.01]$
+with zero bias, so that the network begins at the straight-line baseline.
+A learnable scalar \texttt{field\_scale} is included but initialised to~1.
+
+\subsection{RK\_PINN (Runge-Kutta Physics-Informed Neural Network)}
+\label{sec:rkpinn}
+
+The RK\_PINN is a multi-stage architecture inspired by the RK4 numerical
+integrator~\cite{Stiasny2021, Zhai2023}.  A shared backbone extracts
+features from the normalised six-dimensional input; four stage-specific
+heads then predict the state at intermediate positions
+$\zeta_s \in \{0.25, 0.5, 0.75, 1.0\}$:
+\begin{align}
+  \mathbf{f} &= \text{Backbone}(\tilde{\mathbf{x}}), \label{eq:rk_backbone} \\
+  \hat{\mathbf{y}}_s &= \text{Head}_s([\mathbf{f};\, \zeta_s]),
+    \quad s = 1, \ldots, 4, \label{eq:rk_heads} \\
+  \hat{\mathbf{y}} &= \sum_{s=1}^{4} w_s\, \hat{\mathbf{y}}_s,
+    \qquad w_s = \frac{e^{\alpha_s}}{\sum_{s'} e^{\alpha_{s'}}},
+    \label{eq:rk_weights}
+\end{align}
+where $[\cdot;\cdot]$ denotes concatenation, $\alpha_s$ are learnable
+logits initialised to $\log(c_s)$ with $c_s$ from the RK4 Butcher
+tableau $(c_1, c_2, c_3, c_4) = (1, 2, 2, 1)/6$, and the softmax
+ensures $\sum w_s = 1$.
+
+The backbone consists of the first $L-1$ layers of the specified
+architecture; each stage head consists of a hidden layer of size
+$d_{L}$ (the last element of the \texttt{hidden\_dims} list) followed
+by a linear output layer to four dimensions.  For
+\texttt{hidden\_dims}~$= [96, 96]$, the backbone has one layer
+(Linear$(6, 96)$ + $\tanh$) and each head has
+Linear$(97, 96)$ + $\tanh$ + Linear$(96, 4)$.
+
+The training loss mirrors the PINN:
+\begin{equation}
+  \loss_\text{RK\_PINN} = \loss_\text{data}
+    + \lambda_\text{ic}\,\loss_\text{ic}
+    + \lambda_\text{pde}\,\loss_\text{pde}.
+  \label{eq:loss_rkpinn}
+\end{equation}
+All three terms use the \emph{same non-dimensionalisation} as the PINN
+(Eqs.~\ref{eq:loss_mlp}, \ref{eq:loss_ic}, \ref{eq:loss_pde}), ensuring
+that $\lambda_\text{pde}$ has a consistent physical meaning across model
+types.
+The IC loss is computed as the normalised MSE between the initial state and the
+average of all four stage-head predictions evaluated at $\zeta = 0$.
+The PDE residual is computed at each of the four stage positions using
+the non-dimensional scaling $\sigma_k / \dz_i$ (Eq.~\ref{eq:pde_nondim}).
+Critically, the backbone features are \emph{detached} before being
+passed to the stage heads for the PDE gradient computation---gradients
+propagate only through the stage heads, preventing interference between
+the data loss (which trains the full network) and the PDE loss (which
+trains only the heads).
+
+\subsection{Parameter Counts and Memory Footprint}
+\label{sec:param_counts}
+
+Table~\ref{tab:param_counts} reports the trainable parameter counts
+computed directly from the architecture code.  All parameters are stored
+in single-precision (float32, \SI{4}{\byte} each), and the memory
+footprint is $4 \times N_\text{params}$~bytes.
+
+\begin{table}[htbp]
+\centering
+\caption{Trainable parameter counts and memory footprint for each
+model configuration, computed from the architecture source code.  The
+CUDA \texttt{\_\_constant\_\_} memory limit is \SI{64}{\kilo\byte}
+(\num{16384} float32 parameters).}
+\label{tab:param_counts}
+\begin{tabular}{llrrr}
+Config & Type & Dims & Params & KB \\
+\hline
+\texttt{mlp/tiny}   & MLP & $[64,64]$   & \num{4868}  & 19.0 \\
+\texttt{mlp/small}  & MLP & $[96,96]$   & \num{10372} & 40.5 \\
+\texttt{mlp/medium} & MLP & $[112,112]$ & \num{13892} & 54.3 \\
+\texttt{pinn/*}     & PINN & $[96,96]$  & \num{10277}\textsuperscript{a}
+                                                       & 40.1 \\
+\texttt{rk\_pinn/*} & RK\_PINN & $[96,96]$
+                     & \num{39860}\textsuperscript{b} & 155.7 \\
+\end{tabular}
+\begin{flushleft}
+\textsuperscript{a} Encoder input is 5-dimensional (no $\dz$); includes
+one learnable \texttt{field\_scale} parameter. \\
+\textsuperscript{b} Four separate stage heads each contain
+Linear$(97, 96)$ + Linear$(96, 4)$; total is $672 + 4 \times 9796 + 4 =
+\num{39860}$.  This \emph{exceeds} the \SI{64}{\kilo\byte}
+\texttt{\_\_constant\_\_} memory limit and is therefore relevant only to
+RQ2 (scientific interest), not RQ1 (engineering deployment).
+\end{flushleft}
+\end{table}
+
+\paragraph{Remark.}
+The PINN encoder takes a 5-dimensional input (initial state without
+$\dz$), yielding 96 fewer first-layer weights than the MLP; it also
+includes one additional scalar parameter (\texttt{field\_scale}).  The
+RK\_PINN, by design, replicates the output head four times, resulting in
+approximately four times the parameter count of a single-head model with
+the same hidden dimensions.  This means the ``same architecture size''
+comparison between MLP, PINN, and RK\_PINN at \texttt{hidden\_dims}~$=
+[96, 96]$ is \emph{not} a controlled comparison of parameter count.
+Section~\ref{sec:confounds} discusses this confound in detail.
+
+% ============================================================================
+\section{Experimental Design}
+\label{sec:experimental_design}
+
+\subsection{Configuration Matrix}
+
+Table~\ref{tab:configs} specifies all nine training runs.  Each
+configuration is defined by a JSON file in
+\texttt{experiments/gen\_2/configs/}.
+
+\begin{table}[htbp]
+\centering
+\caption{Complete configuration matrix for the \texttt{gen\_2} experiment.
+All runs use seed~42, weight decay $10^{-4}$, maximum 300 epochs,
+gradient clipping at 1.0, and cosine annealing with 5-epoch linear warmup.
+Physics loss weights $\lambda_\text{pde}$ and $\lambda_\text{ic}$ apply
+only to PINN and RK\_PINN models.}
+\label{tab:configs}
+\footnotesize
+\begin{tabular}{llccccccccc}
+Config & Type & Hidden & Act. & Batch & lr & Pat. &
+  $\lambda_\text{pde}$ & $\lambda_\text{ic}$ & $n_c$ & Field \\
+\hline
+\texttt{mlp/tiny}       & MLP     & $[64,64]$   & SiLU & 4096 & $10^{-3}$
+  & 30 & --- & --- & --- & --- \\
+\texttt{mlp/small}      & MLP     & $[96,96]$   & SiLU & 4096 & $10^{-3}$
+  & 30 & --- & --- & --- & --- \\
+\texttt{mlp/medium}     & MLP     & $[112,112]$ & SiLU & 4096 & $10^{-3}$
+  & 30 & --- & --- & --- & --- \\
+\texttt{pinn/lam0.1}    & PINN    & $[96,96]$   & tanh & 1024 & $5 \times 10^{-4}$
+  & 40 & 0.1  & 0.1 & 8 & interp. \\
+\texttt{pinn/lam1.0}    & PINN    & $[96,96]$   & tanh & 1024 & $5 \times 10^{-4}$
+  & 40 & 1.0  & 0.1 & 8 & interp. \\
+\texttt{pinn/lam10.0}   & PINN    & $[96,96]$   & tanh & 1024 & $5 \times 10^{-4}$
+  & 40 & 10.0 & 0.1 & 8 & interp. \\
+\texttt{rk\_pinn/lam0.1}  & RK\_PINN & $[96,96]$ & tanh & 1024 & $5 \times 10^{-4}$
+  & 40 & 0.1  & 1.0 & 4\textsuperscript{$\dagger$} & interp. \\
+\texttt{rk\_pinn/lam1.0}  & RK\_PINN & $[96,96]$ & tanh & 1024 & $5 \times 10^{-4}$
+  & 40 & 1.0  & 1.0 & 4\textsuperscript{$\dagger$} & interp. \\
+\texttt{rk\_pinn/lam10.0} & RK\_PINN & $[96,96]$ & tanh & 1024 & $5 \times 10^{-4}$
+  & 40 & 10.0 & 1.0 & 4\textsuperscript{$\dagger$} & interp. \\
+\end{tabular}
+\begin{flushleft}
+\textsuperscript{$\dagger$} RK\_PINN evaluates the PDE residual at the
+four fixed stage positions $\zeta \in \{0.25, 0.5, 0.75, 1.0\}$ rather
+than at $n_c$ uniformly spaced collocation points.
+\end{flushleft}
+\end{table}
+
+\subsection{Comparisons and Controls}
+
+The nine configurations enable the following structured comparisons:
+
+\paragraph{MLP size scaling (RQ1).}
+\texttt{mlp/tiny} $\to$ \texttt{mlp/small} $\to$ \texttt{mlp/medium}
+tests how accuracy improves with model capacity within the
+\SI{64}{\kilo\byte} budget.  The controlled variables are activation
+(SiLU), batch size (4096), and learning rate ($10^{-3}$).
+
+\paragraph{MLP vs.\ PINN at matched architecture (RQ2).}
+\texttt{mlp/small}~$[96,96]$ vs.\ \texttt{pinn/lam*}~$[96,96]$ compares
+data-driven and physics-informed training.  The hidden dimensions match,
+but several variables are \emph{not} controlled (see
+Sec.~\ref{sec:confounds}).
+
+\paragraph{MLP vs.\ RK\_PINN at matched hidden dimensions (RQ2).}
+\texttt{mlp/small}~$[96,96]$ vs.\ \texttt{rk\_pinn/lam*}~$[96,96]$.
+The hidden dimensions match but the RK\_PINN has $\approx 4\times$ more
+parameters due to four stage heads (Table~\ref{tab:param_counts}).
+
+\paragraph{PINN $\lambda_\text{pde}$ sweep (RQ2).}
+$\lambda_\text{pde} \in \{0.1, 1.0, 10.0\}$ at fixed
+$\lambda_\text{ic} = 0.1$ tests the sensitivity of the PINN to the
+physics loss weight.
+
+\paragraph{RK\_PINN $\lambda_\text{pde}$ sweep (RQ2).}
+$\lambda_\text{pde} \in \{0.1, 1.0, 10.0\}$ at fixed
+$\lambda_\text{ic} = 1.0$ for the RK\_PINN architecture.
+
+\paragraph{PINN vs.\ RK\_PINN (RQ2).}
+At each $\lambda_\text{pde}$ value, the PINN and RK\_PINN can be
+compared to assess whether the multi-stage RK structure provides
+additional benefit.  This comparison is confounded by the parameter
+count difference.
+
+% ============================================================================
+\section{Training Protocol}
+\label{sec:training}
+
+\subsection{Optimiser and Schedule}
+
+All models are trained with AdamW~\cite{AdamW}
+($\beta_1 = 0.9$, $\beta_2 = 0.999$, weight decay $= 10^{-4}$).  The
+learning rate follows a cosine annealing schedule with a 5-epoch linear
+warmup:
+\begin{equation}
+  \text{lr}(t) =
+  \begin{cases}
+    \text{lr}_0 \cdot t / 5, & t \leq 5, \\[4pt]
+    \dfrac{\text{lr}_0}{2}
+    \Bigl(1 + \cos\!\bigl(\pi \cdot \tfrac{t - 5}{T - 5}\bigr)\Bigr),
+    & t > 5,
+  \end{cases}
+  \label{eq:schedule}
+\end{equation}
+where $T = 300$ is the maximum number of epochs.  Gradient norms are
+clipped to 1.0.
+
+\subsection{Early Stopping}
+
+Training terminates early if the validation loss does not improve by more
+than $\delta_\text{min} = 10^{-7}$ for a number of consecutive epochs
+specified by the patience parameter: 30 for MLPs, 40 for PINN and
+RK\_PINN.  The extended patience for physics-informed models accounts for
+the slower convergence typically observed when balancing multiple loss
+terms.
+
+\subsection{Checkpointing}
+
+Model weights are saved every 25 epochs and at the best validation loss.
+The best-epoch checkpoint is used for all evaluation.
+
+\subsection{Infrastructure}
+
+Training is executed on the Nikhef HTCondor cluster
+(\texttt{taai-007.nikhef.nl}) via the submission file
+\texttt{condor/submit.sub}, which dispatches one GPU job per
+configuration.  GPU nodes provide either NVIDIA Tesla V100-PCIE-32GB or
+NVIDIA L40S accelerators.  The \texttt{+JobCategory = "long"} policy
+allows extended wall-clock time.  The software environment is:
+\begin{itemize}
+  \item Conda environment \texttt{TE} (Python~3.10),
+  \item PyTorch 2.9.1 with CUDA 12.8,
+  \item NumPy 2.2.6, MLflow 3.10.1.
+\end{itemize}
+Full dependency pinning is recorded in \texttt{environment.yml} and
+\texttt{requirements.txt}.
+
+\subsection{Experiment Tracking}
+
+\begin{sloppypar}
+All runs are logged to MLflow under the experiment name
+\nolinkurl{gen_2_track_extrapolation}.  Logged artefacts include:
+training and validation loss per epoch (total and per-component for
+PINN/RK\_PINN), learning rate schedule, model configuration,
+best-epoch checkpoint, and test-set evaluation metrics.  TensorBoard
+summaries are written in parallel.
+\end{sloppypar}
+
+% ============================================================================
+\section{Evaluation Protocol}
+\label{sec:evaluation}
+
+All metrics are computed on the held-out test set (\num{5e6} samples,
+disjoint from training and validation data).
+
+\subsection{Primary Metrics}
+
+\paragraph{Position error.}
+\begin{equation}
+  \|\Delta \mathbf{r}\| = \sqrt{(\hat{x}_f - x_f)^2 + (\hat{y}_f - y_f)^2},
+  \label{eq:pos_err}
+\end{equation}
+reported as mean, standard deviation, 95th percentile, and 99th percentile.
+
+\paragraph{Slope error.}
+\begin{equation}
+  \|\Delta \mathbf{s}\| = \sqrt{(\hat{t}_{x,f} - t_{x,f})^2
+    + (\hat{t}_{y,f} - t_{y,f})^2},
+  \label{eq:slope_err}
+\end{equation}
+reported as mean and 95th percentile.
+
+\paragraph{Per-component errors.}
+$|\Delta x|$, $|\Delta y|$, $|\Delta t_x|$, $|\Delta t_y|$ reported
+as means.
+
+\subsection{Secondary Metrics}
+
+\paragraph{Jacobian (transport matrix).}
+The $4 \times 5$ Jacobian
+\begin{equation}
+  J_{ij} = \frac{\partial \hat{y}_i}{\partial x_{0,j}},
+  \quad i \in \{x, y, t_x, t_y\},\;
+  j \in \{x, y, t_x, t_y, q/p\},
+  \label{eq:jacobian}
+\end{equation}
+is computed via \texttt{torch.autograd.grad} on 1000 randomly selected
+test samples.  The Frobenius norm $\|J\|_F$ is reported as mean and
+standard deviation.
+
+\paragraph{Remark on Jacobian discriminative power.}
+In \texttt{gen\_1}, all models produced $\|J\|_F \approx 5650 \pm 4200$
+with minimal inter-model variation.  This suggests the metric is
+dominated by the large-$\dz$ regime where the Jacobian magnitude is
+inherently large.  A $\dz$-binned analysis (Sec.~\ref{sec:analysis_plan})
+may be more informative.
+
+\subsection{Success Criteria}
+\label{sec:success}
+
+\paragraph{RQ1.}
+A model is considered viable for Allen HLT1 deployment if:
+\begin{enumerate}
+  \item it fits within \SI{64}{\kilo\byte} (\num{16384} float32 parameters),
+  \item its mean position error $\langle\|\Delta\mathbf{r}\|\rangle
+    < \SI{0.5}{\mm}$ on the full test set,
+  \item its 95th-percentile position error $< \SI{2}{\mm}$,
+  \item its mean slope error $\langle\|\Delta\mathbf{s}\|\rangle < 0.005$.
+\end{enumerate}
+These thresholds are informed by \texttt{gen\_1} results and by the
+requirement that the Kalman filter converge to the same track parameters
+as with the RK4 extrapolator.  A full integration test in Allen is beyond
+the scope of this study but is the logical next step if these criteria
+are met.
+
+\paragraph{RQ2.}
+Physics-informed training is considered beneficial if, at the same
+\texttt{hidden\_dims}~$= [96, 96]$:
+\begin{enumerate}
+  \item the best PINN or RK\_PINN configuration achieves lower mean
+    position error than \texttt{mlp/small}, after accounting for the
+    confounds listed in Sec.~\ref{sec:confounds}; or
+  \item the physics-informed model shows qualitatively better
+    generalisation in the low-statistics tails of the parameter space
+    (low $p$, large $\dz$, or extreme slopes).
+\end{enumerate}
+
+% ============================================================================
+\section{Analysis Plan}
+\label{sec:analysis_plan}
+
+\subsection{Aggregate Comparisons}
+
+\begin{enumerate}
+  \item \textbf{Summary table}: All nine models ranked by mean position
+    error, 95th-percentile position error, mean slope error, and
+    best epoch.  Include training wall-clock time per epoch.
+  \item \textbf{MLP scaling plot}: Mean and 95th-percentile position
+    error vs.\ parameter count for the three MLP sizes.
+  \item \textbf{$\lambda_\text{pde}$ sensitivity}: Position error vs.\
+    $\lambda_\text{pde}$ for PINN and RK\_PINN families.
+\end{enumerate}
+
+\subsection{$\dz$-Binned Analysis}
+
+To assess performance across the full propagation range, the test set will
+be binned in $\dz$:
+\begin{itemize}
+  \item $[25, 100]$~mm (VELO inter-sensor),
+  \item $[100, 500]$~mm (short-range),
+  \item $[500, 2000]$~mm (medium-range),
+  \item $[2000, 5000]$~mm (long-range),
+  \item $[5000, 10000]$~mm (full-detector).
+\end{itemize}
+For each bin: mean, 95th percentile, and 99th percentile of
+$\|\Delta\mathbf{r}\|$ and $\|\Delta\mathbf{s}\|$.  This is essential to
+verify that the extended $\dz$ coverage (\texttt{gen\_2}) does not degrade
+short-$\dz$ performance relative to \texttt{gen\_1}.
+
+\subsection{Momentum-Binned Analysis}
+
+Low-momentum tracks ($p < \SI{5}{\giga\eV}/c$) experience the strongest
+magnetic deflection and are most challenging for the network.  The test
+set will be binned in $p$:
+\begin{itemize}
+  \item $[1, 5]$~GeV/$c$ (strongly bent),
+  \item $[5, 20]$~GeV/$c$ (moderately bent),
+  \item $[20, 200]$~GeV/$c$ (weakly bent).
+\end{itemize}
+
+\subsection{Diagnostic Plots}
+\label{sec:diagnostic_plots}
+
+The following visualisations will be produced for each model:
+\begin{enumerate}
+  \item Training and validation loss curves (total, and per-component for
+    PINN/RK\_PINN).
+  \item 2D heatmap of $\|\Delta\mathbf{r}\|$ in the $(\dz, p)$ plane.
+  \item Scatter plot of predicted vs.\ true $x_f$ and $t_{x,f}$ for a
+    random subsample.
+  \item Residual distributions $\Delta x$, $\Delta y$, $\Delta t_x$,
+    $\Delta t_y$ (histograms with Gaussian fits).
+  \item Jacobian Frobenius norm vs.\ $\dz$ (binned).
+  \item RK\_PINN stage weights evolution during training
+    (initialised at $[1,2,2,1]/6$; do they remain near RK4?).
+  \item PINN IC loss over training (should remain near zero if residual
+    formulation works correctly).
+\end{enumerate}
+
+\subsection{Gen\_1 vs.\ Gen\_2 Comparison}
+
+The \texttt{mlp/tiny} configuration $[64, 64]$ is shared between
+\texttt{gen\_1} and \texttt{gen\_2} (though trained on different data).
+Direct comparison of position and slope errors will quantify the impact
+of extending $\dz$ coverage.  The \texttt{gen\_1} baseline values are:
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+Metric & gen\_1 & gen\_2 \\
+\midrule
+$\langle\|\Delta\mathbf{r}\|\rangle$ (mm) & 0.491 & (this study) \\
+$\|\Delta\mathbf{r}\|_{95\%}$ (mm) & 1.452 & (this study) \\
+$\langle\|\Delta\mathbf{s}\|\rangle$ & 0.00491 & (this study) \\
+Best epoch & 105 & (this study) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ============================================================================
+\section{Known Limitations and Confounds}
+\label{sec:confounds}
+
+This section catalogues the known limitations of the experimental design.
+These must be considered when interpreting results.
+
+\begin{enumerate}
+  \item \textbf{Activation function mismatch.}
+    MLPs use SiLU; PINN and RK\_PINN use $\tanh$.  The $\tanh$ choice is
+    motivated by the requirement for smooth second-order derivatives in
+    the PDE loss (SiLU's second derivative has a discontinuity at
+    $x \to -\infty$ in the limit).  However, SiLU generally outperforms
+    $\tanh$ for regression tasks due to its non-saturating positive
+    branch~\cite{SiLU}.  If a physics-informed model outperforms the MLP,
+    the improvement cannot be unambiguously attributed to the physics loss;
+    conversely, if the MLP outperforms, the physics loss may be beneficial
+    but masked by the inferior activation.  A controlled comparison would
+    require running the MLP with $\tanh$ activation.
+
+  \item \textbf{Batch size mismatch.}
+    MLPs train with batch size 4096; PINN and RK\_PINN use 1024 due to
+    the memory overhead of the physics loss computation (8 collocation
+    points $\times$ forward pass $\times$ 4 autograd calls).  At a
+    training set of \num{40e6} samples, one epoch comprises $\sim$9766
+    steps at batch size 4096 vs.\ $\sim$39063 steps at batch size 1024.
+    The physics-informed models therefore see $4\times$ more optimiser
+    updates per epoch, which may independently affect convergence.
+
+  \item \textbf{Learning rate mismatch.}
+    MLPs use $\text{lr} = 10^{-3}$; PINN/RK\_PINN use $5 \times 10^{-4}$.
+    The lower rate was chosen for training stability when balancing
+    multiple loss terms, but it constitutes an uncontrolled variable.
+
+  \item \textbf{Parameter count mismatch (RK\_PINN).}
+    As shown in Table~\ref{tab:param_counts}, the RK\_PINN at
+    \texttt{hidden\_dims}~$= [96, 96]$ has $\sim$\num{40000} parameters
+    ($\sim$\SI{156}{\kilo\byte}), approximately $4\times$ the MLP and
+    PINN at the same hidden dimensions.  This makes direct
+    accuracy-per-parameter comparison misleading.  The RK\_PINN results
+    are primarily of scientific interest (RQ2) and cannot address RQ1
+    (GPU deployment) without architectural changes.
+
+  \item \textbf{PINN training cost.}
+    The PDE loss with 8 collocation points requires $\sim$8 additional
+    forward passes and 32 autograd calls per batch.  PINN epochs take
+    $\sim$\SI{50}{\minute} vs.\ $\sim$\SI{7}{\minute} for the MLP on a
+    V100.  Per-epoch training cost differs by approximately $7\text{--}8\times$.
+
+  \item \textbf{No explicit RK4 timing baseline.}
+    The ground truth is the RK4 output, so the ``baseline error'' is zero
+    by definition.  The relevant question is whether the NN error is small
+    enough for the downstream Kalman filter, which requires an integration
+    test in Allen that is beyond the scope of this protocol.
+
+  \item \textbf{Single polarity.}
+    All data use MagDown ($q = -1$).  MagUp data are not included.  The
+    field map symmetry $B_y(x, y, z; \text{MagUp}) = -B_y(x, y, z;
+    \text{MagDown})$ implies that a model trained on MagDown should work
+    for MagUp with a sign flip of $q/p$, but this is not tested.
+
+  \item \textbf{No material interactions.}
+    The RK4 integrator conserves momentum ($dq/p\,/\,dz = 0$).  Real
+    tracks lose energy and scatter in detector material.  The trained
+    models learn vacuum propagation only.
+
+  \item \textbf{Jacobian metric sensitivity.}
+    The Jacobian Frobenius norm $\|J\|_F$ showed poor discriminative
+    power in \texttt{gen\_1}, with all models yielding similar values.
+    This may be because $\|J\|_F$ is dominated by the $\partial x_f /
+    \partial x_0 \approx 1$ and $\partial y_f / \partial y_0 \approx 1$
+    diagonal elements at small $\dz$, while the physically interesting
+    off-diagonal elements (e.g., $\partial x_f / \partial (q/p)$) are
+    comparatively small.
+\end{enumerate}
+
+% ============================================================================
+\section{Reproducibility}
+\label{sec:reproducibility}
+
+\subsection{Random Seeds}
+
+\begin{sloppypar}
+A single global seed (42) controls all sources of randomness:
+\nolinkurl{random.seed}, \nolinkurl{numpy.random.seed},
+\nolinkurl{torch.manual_seed}, and
+\nolinkurl{torch.cuda.manual_seed_all}.
+Additionally,
+\nolinkurl{torch.backends.cudnn.deterministic} is set to \texttt{True} and
+\nolinkurl{torch.backends.cudnn.benchmark} to \texttt{False}.
+Data generation uses per-batch seeds as specified in
+Eq.~\eqref{eq:seed}.
+\end{sloppypar}
+
+\subsection{File Manifest}
+
+All files required to reproduce this experiment are contained within
+\texttt{experiments/gen\_2/}:
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Path & Contents \\
+\midrule
+\texttt{configs/mlp/*.json}     & MLP configurations (3 files) \\
+\texttt{configs/pinn/*.json}    & PINN configurations (3 files, legacy) \\
+\texttt{configs/rk\_pinn/*.json}& RK\_PINN configurations (3 files, legacy) \\
+\texttt{configs/v2\_fixes/pinn\_v2/*.json}    & PINN\_v2 configs (3 files, 2026-04-21) \\
+\texttt{configs/v2\_fixes/neural\_rk4/*.json} & NeuralRK4 configs (3 files, 2026-04-21) \\
+\texttt{models/train.py}        & Training script (Fix F added 2026-04-21) \\
+\texttt{models/architectures.py}& Model definitions incl.\ \texttt{PINN\_v2}, \texttt{NeuralRK4} \\
+\texttt{utils/rk4\_propagator.py}& RK4 integrator \\
+\texttt{utils/magnetic\_field.py}& Unified field module \\
+\texttt{data/merge\_batches.py} & Batch merger \\
+\texttt{condor/submit\_datagen.sub} & Data generation jobs \\
+\texttt{condor/run\_datagen.sh}     & Data generation worker \\
+\texttt{condor/submit.sub}          & Original training jobs (9 entries) \\
+\texttt{condor/submit\_v2\_fixes.sub} & v2 fixes training jobs (6 entries) \\
+\texttt{condor/run\_training.sh}    & Training worker \\
+\texttt{condor/jobs.txt}            & Original job list \\
+\texttt{condor/jobs\_v2\_fixes.txt} & v2 fixes job list \\
+\texttt{ISSUES\_WITH\_PINNS\_AND\_RK\_PINNS.md} & Audit + resolution report (2026-04-21) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Software Environment}
+
+The full environment specification is frozen in:
+\begin{itemize}
+  \item \texttt{environment.yml} --- Conda environment with all packages
+    pinned to exact versions,
+  \item \texttt{requirements.txt} --- pip-installable subset with version
+    pins.
+\end{itemize}
+Key versions: Python~3.10, PyTorch~2.9.1+cu128, NumPy~2.2.6,
+MLflow~3.10.1, SciPy~1.15.3.
+
+\subsection{MLflow Tracking}
+
+\begin{sloppypar}
+All training runs are logged to the local MLflow tracking server
+under experiment \texttt{gen\_2\_track\_\allowbreak extrapolation}.  The MLflow
+database is stored at \texttt{experiments/\allowbreak gen\_2/\allowbreak mlruns/}.
+Run artefacts include the best model checkpoint, training
+configuration, per-epoch metrics, and test-set evaluation results.
+\end{sloppypar}
+
+% ============================================================================
+\section{Architectural Fixes: \texttt{PINN\_v2} and \texttt{NeuralRK4}
+(2026-04-21 Revision)}
+\label{sec:v2_fixes}
+
+After the initial \texttt{gen\_2} submission completed, a theoretical audit
+(companion document
+\texttt{experiments/gen\_2/ISSUES\_WITH\_PINNS\_AND\_RK\_PINNS.md}) identified
+three architectural pathologies that prevented the legacy PINN and RK\_PINN
+models (Secs.~\ref{sec:pinn}, \ref{sec:rkpinn}) from converging to a useful
+operating point on their own terms. This section documents the fixes applied
+on 2026-04-21 and the two replacement architectures --- \texttt{PINN\_v2}
+and \texttt{NeuralRK4} --- that now supersede the original PINN and RK\_PINN
+in the gen\_2 submission.
+
+\subsection{Diagnosed Pathologies}
+\label{sec:v2_pathologies}
+
+\begin{enumerate}
+  \item \textbf{PINN is structurally linear in $\zeta = z / \dz$.}
+    The legacy PINN envelope (Eq.~\ref{eq:pinn_residual}),
+    $\hat{\state}(\zeta) = \state_\text{base}(\zeta) + \zeta\,\bm{\delta}_{\btheta}(\state_0)$,
+    contains no $\zeta$-dependent nonlinearity because the encoder is fed
+    only the initial state $\state_0$.  The trajectory class is therefore
+    affine in $\zeta$; since the Lorentz ODE is nonlinear in $\state$ and
+    nonlinear in $z$ through $\Bfield(x,y,z)$, the PDE residual
+    (Eq.~\ref{eq:pde_raw_residual}) has a \emph{structural lower bound}
+    that the optimiser cannot reduce.  Empirically, the PINN
+    $\lambda_\text{pde}$ response was non-monotonic.
+  \item \textbf{PDE residual cost was $N_c \times 4$ reverse-mode backwards
+    per batch.}  With $N_c = 8$ collocation points and four output
+    components, the legacy implementation performed 32
+    \texttt{torch.autograd.grad} calls per batch.  Because the input
+    $\zeta$ is one-dimensional and the output four-dimensional, the
+    Jacobian is $4 \times 1$ and forward-mode automatic differentiation
+    (JVP) recovers all four components in a single sweep.
+  \item \textbf{RK\_PINN was not a Runge--Kutta method.}
+    The softmax-weighted combination (Eq.~\ref{eq:rk_weights}) averages
+    \emph{states} evaluated at $\zeta \in \{0.25, 0.5, 0.75, 1.0\}$, not
+    \emph{derivatives}.  Classical RK4 averages derivatives of a single
+    propagating state with fixed Butcher weights $(1, 2, 2, 1)/6$ to
+    produce one endpoint state; a convex combination of states at
+    different $\zeta$ has no approximation-theoretic justification.
+    Combined with the \texttt{features.detach()} call in the physics
+    branch, this produced slope errors 43--587$\times$ worse than the MLP.
+\end{enumerate}
+
+The proposed fixes (labels follow the audit document) are:
+{\small
+\begin{center}
+\begin{tabular}{cll}
+Label & Change & Priority \\
+\hline
+A  & Replace \texttt{autograd.grad} loop with \texttt{torch.func.jvp} & P0 \\
+B  & Stochastic collocation: $n_c$ MC draws $\zeta \sim \mathcal{U}(0,1)$ per sample & P0 \\
+C  & Give PINN a $\zeta$-dependent trunk & P0 \\
+D' & Rewrite RK-style model as neural ODE with RK4 integrator over exact Lorentz RHS & P1 \\
+E  & Remove \texttt{features.detach()} in \texttt{RK\_PINN.compute\_physics\_loss} & P0 \\
+F  & Linear warm-up $\lambda_{\text{pde},\text{ic}}(t) = \lambda^\star \min(1, (t{+}1)/5)$ & P1 \\
+\end{tabular}
+\end{center}
+}
+
+\subsection{\texttt{PINN\_v2} --- Fixes A + B + C + F}
+\label{sec:pinn_v2}
+
+The corrected envelope is
+\begin{equation}
+  \hat{\state}_\btheta(\zeta) \;=\;
+  \state_\text{base}(\zeta)
+  \;+\; \zeta \cdot
+  \mathrm{Head}\!\Bigl(
+     \mathrm{Enc}\bigl( [\tilde{\state}_0;\,\zeta] \bigr)
+  \Bigr),
+  \label{eq:pinn_v2_envelope}
+\end{equation}
+where $\state_\text{base}$ is still the straight-line baseline
+(Eq.~\ref{eq:baseline}) and
+$[\tilde{\state}_0;\,\zeta] \in \mathbb{R}^{6}$ replaces the
+$\mathbb{R}^{5}$ input of the legacy encoder (Eq.~\ref{eq:correction}).
+Because the $\zeta$-prefactor still multiplies the entire correction,
+$\hat{\state}_\btheta(0) \equiv \state_0$ exactly and the IC loss
+(Eq.~\ref{eq:loss_ic}) remains identically zero by construction.
+The trajectory is now a smooth nonlinear function of $\zeta$, and the
+structural floor on $\loss_\text{pde}$ is eliminated.
+
+The PDE residual (Eq.~\ref{eq:pde_raw_residual}) is evaluated with a single
+forward-mode JVP per Monte-Carlo collocation draw:
+\begin{equation}
+  \bigl(\hat{\state}(\zeta_i),\;
+  \tfrac{\partial \hat{\state}}{\partial \zeta}\bigr\rvert_{\zeta_i}\bigr)
+  \;=\;
+  \texttt{torch.func.jvp}\bigl(
+     \mathrm{forward\_at\_z},\;
+     (\zeta_i,),\; (1,)
+  \bigr),
+  \qquad \zeta_i \sim \mathcal{U}(0,1),
+  \label{eq:pinn_v2_jvp}
+\end{equation}
+with $n_c$ independent draws per training sample (default $n_c = 2$).
+This replaces $N_c \times 4$ reverse-mode backwards with a single JVP
+sweep per draw; CPU microbenchmarks show a $\sim2\times$ per-iteration
+speed-up even before combining with the reduced $n_c$, and a $\sim30\times$
+reduction in PDE-term cost overall.  The data and IC losses retain the
+non-dimensionalisation of Eqs.~\eqref{eq:loss_mlp} and \eqref{eq:loss_ic};
+the PDE residual uses the same $\sigma_k / \dz$ scaling as
+Eq.~\eqref{eq:pde_nondim}.  A linear warm-up (Fix F),
+\begin{equation}
+  \lambda_\text{pde}(t) = \lambda^\star \cdot \min\!\bigl(1,\; (t{+}1)/T_\text{warm}\bigr),
+  \qquad T_\text{warm} = 5\ \text{epochs},
+  \label{eq:warmup}
+\end{equation}
+prevents the early-epoch data/physics conflict that caused the legacy
+PINN to early-stop at epoch 10--16.
+
+\paragraph{Parameter count.}
+\texttt{PINN\_v2} with \texttt{hidden\_dims}~$= [256, 256]$ has
+\num{68612} parameters, dominated by the wider trunk required to
+reach the PDE-residual floor of the fully nonlinear model class.
+
+\subsection{\texttt{NeuralRK4} --- Fix D$'$}
+\label{sec:neural_rk4}
+
+\texttt{NeuralRK4} replaces the RK\_PINN state-mixture with a genuine
+fourth-order Runge--Kutta integrator of the Lorentz ODE, perturbed by a
+small learned correction to the right-hand side:
+\begin{equation}
+  \mathbf{f}_\btheta(\state, z; q/p)
+  \;=\;
+  \mathbf{F}(\state, z; q/p)
+  \;+\;
+  e^{\alpha}\,\bigl(\bm{\sigma}_y / \dz\bigr) \odot
+  \mathbf{g}_\phi(\state, z; q/p),
+  \label{eq:neural_rk4_rhs}
+\end{equation}
+where $\mathbf{F}$ is the exact Lorentz RHS
+(Eqs.~\ref{eq:dx}--\ref{eq:dty}), $\mathbf{g}_\phi$ is a small MLP, and
+$\alpha$ is a single learnable log-scale initialised at $\log(10^{-3})$
+so that training begins at ``pure RK4 plus an infinitesimal drift.''  The
+$\bm{\sigma}_y / \dz$ factor brings the learned correction into the
+physical scale of the RHS.  The state update is
+\begin{equation}
+  \state_{i+1} \;=\; \state_i
+    + \tfrac{h}{6}\bigl( \mathbf{k}_1 + 2\mathbf{k}_2 + 2\mathbf{k}_3 + \mathbf{k}_4 \bigr),
+  \quad
+  \mathbf{k}_m = \mathbf{f}_\btheta\bigl(\state_i^{(m)}, z_i^{(m)}; q/p\bigr),
+  \quad
+  h = \dz / N_\text{RK},
+  \label{eq:neural_rk4_step}
+\end{equation}
+iterated $N_\text{RK} \in \{1, 2\}$ times with the standard RK4 nodes
+$\state_i^{(m)}$.  Butcher weights are \emph{fixed} (not learned) and
+multiply \emph{derivatives}, restoring the approximation-theoretic meaning
+the original RK\_PINN lacked (Sec.~\ref{sec:v2_pathologies}~(3)).
+
+Because the physics is baked into the integrator, no auxiliary PDE or IC
+loss is required: the training loss is the same component-weighted
+endpoint MSE as the MLP (Eq.~\ref{eq:loss_mlp}),
+$\lambda_\text{pde} = \lambda_\text{ic} = 0$.
+
+\paragraph{Parameter count.}
+\texttt{NeuralRK4} with \texttt{hidden\_dims}~$= [64, 64]$ has \num{4869}
+trainable parameters (matched to \texttt{mlp/tiny}); with
+\texttt{hidden\_dims}~$= [128, 128]$ it has \num{17925}.  The
+$N_\text{RK}$ choice does not change the parameter count, only the
+integration granularity.
+
+\subsection{Measured Outcome on \texttt{train\_50M\_dz25.npz}}
+\label{sec:v2_results}
+
+All v2 runs share the training data, split (80/10/10), seed (42), batch
+size (1024 for \texttt{PINN\_v2} and \texttt{neural\_rk4/small\_2step};
+2048 otherwise), base learning rate ($5 \times 10^{-4}$), and cosine
+annealing schedule of Sec.~\ref{sec:training}.  The MLP baselines were
+trained on the same dataset under the schedule of
+Table~\ref{tab:configs}.  Table~\ref{tab:v2_results} summarises the
+test-set metrics; two v2 runs are still in progress at the time of this
+edit and are marked with the latest validation-log value.
+
+\begin{table}[htbp]
+\centering
+\caption{Final test metrics for the \texttt{gen\_2} v2 submission
+(cluster 4262459).  MLP baselines from cluster 4262446 on the same
+\texttt{train\_50M\_dz25.npz} dataset included for comparison.  All
+quantities computed on the 5M-sample test split.  Starred entries are
+the latest value parsed from the training log for the two runs still in
+progress.}
+\label{tab:v2_results}
+\footnotesize
+\begin{tabular}{llrrrrrr}
+Family & Config & Hidden & Params & Pos [mm] & Slope [rad] &
+  best ep / total & Wall [h] \\
+\hline
+MLP       & tiny   & $[64, 64]$           & \num{4868}  & 0.3868 & $8.5 \times 10^{-5}$  & 62 / 64 & 3.69 \\
+MLP       & small  & $[128, 128]$         & \num{18692} & 0.5092 & $1.21 \times 10^{-4}$ & 16 / 46 & 2.57 \\
+MLP       & medium & $[256, 256, 128]$    & \num{102788}& 0.3046 & $9.5 \times 10^{-5}$  & 20 / 40 & 1.63 \\
+MLP       & large  & $[512, 512, 256]$    & \num{401412}& 0.3798 & $7.6 \times 10^{-5}$  & 14 / 44 & 1.81 \\
+MLP       & wide   & $[512, 512, 256, 128]$ & \num{434180}& 0.3139 & $7.9 \times 10^{-5}$  & 24 / 42 & 1.87 \\
+\hline
+PINN\_v2   & $\lambda = 0.1$  & $[256, 256]$ & \num{68612} & \textbf{0.2352} & $6.8 \times 10^{-5}$  & 4 / 41  & 7.84 \\
+PINN\_v2   & $\lambda = 1.0$  & $[256, 256]$ & \num{68612} & 0.3218          & $8.6 \times 10^{-5}$  & 1 / 41  & 7.87 \\
+PINN\_v2   & $\lambda = 10.0$ & $[256, 256]$ & \num{68612} & $\sim 0.40$\textsuperscript{$\star$} &
+                $1.5 \times 10^{-4}$\textsuperscript{$\star$} & --- & --- \\
+NeuralRK4 & tiny, 1 step  & $[64, 64]$    & \num{4869}  & 0.1339 & $5.0 \times 10^{-5}$  & 40 / 42 & 3.62 \\
+NeuralRK4 & small, 1 step & $[128, 128]$  & \num{17925} & \textbf{0.1251} & $\mathbf{5.0 \times 10^{-5}}$ & 40 / 42 & 3.64 \\
+NeuralRK4 & small, 2 steps & $[128, 128]$ & \num{17925} & $\sim 0.128$\textsuperscript{$\star$} &
+                $5.0 \times 10^{-5}$\textsuperscript{$\star$} & --- & --- \\
+\end{tabular}
+\end{table}
+
+\paragraph{Before/after contrast.}
+The pre-fix results on an earlier cluster (4217847, variable-\dz{}
+dataset) gave RK\_PINN slope errors in
+$[5.2 \times 10^{-2},\; 1.7 \times 10^{-1}]$~rad and a non-monotone PINN
+$\lambda_\text{pde}$ response (see
+\texttt{ISSUES\_WITH\_PINNS\_AND\_RK\_PINNS.md}~\S2).  On the v2
+submission:
+\begin{enumerate}
+  \item \emph{Slope catastrophe eliminated.} NeuralRK4 achieves
+    $5.0 \times 10^{-5}$~rad --- a three-orders-of-magnitude improvement
+    over the legacy RK\_PINN --- because Butcher weights multiply the
+    correct quantity (derivatives) and the backbone is no longer detached
+    from the physics gradient.
+  \item \emph{Monotone $\lambda_\text{pde}$ response recovered.}
+    PINN\_v2 position degrades monotonically as
+    $\lambda_\text{pde}$ increases ($0.235 \to 0.322 \to \sim 0.40$~mm),
+    consistent with a genuine data/physics trade-off rather than the
+    structural-floor pathology of the legacy PINN.
+  \item \emph{MLPs beaten on accuracy per parameter.}  At
+    \num{4869} parameters (matched to \texttt{mlp/tiny}), NeuralRK4
+    reaches 0.134~mm, 2.3$\times$ better than the best MLP
+    (\texttt{mlp/medium}, \num{102788} parameters, 0.305~mm) with
+    $\sim$21$\times$ fewer parameters.  The gains at \num{17925}
+    parameters are similar: 0.125~mm vs.\ the best MLP's 0.305~mm.
+\end{enumerate}
+
+\paragraph{Known limitations carried over.}
+Neither \texttt{PINN\_v2} nor \texttt{NeuralRK4} uses the per-sample
+initial $z_0$; both assume $z_0 = 0$.  The training data has
+$z_0 \in [0, 14000]$~mm and the magnetic field is strongly
+$z$-dependent, so this is an explicit modelling approximation, flagged
+in the source with \texttt{FIX NOTE} comments and documented in
+\texttt{ISSUES}~\S7 and \S9.4 for resolution in gen\_3.
+
+\subsection{Provenance and Reproducibility}
+\label{sec:v2_provenance}
+
+The fixes are traceable end-to-end:
+\begin{itemize}
+  \item \textbf{Code.}
+    \texttt{experiments/gen\_2/models/architectures.py} --- classes
+    \texttt{PINN\_v2} (added 2026-04-21, fixes A+B+C) and
+    \texttt{NeuralRK4} (added 2026-04-21, fix D$'$) with the original
+    \texttt{PINN} and \texttt{RK\_PINN} kept for archival comparison.
+    \texttt{MODEL\_REGISTRY} now exposes \texttt{pinn\_v2} and
+    \texttt{neural\_rk4}.
+  \item \textbf{Training script.}
+    \texttt{experiments/gen\_2/models/train.py} --- added
+    \texttt{physics\_warmup\_epochs} (default 5) and a per-epoch ramp
+    (Fix F).
+  \item \textbf{Configs.}
+    \texttt{experiments/gen\_2/configs/v2\_fixes/pinn\_v2/*.json}
+    (\num{3} files, $\lambda_\text{pde} \in \{0.1, 1.0, 10.0\}$) and
+    \texttt{configs/v2\_fixes/neural\_rk4/*.json} (\num{3} files,
+    \texttt{tiny\_1step}, \texttt{small\_1step}, \texttt{small\_2step}).
+    Each config records the list \texttt{arch\_fixes} of applied fixes
+    and the \texttt{supersedes\_experiment} identifier of the legacy run
+    it replaces.
+  \item \textbf{Cluster.}
+    \texttt{condor/submit\_v2\_fixes.sub} with
+    \texttt{condor/jobs\_v2\_fixes.txt} dispatches the six v2 jobs.
+    Submitted as cluster 4262459 on 2026-04-21; legacy PINN/RK\_PINN
+    jobs (cluster 4262446, ProcIds 5--10) were cancelled at the same
+    time.
+  \item \textbf{MLflow.}
+    Experiment name
+    \texttt{gen\_2\_track\_extrapolation\_v2\_fixes}, stored in
+    \texttt{experiments/gen\_2/mlruns/}, disjoint from the
+    \texttt{gen\_2\_track\_extrapolation\_true\_gen2\_data} experiment
+    that holds the MLP baselines.
+\end{itemize}
+
+% ============================================================================
+\section{Companion Reports}
+\label{sec:companion_reports}
+
+This protocol is complemented by three standalone results reports stored
+alongside this document in \texttt{docs/reports/}.  They are written to be
+read sequentially; each references but does not duplicate the preceding
+material.
+
+\begin{itemize}
+  \item \textbf{\texttt{gen1\_results.tex}} --- Initial MLP-only
+    feasibility study on the V1 dataset
+    (\texttt{experiments/gen\_1/V1/data\_generation/datasets/train\_50M.npz}).
+    Motivates the whole project (64~kB CUDA constant-memory budget,
+    Allen HLT1 integration), characterises the \texttt{twodip.rtf}
+    magnetic field, presents the 17-MLP architecture sweep, and
+    establishes the Pareto frontier.  Labels prefixed \texttt{gen1:}.
+  \item \textbf{\texttt{gen2\_old\_data\_results.tex}} --- First PINN
+    and RK\_PINN study, run with the \texttt{gen\_2} codebase on the
+    V1 dataset (HTCondor cluster 4217847).  Diagnoses the four
+    pathologies (P1 affine-in-$\zeta$ trunk, P2 reverse-mode AD cost,
+    P3 state-averaging RK\_PINN, P4 softmax-drift of Butcher weights)
+    that motivate the v2 fixes described in \S\ref{sec:v2_fixes} of
+    this protocol.  Labels prefixed \texttt{gen2old:}.
+  \item \textbf{\texttt{gen2\_new\_data\_results.tex}} --- v2 fixes
+    (PINN\_v2, NeuralRK4) on the new variable-$\dz$ dataset
+    (\texttt{train\_50M\_dz25.npz}), HTCondor clusters 4262446 (MLP
+    baselines) and 4262459 (v2 fixes).  Presents the final results
+    table: NeuralRK4 at 17.9k parameters reaches \SI{0.124}{\mm} position
+    error and $5.0\times10^{-5}$~rad slope error, beating the best MLP
+    (100.9k parameters, \SI{0.305}{\mm}) by $2.5\times$ position and
+    $2\times$ slope.  Labels prefixed \texttt{gen2new:}.
+\end{itemize}
+
+% ============================================================================
+\section{Summary}
+\label{sec:summary}
+
+This protocol defines a nine-configuration experiment comparing three
+neural network architectures (MLP, PINN, RK\_PINN) for replacing the RK4
+track extrapolator in LHCb's Allen HLT1 trigger.  The \texttt{gen\_2}
+dataset extends the propagation range to $\dz \geq \SI{25}{\mm}$ to cover
+VELO sensor spacing, and all MLP architectures are constrained to
+$\leq$~\SI{64}{\kilo\byte} for GPU deployment.  Six confounding variables
+are identified (activation, batch size, learning rate, parameter count,
+training cost, and Jacobian metric sensitivity).  The analysis plan
+specifies aggregate, $\dz$-binned, and momentum-binned evaluation to
+address both the engineering (RQ1) and scientific (RQ2) research
+questions.
+
+% ============================================================================
+% References
+% ============================================================================
+\begin{thebibliography}{20}
+
+\bibitem{LHCb_detector}
+R.~Aaij \textit{et al.} (LHCb Collaboration),
+``The LHCb detector at the LHC,''
+JINST \textbf{3}, S08005 (2008).
+\href{https://doi.org/10.1088/1748-0221/3/08/S08005}{doi:10.1088/1748-0221/3/08/S08005}.
+
+\bibitem{RK4_extrapolator}
+E.~Bos and E.~"; see also
+M.~Needham,
+``The LHCb track extrapolation,''
+LHCb-2007-140, CERN-LHCb-2007-140 (2007).
+% [REF NEEDED] Exact internal note reference for TrackRungeKuttaExtrapolator.
+
+\bibitem{LHCb_field_map}
+% [REF NEEDED] Reference for twodip.rtf field map and measurement procedure.
+LHCb magnetic field map, internal documentation.
+
+\bibitem{Allen_GPU}
+R.~Aaij \textit{et al.} (LHCb Collaboration),
+``Allen: A high-level trigger on GPUs for LHCb,''
+Comput.\ Softw.\ Big Sci.\ \textbf{4}, 7 (2020).
+\href{https://doi.org/10.1007/s41781-020-00039-7}{doi:10.1007/s41781-020-00039-7}.
+
+\bibitem{Kalman_filter}
+R.~Fr\"uhwirth,
+``Application of Kalman filtering to track and vertex fitting,''
+Nucl.\ Instrum.\ Meth.\ A \textbf{262}, 444 (1987).
+\href{https://doi.org/10.1016/0168-9002(87)90887-4}{doi:10.1016/0168-9002(87)90887-4}.
+
+\bibitem{Glorot2010}
+X.~Glorot and Y.~Bengio,
+``Understanding the difficulty of training deep feedforward neural networks,''
+in \textit{Proc.\ AISTATS} (2010), pp.~249--256.
+
+\bibitem{SiLU}
+S.~Elfwing, E.~Uchibe, and K.~Doya,
+``Sigmoid-weighted linear units for neural network function approximation
+in reinforcement learning,''
+Neural Networks \textbf{107}, 3 (2018).
+\href{https://doi.org/10.1016/j.neunet.2017.12.012}{doi:10.1016/j.neunet.2017.12.012}.
+
+\bibitem{AdamW}
+I.~Loshchilov and F.~Hutter,
+``Decoupled weight decay regularization,''
+in \textit{Proc.\ ICLR} (2019).
+\href{https://arxiv.org/abs/1711.05101}{arXiv:1711.05101}.
+
+\bibitem{Stiasny2021}
+J.~Stiasny, G.~S.~Misyris, and S.~Chatzivasileiadis,
+``Physics-informed neural networks for non-linear system identification
+applied to power system dynamics,''
+in \textit{Proc.\ IEEE PowerTech} (2021).
+\href{https://doi.org/10.1109/PowerTech46648.2021.9494769}{doi:10.1109/PowerTech46648.2021.9494769}.
+
+\bibitem{Zhai2023}
+J.~Zhai, T.~Dobrowolski, and E.~Bhatt,
+``Solving differential equations with physics-informed neural networks
+incorporating Runge-Kutta methods,''
+% [REF NEEDED] Exact journal/arXiv reference for Zhai et al. 2023.
+
+\bibitem{Raissi2019}
+M.~Raissi, P.~Perdikaris, and G.~E.~Karniadakis,
+``Physics-informed neural networks: A deep learning framework for solving
+forward and inverse problems involving nonlinear partial differential
+equations,''
+J.\ Comput.\ Phys.\ \textbf{378}, 686 (2019).
+\href{https://doi.org/10.1016/j.jcp.2018.10.045}{doi:10.1016/j.jcp.2018.10.045}.
+
+\bibitem{Wang2021}
+S.~Wang, Y.~Teng, and P.~Perdikaris,
+``Understanding and mitigating gradient flow pathologies in
+physics-informed neural networks,''
+SIAM J.\ Sci.\ Comput.\ \textbf{43}(5), A3055 (2021).
+\href{https://doi.org/10.1137/20M1318043}{doi:10.1137/20M1318043}.
+
+\bibitem{Krishnapriyan2021}
+A.~S.~Krishnapriyan, A.~Gholami, S.~Zhe, R.~M.~Kirby, and
+M.~W.~Mahoney,
+``Characterizing possible failure modes in physics-informed neural
+networks,''
+in Adv.\ Neural Inf.\ Process.\ Syst.\ (NeurIPS), \textbf{34}, 26548 (2021).
+
+\end{thebibliography}
+
+\end{document}

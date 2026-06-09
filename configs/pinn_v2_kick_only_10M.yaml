@@ -1,0 +1,44 @@
+# =============================================================================
+# 2026-06-08 ABLATION for pinn_v2_kick_10M: kick-scaled head ON, but the PDE
+# residual scaling left at the LEGACY per-sample |dz| mode. Run this alongside
+# pinn_v2_kick_10M to attribute the accuracy gain between the two changes
+# (kick head vs PDE-scale reform). Everything else identical.
+# =============================================================================
+
+seed: 42
+data_path: /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3/data/train_10M_gen3.npz
+max_samples: 10000000
+train_fraction: 0.8
+val_fraction: 0.1
+
+model_type: pinn_v2
+hidden_dims: [96, 96]
+activation: tanh
+dropout: 0.0
+lambda_pde: 0.1
+lambda_ic: 0.01
+n_collocation: 2
+physics_warmup_epochs: 10
+
+kick_scaled_head: true
+pde_scale_mode: legacy
+
+batch_size: 4096
+epochs: 80
+learning_rate: 0.0005
+weight_decay: 0.0001
+warmup_epochs: 5
+grad_clip: 1.0
+patience: 25
+min_delta: 1.0e-7
+
+loss: log_cosh
+
+checkpoint_dir: /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3/trained_models
+experiment_name: pinn_v2_kick_only_10M
+use_mlflow: true
+mlflow_experiment_name: gen_3_track_extrapolation
+
+device: cuda         # GPU submit (condor/train_gpu.sub)
+num_workers: 2
+pin_memory: true

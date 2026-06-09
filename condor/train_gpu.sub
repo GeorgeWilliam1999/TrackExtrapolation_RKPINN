@@ -1,0 +1,48 @@
+# =============================================================================
+# HTCondor submit file — gen-3 track extrapolation training (GPU)
+#
+# GPU companion to condor/train.sub (which is CPU-only). Used for the
+# 2026-06-08 model-improvement runs (kick-scaled head + fixed_L PDE scaling)
+# on the full 10 M corpus, which is impractical on CPU.
+#
+# Usage:
+#   cd /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3
+#   condor_submit condor/train_gpu.sub
+# Single run:
+#   condor_submit condor/train_gpu.sub config_file=configs/pinn_v2_kick_10M.yaml config_tag=pinn_v2_kick_10M
+#
+# GPU resource syntax matches the site's working GPU submits
+# (e.g. TE_stack/.../next_generation/V4/cluster/submit_v4_training.sub).
+# =============================================================================
+
+universe        = vanilla
+executable      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3/condor/run_train.sh
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3
+
+should_transfer_files = NO
+
+output = condor/logs/$(config_tag).$(Cluster).$(Process).out
+error  = condor/logs/$(config_tag).$(Cluster).$(Process).err
+log    = condor/logs/condor.$(Cluster).log
+
++UseOS        = "el9"
++JobCategory  = "long"
+
+# GPU training: 1 GPU, 4 cores, 16 GB. request_gpus=1 auto-adds the
+# (TARGET.GPUs >= RequestGPUs) match. Do NOT use CUDACapability here: this pool
+# advertises capability as GPUs_Capability (CUDACapability is undefined -> 0
+# matches). All GPU nodes here are V100-32GB (cap 7.0) on the stoomboot shared
+# filesystem, so no extra requirement is needed.
+# Keep CPU/mem small so the job fits a currently-free GPU slot: the free GPU
+# slots here don't also have 4 spare CPUs, so a large CPU/mem request matches 0
+# (it would only match "if drained"). The model is tiny; 1 CPU + 8 GB is plenty.
+request_gpus   = 1
+request_cpus   = 1
+request_memory = 8 GB
+request_disk   = 2 GB
+
+arguments      = $(config_file) $(config_tag)
+queue config_file, config_tag from (
+    configs/pinn_v2_kick_10M.yaml       pinn_v2_kick_10M
+    configs/pinn_v2_kick_only_10M.yaml  pinn_v2_kick_only_10M
+)

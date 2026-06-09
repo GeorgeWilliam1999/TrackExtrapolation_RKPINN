@@ -1,0 +1,30 @@
+# =============================================================================
+# HTCondor submit — quick 2M CPU signal for the kick-scaled-head model.
+# Runs immediately on free CPU slots (the GPU pool is contended); the full
+# 10M GPU runs stay queued in cluster 4825457. Small request (2 cores, 8 GB)
+# so it matches a free slot at once.
+#   condor_submit condor/train_cpu_kick.sub
+# =============================================================================
+
+universe        = vanilla
+executable      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3/condor/run_train.sh
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3
+
+should_transfer_files = NO
+
+output = condor/logs/$(config_tag).$(Cluster).$(Process).out
+error  = condor/logs/$(config_tag).$(Cluster).$(Process).err
+log    = condor/logs/condor.$(Cluster).log
+
++UseOS        = "el9"
++JobCategory  = "long"
+
+request_cpus   = 2
+request_memory = 8 GB
+request_disk   = 2 GB
+
+arguments      = $(config_file) $(config_tag)
+queue config_file, config_tag from (
+    configs/pinn_v2_kick_2M_cpu.yaml       pinn_v2_kick_2M_cpu
+    configs/pinn_v2_kick_only_2M_cpu.yaml  pinn_v2_kick_only_2M_cpu
+)

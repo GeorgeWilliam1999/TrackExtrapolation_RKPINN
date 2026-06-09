@@ -282,6 +282,9 @@ def _build_model(config: dict):
             lambda_pde=config["lambda_pde"],
             lambda_ic=config["lambda_ic"],
             n_collocation=config["n_collocation"],
+            kick_scaled_head=config.get("kick_scaled_head", False),
+            pde_scale_mode=config.get("pde_scale_mode", "legacy"),
+            pde_ref_length=config.get("pde_ref_length", 5213.0),
         )
     if mt == "neural_rk4":
         return create_model(
