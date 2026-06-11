@@ -17,16 +17,20 @@ replaces the adaptive RK extrapolator inside the LHCb Allen GPU Kalman filter.
 
 Charged tracks in LHCb are propagated through the dipole field by an adaptive
 Runge–Kutta integrator that is called O(10⁶)×/event and reads a 957k-point field
-map. We replace that function — `(x, y, tx, ty, q/p, z_start, dz) → state_out` — with a
-**single small neural network that uses no field map at inference**. The locked
-candidate, `pinn_v2_ALLEN_v1`, is a 10,372-parameter PINN_v2 (40.5 kB fp32, fits the
-64 kB Allen constant-memory budget). It reaches **11.7 µm median ‖Δx‖** on the full
-signed-Δz test distribution and **passes the Kalman Jacobian (A4) gate with ~100×
-margin**. It has been exported to a byte-locked V3 blob, baked into a generated CUDA
-header (`PINN_V2_UTT.cuh`), and wired into the Allen UT→T Kalman step. The remaining
-work is the Allen integration gates (R6: parity, throughput, Moore physics) and closing
-the accuracy on the hardest single step (UT→T, currently ~293 µm median — see
-[`STATUS.md`](STATUS.md)).
+map. We replace that function — `(x, y, tx, ty, q/p, z_start, dz) → state_out` — with
+compact surrogates (neural networks and analytic chart methods) that use **no field
+map at inference**.
+
+> **⚠️ 2026-06-11 κ correction.** A bake-off against the production `extrapUTT`
+> polynomial exposed a ×1000-weak magnetic coupling (κ = 1e-6 instead of 1e-3) present
+> in all corpora since gen-1, plus a sign-flipped polarity in the legacy field loader.
+> Every accuracy number predating 2026-06-11 (the 11.7 µm / 293 µm headlines, the
+> flattening 5.7–12 µm chart results) describes a quasi-field-free toy. Conventions are
+> now locked in [`core/CONVENTIONS.md`](core/CONVENTIONS.md); the externally calibrated
+> stack reproduces production to **15 µm median** (see `gates/baseline/`). The gen-4
+> physical corpus (FieldMap v8r1, κ = 1e-3, 70% PV-pointing) is being generated; all
+> models and charts are being re-baselined against the incumbent's true profile
+> (15 µm median / 748 µm low-p tail / 2.2 mm p95).
 
 ---
 

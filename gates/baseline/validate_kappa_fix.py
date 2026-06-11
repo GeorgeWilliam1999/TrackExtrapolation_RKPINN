@@ -17,15 +17,14 @@ kappa, the field map, and the qop conventions in one shot.
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[1]
-sys.path.insert(0, str(REPO / "core"))
+GEN3 = HERE.parent
+sys.path.insert(0, str(GEN3 / "utils"))
 
 from magnetic_field import get_field_numpy  # noqa: E402
 from rk4_propagator import _ALLEN_KAPPA_PREFACTOR as KAPPA  # noqa: E402  (live constant)
