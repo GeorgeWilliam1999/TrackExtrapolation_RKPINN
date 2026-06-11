@@ -302,7 +302,11 @@ def train_epoch(model, loader, optim_, scheduler, device, grad_clip, phys_ramp, 
     tot = 0.0; tot_data = 0.0; tot_pde = 0.0; tot_ic = 0.0
     n = 0
     skipped = 0
-    use_physics = hasattr(model, "compute_physics_loss")
+    # lambda_pde = lambda_ic = 0 is a pure-data ablation: skip the (expensive)
+    # JVP physics evaluation entirely, it would contribute zero gradient.
+    use_physics = hasattr(model, "compute_physics_loss") and (
+        getattr(model, "lambda_pde", 0.0) > 0.0 or getattr(model, "lambda_ic", 0.0) > 0.0
+    )
     for x, y in loader:
         x = x.to(device); y = y.to(device)
         optim_.zero_grad(set_to_none=True)
@@ -484,7 +488,9 @@ def train(config: dict):
     print("\n" + "=" * 72)
     print(f"Training {config['model_type']}  ({config['epochs']} epochs max)  loss={loss_fn}")
     print("=" * 72)
-    use_physics = hasattr(model, "compute_physics_loss")
+    use_physics = hasattr(model, "compute_physics_loss") and (
+        getattr(model, "lambda_pde", 0.0) > 0.0 or getattr(model, "lambda_ic", 0.0) > 0.0
+    )
     phys_warm = int(config.get("physics_warmup_epochs", 0) or 0) if use_physics else 0
     for epoch in range(config["epochs"]):
         phys_ramp = (

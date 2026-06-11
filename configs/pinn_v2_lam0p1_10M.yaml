@@ -1,0 +1,40 @@
+# =============================================================================
+# P0.2 ablation CONTROL arm (paper Phase A2): standard physics loss, NO kick.
+# Matched pair with pinn_v2_lam0_2M_cpu.yaml — identical except lambda_pde/ic.
+# Also serves as the 2M no-kick control the project lacked (small_v1 was 200k).
+# =============================================================================
+seed: 42
+data_path: /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3/data/train_10M_gen3.npz
+max_samples: 10000000
+train_fraction: 0.8
+val_fraction: 0.1
+
+model_type: pinn_v2
+hidden_dims: [96, 96]
+activation: tanh
+dropout: 0.0
+lambda_pde: 0.1
+lambda_ic: 0.01
+n_collocation: 2
+physics_warmup_epochs: 10
+
+kick_scaled_head: false
+pde_scale_mode: legacy
+
+batch_size: 4096
+epochs: 80
+learning_rate: 0.0005
+weight_decay: 0.0001
+warmup_epochs: 5
+grad_clip: 1.0
+patience: 25
+min_delta: 1.0e-7
+
+loss: log_cosh
+checkpoint_dir: /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3/trained_models
+experiment_name: pinn_v2_lam0p1_10M
+use_mlflow: true
+mlflow_experiment_name: gen_3_track_extrapolation
+device: cuda
+num_workers: 2
+pin_memory: true
