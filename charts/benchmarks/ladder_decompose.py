@@ -16,12 +16,16 @@ from __future__ import annotations
 import sys, json
 from datetime import datetime
 from pathlib import Path
+import os
+
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
 FLAT = HERE.parent
-GEN3 = FLAT.parent / "gen_3"
-sys.path.insert(0, str(GEN3 / "utils"))
+REPO = FLAT.parent
+# Big data / checkpoints live in the lab, not in this repo.
+LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
+sys.path.insert(0, str(REPO / "core"))
 from magnetic_field import get_field_numpy  # noqa: E402
 
 UT_Z, T_Z = (2300.0, 3000.0), (7600.0, 9500.0)
@@ -42,7 +46,7 @@ def rep(dx_mm, dtx, qop, label, store):
 def main():
     t = np.load(FLAT / "charts" / "field_integrals.npz")
     zg, F, G, k0 = t["z_grid"], t["F"], t["G"], float(t["kappa0"])
-    d = np.load(GEN3 / "data" / "train_10M_gen3.npz")
+    d = np.load(LAB / "data" / "train_10M_gen3.npz")
     X, Y = d["X"], d["Y"]
     z0, dz = X[:, 5], X[:, 6]; zf = z0 + dz
     m = (z0 >= UT_Z[0]) & (z0 <= UT_Z[1]) & (zf >= T_Z[0]) & (zf <= T_Z[1]) & (dz > 0)

@@ -70,8 +70,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# gen_3 shared utils
-_UTILS_DIR = Path(__file__).parent.parent / "utils"
+# repo shared physics utils (<repo>/core)
+_UTILS_DIR = Path(__file__).parent.parent / "core"
 if str(_UTILS_DIR) not in sys.path:
     sys.path.insert(0, str(_UTILS_DIR))
 
@@ -86,7 +86,7 @@ from magnetic_field import get_field_torch  # noqa: E402
 # P0.0 FIX (2026-06-11): was 1.0e-6 — x1000 too weak (the old comment matched
 # gen-2's legacy pairing 2.998e-4 * q/p[1/MeV], but 2.998e-4 belongs with q/p
 # in 1/GeV). Correct: dtheta/ds = 1.0e-3 * qop_allen * B[T] per mm. Must match
-# utils/rk4_propagator._ALLEN_KAPPA_PREFACTOR (the ground-truth generator).
+# core/rk4_propagator._ALLEN_KAPPA_PREFACTOR (the ground-truth generator).
 # Externally validated against the production extrapUTT polynomial (P0.1).
 _ALLEN_KAPPA_PREFACTOR: float = 1.0e-3
 

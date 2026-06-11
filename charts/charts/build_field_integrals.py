@@ -16,14 +16,17 @@ Outputs: charts/field_integrals.npz  (z_grid, F, G, kappa0, metadata)
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-GEN3 = HERE.parent.parent / "gen_3"
-sys.path.insert(0, str(GEN3 / "utils"))
+REPO = HERE.parent.parent
+# Big data / checkpoints live in the lab, not in this repo.
+LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
+sys.path.insert(0, str(REPO / "core"))
 
 from magnetic_field import get_field_numpy, C_LIGHT  # noqa: E402
 
@@ -51,7 +54,7 @@ def build_tables():
 
 def calibrate_kappa(z_grid, F):
     """Empirical kappa0: Δtx_true ≈ −kappa0·qop·ΔF on high-p, moderate-dz tracks."""
-    data = np.load(GEN3 / "data" / "train_10M_gen3.npz")
+    data = np.load(LAB / "data" / "train_10M_gen3.npz")
     X, Y = data["X"], data["Y"]
     qop, z0, dz = X[:, 4], X[:, 5], X[:, 6]
     # selection: forward, well inside the map, high momentum (small |qop| -> chart near-exact),

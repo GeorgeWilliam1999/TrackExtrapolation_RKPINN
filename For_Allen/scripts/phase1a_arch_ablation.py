@@ -50,7 +50,7 @@ HERE = Path(__file__).resolve().parent
 FOR_ALLEN = HERE.parent
 GEN3_ROOT = FOR_ALLEN.parent
 sys.path.insert(0, str(GEN3_ROOT))
-sys.path.insert(0, str(GEN3_ROOT / "utils"))
+sys.path.insert(0, str(GEN3_ROOT / "core"))
 
 from models.architectures import NeuralRK4  # noqa: E402
 from rk4_propagator import RK4Integrator  # type: ignore  # noqa: E402

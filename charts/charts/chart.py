@@ -12,13 +12,16 @@ Reaches ~12 um median / 371 um p95 on the UT->T pool with ZERO trained params
 (reference true-field path integral: 5.7 um / 159 um).
 """
 from __future__ import annotations
+import os
 import sys
 from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-GEN3 = HERE.parent.parent / "gen_3"
-sys.path.insert(0, str(GEN3 / "utils"))
+REPO = HERE.parent.parent
+# Big data / checkpoints live in the lab, not in this repo.
+LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
+sys.path.insert(0, str(REPO / "core"))
 from magnetic_field import get_field_numpy, C_LIGHT  # noqa: E402
 
 # F3.1 winner config
@@ -103,7 +106,7 @@ def chart_predict(X, chart=None):
 if __name__ == "__main__":
     build_chart()
     # quick self-check on the UT->T pool
-    d = np.load(GEN3 / "data" / "train_10M_gen3.npz"); X, Y = d["X"], d["Y"]
+    d = np.load(LAB / "data" / "train_10M_gen3.npz"); X, Y = d["X"], d["Y"]
     z0, dz = X[:, 5], X[:, 6]; zf = z0 + dz
     m = (z0 >= 2300) & (z0 <= 3000) & (zf >= 7600) & (zf <= 9500) & (dz > 0)
     pred = chart_predict(X[m])

@@ -12,13 +12,17 @@ y-extension (Maxwell helps) or the x-representation (it does not).
 from __future__ import annotations
 import sys, math
 from pathlib import Path
+import os
+
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 HERE = Path(__file__).resolve().parent
 FLAT = HERE.parent
-GEN3 = FLAT.parent / "gen_3"
-sys.path.insert(0, str(GEN3 / "utils"))
+REPO = FLAT.parent
+# Big data / checkpoints live in the lab, not in this repo.
+LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
+sys.path.insert(0, str(REPO / "core"))
 from magnetic_field import get_field_numpy  # noqa: E402
 
 UT_Z, T_Z = (2300.0, 3000.0), (7600.0, 9500.0)
@@ -50,7 +54,7 @@ def kick_med(Xs, Ys, By, k0):
 def main():
     k0 = float(np.load(FLAT / "charts" / "field_integrals.npz")["kappa0"])
     field = get_field_numpy(use_interpolated=True, polarity=-1)
-    d = np.load(GEN3 / "data" / "train_10M_gen3.npz"); X, Y = d["X"], d["Y"]
+    d = np.load(LAB / "data" / "train_10M_gen3.npz"); X, Y = d["X"], d["Y"]
     z0, dz = X[:, 5], X[:, 6]; zf = z0+dz
     m = (z0 >= UT_Z[0]) & (z0 <= UT_Z[1]) & (zf >= T_Z[0]) & (zf <= T_Z[1]) & (dz > 0)
     Xs, Ys = X[m].astype(np.float64), Y[m].astype(np.float64); n = len(Xs)

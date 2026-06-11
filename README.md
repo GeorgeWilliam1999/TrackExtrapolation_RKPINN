@@ -35,14 +35,23 @@ the accuracy on the hardest single step (UT→T, currently ~293 µm median — s
 | Path | What it is |
 |---|---|
 | [`STATUS.md`](STATUS.md) | **Live status, headline numbers, roadmap. Read this first.** |
-| [`candidate/pinn_v2_ALLEN_v1/`](candidate/pinn_v2_ALLEN_v1) | The locked deployment candidate: checkpoint, config, normalisation, `TAG_INFO.json`, and the generated `PINN_V2_UTT.cuh`. |
+| [`core/`](core) | Shared physics: `field_v8r1.py` (**canonical** FieldMap v8r1 down loader), `rk4_propagator.py` (ground-truth generator — *not* a deployment model), `magnetic_field.py` (legacy twodip loader), and [`CONVENTIONS.md`](core/CONVENTIONS.md) (kappa, field sign, corpus contract — locked). |
 | [`models/`](models) | Model definitions + training/eval (`architectures.py`, `train.py`, `eval.py`, `detector_sigma.py`). |
-| [`utils/`](utils) | Reference physics: `rk4_propagator.py` (ground-truth generator — *not* a deployment model) and `magnetic_field.py`. |
+| [`datagen/`](datagen) | Corpus generation: `generate_data_v2.py` + HTCondor wrappers (`datagen_v2.sub`, `run_datagen_v2.sh`). |
+| [`gates/`](gates) | Acceptance gates: `run_r2_jacobian.py` (A4), `run_r7_utt_eval.py` (UT→T), and `gates/baseline/` (extrapUTT production-baseline comparison, former `paper_p0/`). |
+| [`charts/`](charts) | Field-flattening / chart-coordinates research line (former `flattening/`): `PLAN.md`, chart builders, benchmarks, results. |
+| [`candidate/pinn_v2_ALLEN_v1/`](candidate/pinn_v2_ALLEN_v1) | The locked deployment candidate: checkpoint, config, normalisation, `TAG_INFO.json`, and the generated `PINN_V2_UTT.cuh`. |
 | [`For_Allen/`](For_Allen) | Deployment workspace: V3 blob writer/loader (`src/for_allen/export/`), A4 Jacobian gate (`src/for_allen/eval/jacobian.py`), CUDA header emitter (`scripts/emit_cuda_header.py`), the locked blob (`artifacts/blobs/v3/`), pins, tests, and ADRs (`docs/decisions/`). |
+| [`allen_bridge/`](allen_bridge) | Standalone CUDA-compat harness + extrapUTT baseline build. |
+| [`configs/`](configs), [`condor/`](condor) | Training configs and HTCondor submit files. |
 | [`docs/plans/`](docs/plans) | `REPLACEMENT_PLAN.md` (strategy), `EXECUTION_PLAN.md` (live ops checklist), `CLEANUP_LIST.md`, `GENERATION_SPEC.md` (corpus regeneration). |
 | [`docs/reports/`](docs/reports) | Written reports (`.tex` + `.pdf`): theory, results, Allen integration, audit. |
 | [`docs/figures/`](docs/figures) | Plots used in the reports and the Notion page. |
 | [`results/`](results) | Phase exit one-pagers (R1, R2, R4, R7). |
+
+Big artifacts (corpora `.npz`, `trained_models/`, `mlruns/`) stay in the lab; scripts
+resolve the lab via the `TE_LAB` env var
+(default `/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3`).
 
 ## What is deliberately *not* here (stays local)
 

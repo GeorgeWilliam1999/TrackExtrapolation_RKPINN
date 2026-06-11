@@ -12,6 +12,7 @@ Momentum labels: p[GeV] = 0.299792458 / qop_corpus  (corpus qop = 299.792458 * q
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -19,9 +20,11 @@ import numpy as np
 import torch
 
 HERE = Path(__file__).resolve().parent
-GEN3 = HERE.parent
-sys.path.insert(0, str(GEN3 / "models"))
-sys.path.insert(0, str(GEN3 / "utils"))
+REPO = HERE.parents[1]
+# Big data / checkpoints live in the lab, not in this repo.
+LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
+sys.path.insert(0, str(REPO / "models"))
+sys.path.insert(0, str(REPO / "core"))
 from architectures import create_model  # noqa: E402
 
 ZINI, ZFIN = 2665.0, 7826.0
@@ -83,10 +86,10 @@ def main() -> None:
 
     # --- NN candidates on identical states ---
     cands = {
-        "pinn_v2_small_v1 (deployed)": GEN3 / "trained_models" / "pinn_v2_small_v1",
-        "pinn_v2_kick_10M": GEN3 / "trained_models" / "pinn_v2_kick_10M",
-        "pinn_v2_lam0_2M_cpu": GEN3 / "trained_models" / "pinn_v2_lam0_2M_cpu",
-        "pinn_v2_lam0p1_2M_cpu": GEN3 / "trained_models" / "pinn_v2_lam0p1_2M_cpu",
+        "pinn_v2_small_v1 (deployed)": LAB / "trained_models" / "pinn_v2_small_v1",
+        "pinn_v2_kick_10M": LAB / "trained_models" / "pinn_v2_kick_10M",
+        "pinn_v2_lam0_2M_cpu": LAB / "trained_models" / "pinn_v2_lam0_2M_cpu",
+        "pinn_v2_lam0p1_2M_cpu": LAB / "trained_models" / "pinn_v2_lam0p1_2M_cpu",
     }
     Xin = np.concatenate([X[:, :5],
                           np.full((X.shape[0], 1), ZINI),

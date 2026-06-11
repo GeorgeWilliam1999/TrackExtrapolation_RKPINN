@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -25,11 +26,13 @@ import numpy as np
 import torch
 
 HERE = Path(__file__).resolve().parent
-FOR_ALLEN = HERE / "For_Allen"
-GEN3_ROOT = HERE
+REPO = HERE.parent
+FOR_ALLEN = REPO / "For_Allen"
+# Big data / checkpoints live in the lab, not in this repo.
+LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
 
-sys.path.insert(0, str(GEN3_ROOT / "models"))
-sys.path.insert(0, str(GEN3_ROOT / "utils"))
+sys.path.insert(0, str(REPO / "models"))
+sys.path.insert(0, str(REPO / "core"))
 sys.path.insert(0, str(FOR_ALLEN / "src"))
 
 from architectures import create_model  # noqa: E402
@@ -82,15 +85,15 @@ def main() -> None:
     print(f"Reference Jacobians: {n} tracks  (from {j_ref_path})")
 
     candidates = [
-        ("pinn_v2_small_v1",        GEN3_ROOT / "trained_models" / "pinn_v2_small_v1"),
-        ("pinn_v2_kick_2M_cpu",     GEN3_ROOT / "trained_models" / "pinn_v2_kick_2M_cpu"),
-        ("pinn_v2_kick_only_2M_cpu",GEN3_ROOT / "trained_models" / "pinn_v2_kick_only_2M_cpu"),
-        ("pinn_v2_kick_10M",        GEN3_ROOT / "trained_models" / "pinn_v2_kick_10M"),
-        ("pinn_v2_kick_only_10M",   GEN3_ROOT / "trained_models" / "pinn_v2_kick_only_10M"),
-        ("pinn_v2_lam0p1_2M_cpu",   GEN3_ROOT / "trained_models" / "pinn_v2_lam0p1_2M_cpu"),
-        ("pinn_v2_lam0_2M_cpu",     GEN3_ROOT / "trained_models" / "pinn_v2_lam0_2M_cpu"),
-        ("pinn_v2_lam0p1_10M",      GEN3_ROOT / "trained_models" / "pinn_v2_lam0p1_10M"),
-        ("pinn_v2_lam0_10M",        GEN3_ROOT / "trained_models" / "pinn_v2_lam0_10M"),
+        ("pinn_v2_small_v1",        LAB / "trained_models" / "pinn_v2_small_v1"),
+        ("pinn_v2_kick_2M_cpu",     LAB / "trained_models" / "pinn_v2_kick_2M_cpu"),
+        ("pinn_v2_kick_only_2M_cpu",LAB / "trained_models" / "pinn_v2_kick_only_2M_cpu"),
+        ("pinn_v2_kick_10M",        LAB / "trained_models" / "pinn_v2_kick_10M"),
+        ("pinn_v2_kick_only_10M",   LAB / "trained_models" / "pinn_v2_kick_only_10M"),
+        ("pinn_v2_lam0p1_2M_cpu",   LAB / "trained_models" / "pinn_v2_lam0p1_2M_cpu"),
+        ("pinn_v2_lam0_2M_cpu",     LAB / "trained_models" / "pinn_v2_lam0_2M_cpu"),
+        ("pinn_v2_lam0p1_10M",      LAB / "trained_models" / "pinn_v2_lam0p1_10M"),
+        ("pinn_v2_lam0_10M",        LAB / "trained_models" / "pinn_v2_lam0_10M"),
     ]
 
     results = {}
@@ -130,7 +133,7 @@ def main() -> None:
             print("  → Activate R-X.2 (straight-line residual head) before further scaling.")
 
     # --- Persist ---
-    out_path = GEN3_ROOT / "results" / f"R2_jacobian_{datetime.now().strftime('%Y-%m-%d')}.json"
+    out_path = REPO / "results" / f"R2_jacobian_{datetime.now().strftime('%Y-%m-%d')}.json"
     out_path.parent.mkdir(exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)

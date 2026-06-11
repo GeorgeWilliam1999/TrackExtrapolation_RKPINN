@@ -8,14 +8,19 @@ from __future__ import annotations
 import sys, json
 from datetime import datetime
 from pathlib import Path
+import os
+
 import numpy as np
 import torch
 
 HERE = Path(__file__).resolve().parent
 FLAT = HERE.parent
-GEN3 = FLAT.parent / "gen_3"
+REPO = FLAT.parent
+# Big data / checkpoints live in the lab, not in this repo.
+LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
+LAB_FLAT = LAB.parent / "flattening"
 sys.path.insert(0, str(FLAT / "charts"))
-sys.path.insert(0, str(GEN3 / "models"))
+sys.path.insert(0, str(REPO / "models"))
 from chart import chart_predict, load_chart  # noqa: E402
 from architectures import create_model  # noqa: E402
 
@@ -45,7 +50,7 @@ def rep(dx_mm, dtx, qop, label, store):
 
 
 def main():
-    d = np.load(GEN3 / "data" / "train_10M_gen3.npz"); X, Y = d["X"], d["Y"]
+    d = np.load(LAB / "data" / "train_10M_gen3.npz"); X, Y = d["X"], d["Y"]
     z0, dz = X[:, 5], X[:, 6]; zf = z0 + dz
     m = (z0 >= UT_Z[0]) & (z0 <= UT_Z[1]) & (zf >= T_Z[0]) & (zf <= T_Z[1]) & (dz > 0)
     Xs, Ys = X[m].astype(np.float64), Y[m].astype(np.float64)
@@ -59,7 +64,7 @@ def main():
     Xt = torch.from_numpy(Xs.astype(np.float32))
     for exp_name, label in (("residual_mlp_2M", "chart + full-pool MLP"),
                             ("residual_mlp_fwd", "chart + focused MLP")):
-        exp = FLAT / "trained_models" / exp_name
+        exp = LAB_FLAT / "trained_models" / exp_name
         if not (exp / "best_model.pt").exists():
             print(f"  ({exp_name} not trained yet)")
             continue

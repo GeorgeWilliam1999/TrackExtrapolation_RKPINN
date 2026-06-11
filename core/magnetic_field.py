@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# =============================================================================
+# LEGACY MODULE — twodip.rtf analytic/loader field, kept for reproducibility of
+# gen-1/gen-2 results and for get_field_torch() consumers. The CANONICAL field
+# for all gen-3+ work is core/field_v8r1.py (LHCb FieldMap v8r1 down, the same
+# magfield.bin Allen consumes). Do not use this module for new corpora or gates.
+# =============================================================================
 """
 ================================================================================
 Unified Magnetic Field Module for LHCb Track Extrapolation
@@ -46,6 +52,7 @@ Date: January 2026
 """
 
 import numpy as np
+import os
 from pathlib import Path
 from typing import Tuple, Optional, Union
 from dataclasses import dataclass
@@ -74,12 +81,13 @@ C_LIGHT = 2.99792458e-4
 # Default Field Map Path
 # =============================================================================
 
-# Path relative to this file.
-# Layout:  experiments/<gen_X>/utils/magnetic_field.py -> experiments/field_maps/twodip.rtf
-# (Gen-2 version of this line used .parent.parent.parent, which resolves to
-# TrackExtrapolation/field_maps/ and silently triggered the Gaussian fallback.)
+# The big field map stays in the lab (not in this repo). Resolve it via TE_LAB:
+# $TE_LAB/../field_maps/twodip.rtf  (lab layout: experiments/field_maps/twodip.rtf).
+# (Gen-2 version of this line used a relative .parent chain, which resolved to
+# the wrong directory and silently triggered the Gaussian fallback.)
 _THIS_DIR = Path(__file__).parent
-_DEFAULT_FIELD_MAP = _THIS_DIR.parent.parent / 'field_maps' / 'twodip.rtf'
+_LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
+_DEFAULT_FIELD_MAP = _LAB.parent / 'field_maps' / 'twodip.rtf'
 
 
 # =============================================================================

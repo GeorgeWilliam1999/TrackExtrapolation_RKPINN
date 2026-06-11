@@ -8,13 +8,17 @@ residual_2M.npz with Y_res = [res_x, res_y, res_tx, res_ty, qop_passthrough].
 At eval time the chart is added back.
 """
 from __future__ import annotations
+import os
 import sys
 from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
 FLAT = HERE.parent
-GEN3 = FLAT.parent / "gen_3"
+REPO = FLAT.parent
+# Big data / checkpoints live in the lab, not in this repo.
+LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
+LAB_FLAT = LAB.parent / "flattening"
 sys.path.insert(0, str(HERE))
 from chart import chart_predict, load_chart  # noqa: E402
 
@@ -22,7 +26,7 @@ SEED, MAXN, CHUNK = 42, 2_000_000, 200_000
 
 
 def main():
-    d = np.load(GEN3 / "data" / "train_10M_gen3.npz")
+    d = np.load(LAB / "data" / "train_10M_gen3.npz")
     X, Y, P = d["X"], d["Y"], d["P"]
     N = X.shape[0]
     # stratified-on-sign(dz) subsample, mirroring train.py
@@ -49,7 +53,7 @@ def main():
     print(f"residual |x|: median {np.median(rx):.1f} um  p95 {np.quantile(rx,.95):.0f} um  "
           f"(raw |dx_straight| median was ~mm-scale)")
 
-    out = HERE.parent / "data"; out.mkdir(exist_ok=True)
+    out = LAB_FLAT / "data"; out.mkdir(exist_ok=True)
     np.savez(out / "residual_2M.npz", X=Xs, Y=Yres, P=Ps,
              chart_baseline=base.astype(np.float32), keep_idx=keep)
     print(f"saved -> {out/'residual_2M.npz'}  (X, Y=residual, chart_baseline, keep_idx)")

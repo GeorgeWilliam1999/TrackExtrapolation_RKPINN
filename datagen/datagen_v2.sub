@@ -1,0 +1,15 @@
+# Gen-4 corpus: 100 shards x 100k = 10M tracks. v8r1 field, kappa=1e-3, 70/30 pointing mix.
+universe        = vanilla
+executable      = /data/bfys/gscriven/track-extrapolation-pinn/datagen/run_datagen_v2.sh
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3
+should_transfer_files = NO
+output = condor/logs/g4.$(Process).out
+error  = condor/logs/g4.$(Process).err
+log    = condor/logs/g4.$(Cluster).log
++UseOS        = "el9"
++JobCategory  = "medium"
+request_cpus   = 1
+request_memory = 4 GB
+request_disk   = 1 GB
+arguments      = $(Process)
+queue 100

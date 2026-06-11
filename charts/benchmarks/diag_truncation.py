@@ -14,15 +14,18 @@ and report the error's dependence on |x|_max along the path. This tells us wheth
 the lever is the y-extension (Maxwell) or the x-representation/window (bending plane).
 """
 from __future__ import annotations
+import os
 import sys
 from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
 FLAT = HERE.parent
-GEN3 = FLAT.parent / "gen_3"
+REPO = FLAT.parent
+# Big data / checkpoints live in the lab, not in this repo.
+LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
 sys.path.insert(0, str(FLAT / "charts"))
-sys.path.insert(0, str(GEN3 / "utils"))
+sys.path.insert(0, str(REPO / "core"))
 from chart import load_chart  # noqa: E402
 from magnetic_field import get_field_numpy  # noqa: E402
 
@@ -60,7 +63,7 @@ def med(a):
 
 def main():
     chart = load_chart(); k0 = chart[3]
-    d = np.load(GEN3 / "data" / "train_10M_gen3.npz"); X, Y = d["X"], d["Y"]
+    d = np.load(LAB / "data" / "train_10M_gen3.npz"); X, Y = d["X"], d["Y"]
     z0, dz = X[:, 5], X[:, 6]; zf = z0 + dz
     m = (z0 >= UT_Z[0]) & (z0 <= UT_Z[1]) & (zf >= T_Z[0]) & (zf <= T_Z[1]) & (dz > 0)
     Xs, Ys = X[m].astype(np.float64), Y[m].astype(np.float64); n = len(Xs)

@@ -19,14 +19,17 @@ Outputs (in this directory):
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-GEN3 = HERE.parent
-sys.path.insert(0, str(GEN3 / "utils"))
+REPO = HERE.parents[1]
+# Big data / checkpoints live in the lab, not in this repo.
+LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
+sys.path.insert(0, str(REPO / "core"))
 
 from magnetic_field import get_field_numpy  # noqa: E402
 from rk4_propagator import RK4Integrator, _ALLEN_KAPPA_PREFACTOR  # noqa: E402
@@ -75,7 +78,7 @@ def rk4_batch(S: np.ndarray, z0: float, z1: float, step: float = STEP) -> np.nda
 
 def main() -> None:
     print(f"Loading corpus ...", flush=True)
-    d = np.load(GEN3 / "data" / "train_10M_gen3.npz")
+    d = np.load(LAB / "data" / "train_10M_gen3.npz")
     X = d["X"]  # (x,y,tx,ty,qop,z0,dz)
     m = np.abs(X[:, 5] - ZINI) <= 300.0
     idx = np.flatnonzero(m)

@@ -20,6 +20,7 @@ Outputs:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from datetime import datetime
@@ -29,7 +30,11 @@ import numpy as np
 import torch
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE / "models"))
+REPO = HERE.parent
+# Big data / checkpoints live in the lab, not in this repo.
+LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
+sys.path.insert(0, str(REPO / "models"))
+sys.path.insert(0, str(REPO / "core"))
 
 from architectures import create_model  # noqa: E402
 
@@ -123,19 +128,19 @@ def _utt_metrics(model, X, Y, idx, device, batch=200_000):
 
 
 def main() -> None:
-    data = np.load(HERE / "data" / "train_10M_gen3.npz")
+    data = np.load(LAB / "data" / "train_10M_gen3.npz")
     X = data["X"]; Y = data["Y"]
 
     candidates = [
-        ("pinn_v2_small_v1",        HERE / "trained_models" / "pinn_v2_small_v1"),    # deployed baseline
-        ("pinn_v2_kick_2M_cpu",     HERE / "trained_models" / "pinn_v2_kick_2M_cpu"),
-        ("pinn_v2_kick_only_2M_cpu",HERE / "trained_models" / "pinn_v2_kick_only_2M_cpu"),
-        ("pinn_v2_kick_10M",        HERE / "trained_models" / "pinn_v2_kick_10M"),
-        ("pinn_v2_kick_only_10M",   HERE / "trained_models" / "pinn_v2_kick_only_10M"),
-        ("pinn_v2_lam0p1_2M_cpu",   HERE / "trained_models" / "pinn_v2_lam0p1_2M_cpu"),
-        ("pinn_v2_lam0_2M_cpu",     HERE / "trained_models" / "pinn_v2_lam0_2M_cpu"),
-        ("pinn_v2_lam0p1_10M",      HERE / "trained_models" / "pinn_v2_lam0p1_10M"),
-        ("pinn_v2_lam0_10M",        HERE / "trained_models" / "pinn_v2_lam0_10M"),
+        ("pinn_v2_small_v1",        LAB / "trained_models" / "pinn_v2_small_v1"),    # deployed baseline
+        ("pinn_v2_kick_2M_cpu",     LAB / "trained_models" / "pinn_v2_kick_2M_cpu"),
+        ("pinn_v2_kick_only_2M_cpu",LAB / "trained_models" / "pinn_v2_kick_only_2M_cpu"),
+        ("pinn_v2_kick_10M",        LAB / "trained_models" / "pinn_v2_kick_10M"),
+        ("pinn_v2_kick_only_10M",   LAB / "trained_models" / "pinn_v2_kick_only_10M"),
+        ("pinn_v2_lam0p1_2M_cpu",   LAB / "trained_models" / "pinn_v2_lam0p1_2M_cpu"),
+        ("pinn_v2_lam0_2M_cpu",     LAB / "trained_models" / "pinn_v2_lam0_2M_cpu"),
+        ("pinn_v2_lam0p1_10M",      LAB / "trained_models" / "pinn_v2_lam0p1_10M"),
+        ("pinn_v2_lam0_10M",        LAB / "trained_models" / "pinn_v2_lam0_10M"),
     ]
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -186,7 +191,7 @@ def main() -> None:
               f"{m['p95_dx_um']:>9.1f} {m['p99_dx_um']:>9.1f}")
     print("=" * 100)
 
-    out = HERE / "results" / f"R7_utt_eval_{datetime.now().strftime('%Y-%m-%d')}.json"
+    out = REPO / "results" / f"R7_utt_eval_{datetime.now().strftime('%Y-%m-%d')}.json"
     out.parent.mkdir(exist_ok=True)
     with open(out, "w") as f:
         json.dump(results, f, indent=2)

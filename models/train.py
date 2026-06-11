@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import random
 import sys
 import time
@@ -37,10 +38,13 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
-# gen_3 code
-_GEN3_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_GEN3_ROOT / "models"))
-sys.path.insert(0, str(_GEN3_ROOT / "utils"))
+# repo code (this file lives in <repo>/models; shared physics utils in <repo>/core)
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "models"))
+sys.path.insert(0, str(_REPO_ROOT / "core"))
+
+# Big data / checkpoints / mlruns live in the lab, not in this repo.
+_LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
 
 from architectures import create_model  # noqa: E402
 
@@ -57,7 +61,7 @@ except Exception:
 
 DEFAULTS: dict = {
     "seed": 42,
-    "data_path": str(_GEN3_ROOT / "data" / "train_10M_gen3.npz"),
+    "data_path": str(_LAB / "data" / "train_10M_gen3.npz"),
     "max_samples": 1_400_000,          # 1.12M train / 140k val / 140k test
     "train_fraction": 0.8,
     "val_fraction": 0.1,
@@ -87,7 +91,7 @@ DEFAULTS: dict = {
     "patience": 30,
     "min_delta": 1e-7,
 
-    "checkpoint_dir": str(_GEN3_ROOT / "trained_models"),
+    "checkpoint_dir": str(_LAB / "trained_models"),
     "experiment_name": None,
 
     "use_mlflow": True,
@@ -461,7 +465,7 @@ def train(config: dict):
     mlflow_run = None
     if config["use_mlflow"] and _MLFLOW_OK:
         import mlflow
-        uri = config["mlflow_tracking_uri"] or f"file://{(_GEN3_ROOT / 'mlruns').resolve()}"
+        uri = config["mlflow_tracking_uri"] or f"file://{(_LAB / 'mlruns').resolve()}"
         mlflow.set_tracking_uri(uri)
         mlflow.set_experiment(config["mlflow_experiment_name"])
         mlflow_run = mlflow.start_run(run_name=name)

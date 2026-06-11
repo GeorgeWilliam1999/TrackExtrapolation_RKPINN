@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -28,8 +29,12 @@ from pathlib import Path
 import numpy as np
 import torch
 
-_GEN3_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_GEN3_ROOT / "models"))
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "models"))
+sys.path.insert(0, str(_REPO_ROOT / "core"))
+
+# Big data / checkpoints live in the lab, not in this repo.
+_LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
 
 from architectures import create_model  # noqa: E402
 from train import validate, log_cosh_loss  # noqa: E402
@@ -89,7 +94,7 @@ def _load_checkpoint(exp_dir: Path, device: torch.device):
 def _load_test_data(exp_dir: Path, config: dict, data_path_override: str | None):
     """Load the frozen test-split for this experiment."""
     data_path = Path(data_path_override or config.get("data_path",
-        str(_GEN3_ROOT / "data" / "train_10M_gen3.npz")))
+        str(_LAB / "data" / "train_10M_gen3.npz")))
     if not data_path.exists():
         raise FileNotFoundError(f"Data file not found: {data_path}")
 
@@ -225,7 +230,7 @@ def main() -> None:
     print(f"Device: {device}")
 
     if args.all:
-        base = _GEN3_ROOT / "trained_models"
+        base = _LAB / "trained_models"
         dirs = sorted(
             d for d in base.iterdir()
             if d.is_dir()
@@ -242,7 +247,7 @@ def main() -> None:
     elif args.checkpoint:
         exp_dir = Path(args.checkpoint)
         if not exp_dir.is_absolute():
-            exp_dir = _GEN3_ROOT / exp_dir
+            exp_dir = _LAB / exp_dir
         evaluate_checkpoint(exp_dir, device, args.data_path)
     else:
         p.print_help()

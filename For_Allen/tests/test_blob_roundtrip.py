@@ -32,7 +32,7 @@ import torch
 HERE = Path(__file__).resolve()
 GEN3_ROOT = HERE.parents[2]  # .../experiments/gen_3/
 sys.path.insert(0, str(GEN3_ROOT / "models"))
-sys.path.insert(0, str(GEN3_ROOT / "utils"))
+sys.path.insert(0, str(GEN3_ROOT / "core"))
 
 from architectures import create_model  # noqa: E402
 

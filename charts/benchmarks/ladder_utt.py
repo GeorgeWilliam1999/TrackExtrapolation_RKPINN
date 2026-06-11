@@ -24,11 +24,15 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import os
+
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
 FLAT = HERE.parent
-GEN3 = FLAT.parent / "gen_3"
+REPO = FLAT.parent
+# Big data / checkpoints live in the lab, not in this repo.
+LAB = Path(os.environ.get("TE_LAB", "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3"))
 
 UT_Z = (2300.0, 3000.0)
 T_Z = (7600.0, 9500.0)
@@ -60,7 +64,7 @@ def main():
     zg, F, G, kappa0 = t["z_grid"], t["F"], t["G"], float(t["kappa0"])
     print(f"kappa0 = {kappa0:.6e}   I1(full) = {F[-1]/1000:.3f} T·m")
 
-    d = np.load(GEN3 / "data" / "train_10M_gen3.npz")
+    d = np.load(LAB / "data" / "train_10M_gen3.npz")
     X, Y = d["X"], d["Y"]
     z0, dz = X[:, 5], X[:, 6]
     zf = z0 + dz
@@ -87,7 +91,7 @@ def main():
     results["rung1_kick_chart"] = metrics(x_r1 - Ys[:, 0], tx_r1 - Ys[:, 2], qop, "rung1 kick chart")
 
     # NN reference numbers (R7, own test splits, same window) for context
-    r7 = GEN3 / "results" / "R7_utt_eval_2026-06-10.json"
+    r7 = REPO / "results" / "R7_utt_eval_2026-06-10.json"
     if r7.exists():
         rj = json.load(open(r7))
         print("\n-- NN references (R7, test splits) --")
