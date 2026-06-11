@@ -35,9 +35,19 @@ from typing import Tuple, Optional
 sys.path.insert(0, str(Path(__file__).parent))
 from magnetic_field import get_field_numpy, C_LIGHT as _LEGACY_C_LIGHT  # noqa: E402
 
-# Kappa prefactor when qop is already in Allen units (already contains c_light).
-# kappa_allen = 1e-6 * qop_allen  ==  2.99792458e-4 * (q/p_MeV)  ==  kappa_legacy
-_ALLEN_KAPPA_PREFACTOR = 1.0e-6
+# Kappa prefactor when qop is already in Allen units (qop = 299.792458 * q/p_MeV).
+#
+# P0.0 FIX (2026-06-11): was 1.0e-6 — x1000 too weak. Derivation:
+#   dtheta/ds = 0.299792458 [GeV/(T m)] * B[T] / p[GeV]  per metre
+#             = 2.99792458e-4 * B * (q/p)[1/GeV]         per mm
+#             = 0.299792458  * B * (q/p)[1/MeV]          per mm
+#   with qop_allen = 299.792458 * (q/p)[1/MeV]:
+#   dtheta/ds = 1.0e-3 * qop_allen * B  per mm.
+# The old value matched the "legacy" pairing (2.998e-4 with q/p in 1/MeV),
+# which is itself wrong by x1000 (2.998e-4 belongs with q/p in 1/GeV) — the
+# bug therefore predates gen-3. Verified externally against the production
+# extrapUTT polynomial (see paper_p0/, P0.1 bake-off 2026-06-11).
+_ALLEN_KAPPA_PREFACTOR = 1.0e-3
 
 
 class RK4Integrator:

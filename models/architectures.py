@@ -82,10 +82,13 @@ from magnetic_field import get_field_torch  # noqa: E402
 # Physical constants
 # =============================================================================
 
-# Allen convention: qop already carries c_light, so kappa = 1e-6 * qop.
-# Equivalent to gen-2's  qop_MeV * 2.99792458e-4  because Allen's qop equals
-# (q/p_MeV) * 299.792458, and 299.792458 * 1e-6 == 2.99792458e-4.
-_ALLEN_KAPPA_PREFACTOR: float = 1.0e-6
+# Allen convention: qop = 299.792458 * (q/p)[1/MeV].
+# P0.0 FIX (2026-06-11): was 1.0e-6 — x1000 too weak (the old comment matched
+# gen-2's legacy pairing 2.998e-4 * q/p[1/MeV], but 2.998e-4 belongs with q/p
+# in 1/GeV). Correct: dtheta/ds = 1.0e-3 * qop_allen * B[T] per mm. Must match
+# utils/rk4_propagator._ALLEN_KAPPA_PREFACTOR (the ground-truth generator).
+# Externally validated against the production extrapUTT polynomial (P0.1).
+_ALLEN_KAPPA_PREFACTOR: float = 1.0e-3
 
 
 # =============================================================================
