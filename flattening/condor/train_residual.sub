@@ -1,0 +1,17 @@
+# F2 — train the residual MLP (CPU). Uses the gen_3 run_train.sh wrapper + train.py.
+universe        = vanilla
+executable      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3/condor/run_train.sh
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3
+should_transfer_files = NO
+output = /data/bfys/gscriven/TrackExtrapolation/experiments/flattening/condor/logs/$(config_tag).$(Cluster).out
+error  = /data/bfys/gscriven/TrackExtrapolation/experiments/flattening/condor/logs/$(config_tag).$(Cluster).err
+log    = /data/bfys/gscriven/TrackExtrapolation/experiments/flattening/condor/logs/condor.$(Cluster).log
++UseOS        = "el9"
++JobCategory  = "long"
+request_cpus   = 2
+request_memory = 8 GB
+request_disk   = 2 GB
+arguments      = $(config_file) $(config_tag)
+queue config_file, config_tag from (
+    /data/bfys/gscriven/TrackExtrapolation/experiments/flattening/configs/residual_mlp_2M.yaml  residual_mlp_2M
+)

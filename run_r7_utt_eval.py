@@ -132,6 +132,10 @@ def main() -> None:
         ("pinn_v2_kick_only_2M_cpu",HERE / "trained_models" / "pinn_v2_kick_only_2M_cpu"),
         ("pinn_v2_kick_10M",        HERE / "trained_models" / "pinn_v2_kick_10M"),
         ("pinn_v2_kick_only_10M",   HERE / "trained_models" / "pinn_v2_kick_only_10M"),
+        ("pinn_v2_lam0p1_2M_cpu",   HERE / "trained_models" / "pinn_v2_lam0p1_2M_cpu"),
+        ("pinn_v2_lam0_2M_cpu",     HERE / "trained_models" / "pinn_v2_lam0_2M_cpu"),
+        ("pinn_v2_lam0p1_10M",      HERE / "trained_models" / "pinn_v2_lam0p1_10M"),
+        ("pinn_v2_lam0_10M",        HERE / "trained_models" / "pinn_v2_lam0_10M"),
     ]
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

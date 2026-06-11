@@ -1,0 +1,35 @@
+# F2 — small MLP learning the analytic-chart RESIDUAL (data/residual_2M.npz).
+# The chart (charts/chart.py) captures the bend; the net learns the smooth
+# remainder. Plain MLP (no physics loss — physics is in the chart).
+# Final prediction at eval = chart_predict(X) + this MLP. See benchmarks/eval_chart_nn.py.
+
+seed: 42
+data_path: /data/bfys/gscriven/TrackExtrapolation/experiments/flattening/data/residual_2M.npz
+max_samples: 2000000
+train_fraction: 0.8
+val_fraction: 0.1
+
+model_type: mlp
+hidden_dims: [96, 96]
+activation: silu
+dropout: 0.0
+engineered_features: true          # append log10|dz| + sign(dz)
+
+batch_size: 4096
+epochs: 60
+learning_rate: 0.0005
+weight_decay: 0.0001
+warmup_epochs: 5
+grad_clip: 1.0
+patience: 25
+min_delta: 1.0e-7
+loss: log_cosh
+
+checkpoint_dir: /data/bfys/gscriven/TrackExtrapolation/experiments/flattening/trained_models
+experiment_name: residual_mlp_2M
+use_mlflow: false
+mlflow_experiment_name: flattening_residual
+
+device: cpu
+num_workers: 2
+pin_memory: false

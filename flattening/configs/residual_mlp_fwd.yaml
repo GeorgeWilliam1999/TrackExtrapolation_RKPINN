@@ -1,0 +1,37 @@
+# F2b — residual MLP focused on the DEPLOYMENT regime (long forward steps,
+# 3000<dz<8000, ~163k samples). The full-pool run (residual_mlp_2M) drowns the
+# hard UT->T cases in 2M trivial short-step residuals, so the net barely touches
+# the tail. Here every sample is a long forward step where the chart residual is
+# O(5 um) median / O(200 um) p95 — the regime we actually deploy into.
+# Final prediction at eval = chart_predict(X) + this MLP. See benchmarks/eval_chart_nn.py.
+
+seed: 42
+data_path: /data/bfys/gscriven/TrackExtrapolation/experiments/flattening/data/residual_fwd.npz
+max_samples: 200000
+train_fraction: 0.8
+val_fraction: 0.1
+
+model_type: mlp
+hidden_dims: [128, 128, 64]
+activation: silu
+dropout: 0.0
+engineered_features: true
+
+batch_size: 2048
+epochs: 200
+learning_rate: 0.0008
+weight_decay: 0.00005
+warmup_epochs: 8
+grad_clip: 1.0
+patience: 30
+min_delta: 1.0e-7
+loss: log_cosh
+
+checkpoint_dir: /data/bfys/gscriven/TrackExtrapolation/experiments/flattening/trained_models
+experiment_name: residual_mlp_fwd
+use_mlflow: false
+mlflow_experiment_name: flattening_residual
+
+device: cpu
+num_workers: 2
+pin_memory: false
