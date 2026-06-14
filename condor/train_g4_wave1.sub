@@ -1,0 +1,18 @@
+# GEN-4 wave 1: lambda pair on the physical corpus — 2M CPU fast signal.
+universe        = vanilla
+executable      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3/condor/run_train.sh
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3
+should_transfer_files = NO
+output = condor/logs/$(config_tag).$(Cluster).$(Process).out
+error  = condor/logs/$(config_tag).$(Cluster).$(Process).err
+log    = condor/logs/condor.$(Cluster).log
++UseOS        = "el9"
++JobCategory  = "long"
+request_cpus   = 2
+request_memory = 10 GB
+request_disk   = 2 GB
+arguments      = $(config_file) $(config_tag)
+queue config_file, config_tag from (
+    configs/pinn_v2_g4_lam0_2M_cpu.yaml    pinn_v2_g4_lam0_2M_cpu
+    configs/pinn_v2_g4_lam0p1_2M_cpu.yaml  pinn_v2_g4_lam0p1_2M_cpu
+)
