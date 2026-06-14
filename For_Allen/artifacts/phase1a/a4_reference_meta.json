@@ -1,0 +1,37 @@
+{
+  "seed": 20260614,
+  "n_total": 300,
+  "n_corpus": 200,
+  "n_utt": 100,
+  "corpus_file": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3/data/train_10M_gen4.npz",
+  "utt_pool_file": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3/data/utt_pool_gen4_frozen.npz",
+  "corpus_rows": 9188440,
+  "utt_pool_rows": 13349,
+  "fwd_frac": 0.6466666666666666,
+  "qop_abs_min": 0.001513844239525497,
+  "qop_abs_max": 0.2940574586391449,
+  "absdz_min": 26.504819869995117,
+  "absdz_max": 9833.2724609375,
+  "date": "2026-06-14",
+  "kappa": 0.001,
+  "field": "N=(np.int64(81), np.int64(81), np.int64(146)) d=(np.float64(100.0), np.float64(100.0), np.float64(100.0)) min=(np.float64(-4000.0), np.float64(-4000.0), np.float64(-500.0)) max=(np.float64(4000.0), np.float64(4000.0), np.float64(14000.0)) peak|By|(raw)=0.004944 scale->T=1000",
+  "rk4_step_mm": 5.0,
+  "fd_steps": {
+    "x": 0.001,
+    "y": 0.001,
+    "tx": 1e-06,
+    "ty": 1e-06,
+    "qop": "max(|qop|*1e-4,1e-8)"
+  },
+  "fd_convergence": {
+    "max": 2.8474827258681065e-06,
+    "p95": 1.5399706581624883e-07,
+    "median": 1.6127174775071942e-09,
+    "n_fail_above_1e_3": 0
+  },
+  "fd_convergence_pass": true,
+  "qop_col_norm_median": 208.84818112046992,
+  "qop_col_norm_max": 27440.0645638852,
+  "build_wall_s": 481.7,
+  "dynamics_source": "data_generation/generate_data_v2.py (imported)"
+}
