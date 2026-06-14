@@ -35,6 +35,28 @@ with `m_polarity = -1` (MagDown). Baseline comparisons
 - p log-uniform [1, 200] GeV, both charges; truth = vectorised RK4, 5 mm step
 - `X[N,7] = (x, y, tx, ty, qop, z0, dz)`, `Y[N,5] = (x, y, tx, ty, qop)_zf`
 
+## Data schema (per column — validity reference)
+
+Full table with units/ranges/dtype, plus the plane-ref / eval / A4 / checkpoint
+schemas, lives in Notion: **"Data Schemas & Contracts — Track Extrapolation"**.
+Summary of `train_10M_gen4.npz` (keys `X`, `Y`, `P`, all float32):
+
+| array | cols | meaning | units |
+|---|---|---|---|
+| `X[N,7]` | 0..6 | x, y, tx, ty, qop, z0, dz | mm, mm, –, –, c·q/p[1/GeV], mm, mm (signed) |
+| `Y[N,5]` | 0..4 | x, y, tx, ty, qop @ z0+dz | mm, mm, –, –, c·q/p (= X[:,4]) |
+| `P[N]`   | –    | p = 0.299792458/\|qop\| | GeV |
+
+Ranges: x,y ∈ [-3900,3900]; z0 ∈ [0,14000]; dz ∈ [-10000,10000], \|dz\|≥25;
+p ∈ [1,200]. Generation gates (G-INT/G-PHY/G-POP) in `datagen/merge_validate_v2.py`.
+
+**Appropriateness caveat:** the gen-4 corpus is *correct* but *mis-weighted* for
+the task — UT→T is only 0.145% of rows, 65% of steps are <1 m, and the target
+bend spans ~9.9 decades (0 µm → 7.5 m). See the Wave-2 retraining plan.
+
+**A4 reference is stale:** `For_Allen/artifacts/phase1a/J_rk4_reference.npy`
+(2026-05-12) is weak-field (κ=1e-6) — regenerate at physical κ before A4 gating.
+
 ## Data location
 
 Code lives in this repo. Big artifacts (corpora `.npz`, `trained_models/`,
