@@ -1,0 +1,17 @@
+{
+ "n": 5196722,
+ "n_general_capped": 4000000,
+ "n_utt_focused": 1196722,
+ "utt_fraction": 0.23142069173605978,
+ "fwd_frac": 0.5995829678785973,
+ "field": "v8r1.down",
+ "kappa": 0.001,
+ "x_cap_mm": 3000.0,
+ "y_cap_mm": 2500.0,
+ "median_long_dtx": 0.06465868651866913,
+ "reprop_worst_mm": 0.0003475029980108957,
+ "focused_corpus": "utt_focused_gen4.npz",
+ "general_corpus": "train_10M_gen4.npz",
+ "built": "2026-06-15 00:15",
+ "wall_s": 641.4
+}

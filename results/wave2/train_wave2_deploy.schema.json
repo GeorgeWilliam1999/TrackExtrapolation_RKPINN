@@ -1,0 +1,46 @@
+{
+  "file": "train_wave2_deploy.npz",
+  "keys": {
+    "X": "[N,7] float32",
+    "Y": "[N,5] float32",
+    "P": "[N] float32"
+  },
+  "X_columns": [
+    "x@z0 mm",
+    "y@z0 mm",
+    "tx",
+    "ty",
+    "qop=c*q/p[1/GeV]",
+    "z0 mm [0..14000]",
+    "dz signed mm"
+  ],
+  "Y_columns": [
+    "x@z0+dz mm",
+    "y mm",
+    "tx",
+    "ty",
+    "qop (=X[:,4])"
+  ],
+  "P": "p[GeV] = 0.299792458/|qop|",
+  "physics": {
+    "kappa": "1e-3*qop",
+    "field": "v8r1 down (raw MagDown By<0)",
+    "truth": "vectorised RK4 5mm",
+    "polarity": "extrapUTT m_polarity=-1"
+  },
+  "restratification": {
+    "composition": "4000000 general (acceptance-capped) + 1196722 UT->T-focused",
+    "utt_fraction": 0.2314,
+    "acceptance_cap_mm": {
+      "x": 3000.0,
+      "y": 2500.0
+    },
+    "vs_gen4": "UT->T 0.145% -> 23.1%; spatial extremes capped"
+  },
+  "gates": {
+    "G-INT_mm": 0.0003475029980108957,
+    "G-PHY_long_dtx_rad": 0.06465868651866913,
+    "G-POP_n": 5196722,
+    "G-STRAT_utt_frac": 0.2314
+  }
+}

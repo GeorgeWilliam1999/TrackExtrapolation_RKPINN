@@ -1,0 +1,36 @@
+# =============================================================================
+# HTCondor GPU submit -- Wave-2 retraining (residual/kick head + range-aware loss
+# + tuned schedule) on the deployment-weighted corpus.
+#   size curve (capacity ladder): h32..h384  (lambda_pde=0, pure data)
+#   lambda sweep at h128 (physical kappa):    lam0p01, lam0p1
+# GPU spec per project lock: request_gpus=1, request_cpus=1, request_memory~10GB,
+# NO CUDACapability requirement (this pool advertises GPUs_Capability).
+# =============================================================================
+universe        = vanilla
+executable      = /data/bfys/gscriven/track-extrapolation-pinn/condor/run_train_wave2.sh
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3
+
+should_transfer_files = NO
+output = condor/logs/$(config_tag).$(Cluster).$(Process).out
+error  = condor/logs/$(config_tag).$(Cluster).$(Process).err
+log    = condor/logs/wave2.$(Cluster).log
+
++UseOS        = "el9"
++JobCategory  = "long"
+
+request_gpus   = 1
+request_cpus   = 1
+request_memory = 10 GB
+request_disk   = 3 GB
+
+arguments      = $(config_file) $(config_tag)
+queue config_file, config_tag from (
+    configs/wave2/wave2_resid_h32.yaml      wave2_resid_h32
+    configs/wave2/wave2_resid_h64.yaml      wave2_resid_h64
+    configs/wave2/wave2_resid_h96.yaml      wave2_resid_h96
+    configs/wave2/wave2_resid_h128.yaml     wave2_resid_h128
+    configs/wave2/wave2_resid_h256.yaml     wave2_resid_h256
+    configs/wave2/wave2_resid_h384.yaml     wave2_resid_h384
+    configs/wave2/wave2_lam0p01_h128.yaml   wave2_lam0p01_h128
+    configs/wave2/wave2_lam0p1_h128.yaml    wave2_lam0p1_h128
+)

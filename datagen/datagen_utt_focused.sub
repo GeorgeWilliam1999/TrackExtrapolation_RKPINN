@@ -1,0 +1,16 @@
+# Wave-2 UT->T-focused corpus: 15 shards x 95k -> ~1.2M magnet-traversing pointing tracks.
+# v8r1 field, kappa=1e-3, low-p weighted, acceptance-capped. Distinct seed namespace (17000+).
+universe        = vanilla
+executable      = /data/bfys/gscriven/track-extrapolation-pinn/datagen/run_utt_focused.sh
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3
+should_transfer_files = NO
+output = condor/logs/uttf.$(Process).out
+error  = condor/logs/uttf.$(Process).err
+log    = condor/logs/uttf.$(Cluster).log
++UseOS        = "el9"
++JobCategory  = "medium"
+request_cpus   = 1
+request_memory = 4 GB
+request_disk   = 1 GB
+arguments      = $(Process)
+queue 15

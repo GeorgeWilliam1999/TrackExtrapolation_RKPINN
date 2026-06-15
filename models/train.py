@@ -104,6 +104,24 @@ DEFAULTS: dict = {
     "pin_memory": False,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     "loss": "log_cosh",   # R1: log-cosh is the default; use "mse" for legacy compat
+    # --- Wave-2 (2026-06-14) range-aware residual loss + restratified-corpus knobs ---
+    # loss: "residual_rel" -> log-cosh on the (pred-truth) error normalised by a
+    #   per-track, per-component RESIDUAL scale  sqrt(floor^2 + (alpha*bend)^2).
+    #   Fixes the gen-4 mis-scaling (the legacy loss divides by the *endpoint* std
+    #   ~1.2 m so a 100 um error registers as ~1e-7 and only metre-scale tail tracks
+    #   produce gradient). floors set the "don't care below" absolute accuracy;
+    #   alpha sets how relative the hard tail is. Components are equally weighted in
+    #   their own relative units -> x,y(mm) balanced against tx,ty(rad).
+    "resid_scale_pos": 0.05,     # mm  (x,y absolute Huber scale; quad core -> um accuracy)
+    "resid_scale_slope": 2.0e-5, # rad (tx,ty absolute Huber scale)
+    "resid_alpha": 0.0,          # optional relative blend sqrt(scale^2+(alpha*bend)^2); 0 = pure absolute
+    "resid_huber_delta": 8.0,    # Huber transition (in z units) -- linear tail gives the metre-scale bend a capped, sustained gradient
+    # split: balance forward/backward 50/50 (legacy) vs random (preserve the
+    #   deployment-weighted corpus mix incl. the >=10% UT->T fraction).
+    "balance_sign": True,
+    # checkpoint selection metric: "median_dx_mm" (legacy, bulk-dominated),
+    #   "utt_median_dx_um" (the UT->T regime we are judged on), or "val_loss_sel".
+    "select_metric": "median_dx_mm",
 }
 
 
@@ -154,18 +172,24 @@ def stratified_split(
     N = X.shape[0]
     rng = np.random.default_rng(config["seed"])
 
-    sign_dz = np.sign(X[:, 6]).astype(np.int8)
-    idx_pos = np.flatnonzero(sign_dz > 0)
-    idx_neg = np.flatnonzero(sign_dz < 0)
-    rng.shuffle(idx_pos)
-    rng.shuffle(idx_neg)
-
     max_n = config.get("max_samples") or N
     max_n = min(int(max_n), N)
-    n_each = max_n // 2
-    keep = np.concatenate([idx_pos[:n_each], idx_neg[:n_each]])
-    rng.shuffle(keep)
-    print(f"  subsampled {len(keep):,}/{N:,}  (stratified on sign(dz))")
+
+    if config.get("balance_sign", True):
+        sign_dz = np.sign(X[:, 6]).astype(np.int8)
+        idx_pos = np.flatnonzero(sign_dz > 0)
+        idx_neg = np.flatnonzero(sign_dz < 0)
+        rng.shuffle(idx_pos)
+        rng.shuffle(idx_neg)
+        n_each = max_n // 2
+        keep = np.concatenate([idx_pos[:n_each], idx_neg[:n_each]])
+        rng.shuffle(keep)
+        print(f"  subsampled {len(keep):,}/{N:,}  (stratified 50/50 on sign(dz))")
+    else:
+        # Wave-2: random subsample preserves the deployment-weighted corpus mix
+        # (incl. the >=10% UT->T fraction), which a 50/50 sign balance would dilute.
+        keep = rng.permutation(N)[:max_n]
+        print(f"  subsampled {len(keep):,}/{N:,}  (random; preserves corpus mix)")
 
     n_train = int(len(keep) * config["train_fraction"])
     n_val = int(len(keep) * config["val_fraction"])
@@ -179,7 +203,10 @@ def stratified_split(
     out = {}
     for name, ix in sl.items():
         frac_fwd = float((X[ix, 6] > 0).mean())
-        print(f"  {name}: {len(ix):,} tracks  (forward fraction = {frac_fwd:.3f})")
+        z0 = X[ix, 5]; zf = z0 + X[ix, 6]
+        frac_utt = float(((z0 >= 2300) & (z0 <= 3000) & (zf >= 7600)
+                          & (zf <= 9500) & (X[ix, 6] > 0)).mean())
+        print(f"  {name}: {len(ix):,} tracks  (forward={frac_fwd:.3f}  UT->T={frac_utt*100:.1f}%)")
         out[name] = (X[ix], Y[ix], P[ix], ix)
     return out
 
@@ -230,6 +257,11 @@ class EarlyStop:
         return self.count >= self.patience
 
 
+def _logcosh(z: torch.Tensor) -> torch.Tensor:
+    # log(cosh(x)) = |x| + softplus(-2|x|) - log(2); numerically stable for all |x|.
+    return z.abs() + torch.nn.functional.softplus(-2.0 * z.abs()) - 0.6931471805599453
+
+
 def log_cosh_loss(
     y_pred: torch.Tensor, y_true: torch.Tensor, scale: torch.Tensor
 ) -> torch.Tensor:
@@ -242,24 +274,79 @@ def log_cosh_loss(
     This is the R1 replacement for the MSE data loss.  MSE is still available
     via ``--loss=mse`` for backwards compatibility.
     """
-    r = (y_pred[:, :4] - y_true[:, :4]) / scale
-    # log(cosh(x)) = log((e^x + e^-x)/2) = |x| + log(1 + e^{-2|x|}) - log(2)
-    # The softplus form is numerically stable for all |x|.
-    return torch.mean(r.abs() + torch.nn.functional.softplus(-2.0 * r.abs()) - 0.6931471805599453)
+    return torch.mean(_logcosh((y_pred[:, :4] - y_true[:, :4]) / scale))
+
+
+def _straight_line(x: torch.Tensor) -> torch.Tensor:
+    """Field-free straight-line prediction of (x,y,tx,ty) at z0+dz from the input.
+
+    The kick/residual head predicts the *bend* relative to this line; the loss
+    uses it only to size the per-track residual scale (the straight line cancels
+    in the numerator: y_pred - y_true = bend_pred - bend_true)."""
+    dz = x[:, 6]
+    return torch.stack([x[:, 0] + x[:, 2] * dz,   # x  = x0 + tx0*dz
+                        x[:, 1] + x[:, 3] * dz,   # y  = y0 + ty0*dz
+                        x[:, 2],                  # tx = tx0  (slope unchanged)
+                        x[:, 3]], dim=1)          # ty = ty0
+
+
+def _huber(z: torch.Tensor, delta: float) -> torch.Tensor:
+    az = z.abs()
+    return torch.where(az < delta, 0.5 * z * z, delta * (az - 0.5 * delta))
+
+
+def residual_rel_loss(
+    x: torch.Tensor, y_pred: torch.Tensor, y_true: torch.Tensor,
+    scales: torch.Tensor, alpha: float, delta: float,
+) -> torch.Tensor:
+    """Range-aware HUBER on the residual (Wave-2 default).
+
+    Normalises the (pred - truth) error by a per-component **absolute** scale
+    ``sqrt(scale_c^2 + (alpha*bend)^2)`` (alpha=0 -> pure absolute) and applies
+    Huber with a large transition ``delta`` placed well beyond the bulk |z|.
+
+    Why absolute, not relative: a relative scale (alpha*bend) divides the huge
+    UT->T error by the huge bend, shrinking its gradient ~1000x below the bulk's
+    -> the optimiser ignores the hard regime (observed: 2% of the bend recovered).
+    A small absolute scale + Huber's LINEAR TAIL instead gives the metre-scale
+    bend a *sustained, capped* gradient (learnability, no outlier explosion), while
+    the quadratic core drives um-level accuracy where the residual is small.
+    Per-component scales (mm for x,y; rad for tx,ty) balance positions vs slopes.
+    """
+    err = y_pred[:, :4] - y_true[:, :4]
+    if alpha > 0.0:
+        bend = y_true[:, :4] - _straight_line(x)
+        scale = torch.sqrt(scales.unsqueeze(0) ** 2 + (alpha * bend) ** 2)
+    else:
+        scale = scales.unsqueeze(0)
+    return torch.mean(_huber(err / scale, delta))
+
+
+def _resid_scales(model, config: dict) -> torch.Tensor:
+    sp = float(config.get("resid_scale_pos", 0.05))     # mm
+    ss = float(config.get("resid_scale_slope", 2.0e-5)) # rad
+    return torch.tensor([sp, sp, ss, ss], device=model.output_std.device, dtype=model.output_std.dtype)
 
 
 def _data_loss(
     model,
+    x: torch.Tensor,
     y_pred: torch.Tensor,
     y_true: torch.Tensor,
     loss_fn: str = "log_cosh",
+    config: dict | None = None,
 ) -> torch.Tensor:
-    """Dispatch to log-cosh (default, R1) or legacy MSE (--loss=mse).
+    """Dispatch to the range-aware residual loss (Wave-2), log-cosh (R1) or MSE.
 
     ``y_pred[:, 4]`` and ``y_true[:, 4]`` are both ``qop`` (pass-through);
     including them would either dilute the gradient by 20% or, worse, if
     the normalisation is stale, introduce spurious noise.
     """
+    if loss_fn == "residual_rel":
+        cfg = config or {}
+        return residual_rel_loss(x, y_pred, y_true, _resid_scales(model, cfg),
+                                 float(cfg.get("resid_alpha", 0.0)),
+                                 float(cfg.get("resid_huber_delta", 8.0)))
     scale = model.output_std[:4]
     if loss_fn == "mse":
         inv = 1.0 / scale
@@ -301,7 +388,7 @@ def _build_model(config: dict):
     raise ValueError(f"Unknown model_type {mt!r}")
 
 
-def train_epoch(model, loader, optim_, scheduler, device, grad_clip, phys_ramp, loss_fn="log_cosh"):
+def train_epoch(model, loader, optim_, scheduler, device, grad_clip, phys_ramp, loss_fn="log_cosh", config=None):
     model.train()
     tot = 0.0; tot_data = 0.0; tot_pde = 0.0; tot_ic = 0.0
     n = 0
@@ -315,7 +402,7 @@ def train_epoch(model, loader, optim_, scheduler, device, grad_clip, phys_ramp, 
         x = x.to(device); y = y.to(device)
         optim_.zero_grad(set_to_none=True)
         y_pred = model(x)
-        data_loss = _data_loss(model, y_pred, y, loss_fn)
+        data_loss = _data_loss(model, x, y_pred, y, loss_fn, config)
         if use_physics:
             phys = model.compute_physics_loss(x, y_pred)
             pde_loss = phys.get("pde", torch.zeros((), device=device))
@@ -348,12 +435,13 @@ def train_epoch(model, loader, optim_, scheduler, device, grad_clip, phys_ramp, 
 
 
 @torch.no_grad()
-def validate(model, loader, device, loss_fn="log_cosh") -> Dict[str, float]:
+def validate(model, loader, device, loss_fn="log_cosh", config=None) -> Dict[str, float]:
     """Evaluate on *loader* and return a full suite of robust metrics (R1).
 
-    Checkpoint selection uses ``val_median_dx_mm`` (not ``val_loss``).  The raw
-    MSE loss is retained in the dict under ``loss`` for debugging / backwards
-    compat but is NOT used for model selection.
+    Adds (Wave-2) ``val_loss_sel`` = the *configured* training loss on val and
+    ``utt_median_dx_um`` = median |dx| restricted to the UT->T regime, so the
+    checkpoint can be selected on the regime it is actually judged on rather
+    than the bulk-dominated whole-val median.
     """
     model.eval()
     # Accumulate residuals in-memory to compute percentiles.
@@ -361,31 +449,53 @@ def validate(model, loader, device, loss_fn="log_cosh") -> Dict[str, float]:
     all_dy: list[torch.Tensor] = []
     all_dtx: list[torch.Tensor] = []
     all_dty: list[torch.Tensor] = []
-    tot_logcosh = 0.0; tot_mse = 0.0; n_batches = 0
+    all_z0: list[torch.Tensor] = []
+    all_dz: list[torch.Tensor] = []
+    tot_logcosh = 0.0; tot_mse = 0.0; tot_sel = 0.0; n_batches = 0
     for x, y in loader:
         x = x.to(device); y = y.to(device)
         y_pred = model(x)
-        tot_logcosh += float(_data_loss(model, y_pred, y, "log_cosh").item())
-        tot_mse     += float(_data_loss(model, y_pred, y, "mse").item())
+        tot_logcosh += float(_data_loss(model, x, y_pred, y, "log_cosh").item())
+        tot_mse     += float(_data_loss(model, x, y_pred, y, "mse").item())
+        tot_sel     += float(_data_loss(model, x, y_pred, y, loss_fn, config).item())
         n_batches += 1
         r = (y_pred - y).cpu()
         all_dx.append(r[:, 0].abs())
         all_dy.append(r[:, 1].abs())
         all_dtx.append(r[:, 2].abs())
         all_dty.append(r[:, 3].abs())
+        all_z0.append(x[:, 5].cpu())
+        all_dz.append(x[:, 6].cpu())
 
     dx  = torch.cat(all_dx)
     dy  = torch.cat(all_dy)
     dtx = torch.cat(all_dtx)
     dty = torch.cat(all_dty)
+    z0  = torch.cat(all_z0)
+    dz  = torch.cat(all_dz)
+    zf  = z0 + dz
     pos = torch.sqrt(dx**2 + dy**2)  # scalar position error per track
 
     def _q(t: torch.Tensor, q: float) -> float:
         return float(torch.quantile(t, q).item())
 
+    # UT->T regime mask (matches gates/run_r7_utt_eval.py + the frozen pool)
+    utt = (z0 >= 2300.0) & (z0 <= 3000.0) & (zf >= 7600.0) & (zf <= 9500.0) & (dz > 0)
+    n_utt = int(utt.sum().item())
+    if n_utt >= 50:
+        utt_med_um = float(torch.quantile(dx[utt], 0.50).item()) * 1e3
+        utt_p95_um = float(torch.quantile(dx[utt], 0.95).item()) * 1e3
+    else:
+        utt_med_um = float("nan")
+        utt_p95_um = float("nan")
+
     return {
-        # --- selection metric (R1 primary) ---
+        # --- selection metrics ---
         "val_median_dx_mm":   _q(dx,  0.50),
+        "val_loss_sel":       tot_sel / max(1, n_batches),
+        "utt_median_dx_um":   utt_med_um,
+        "utt_p95_dx_um":      utt_p95_um,
+        "n_utt":              n_utt,
         # --- full quantile suite ---
         "median_dx_mm":       _q(dx,  0.50),
         "p68_dx_mm":          _q(dx,  0.68),
@@ -500,8 +610,8 @@ def train(config: dict):
         phys_ramp = (
             float(min(1.0, (epoch + 1) / phys_warm)) if phys_warm > 0 else 1.0
         )
-        t_m = train_epoch(model, train_loader, optimizer, scheduler, device, config["grad_clip"], phys_ramp, loss_fn)
-        v_m = validate(model, val_loader, device, loss_fn)
+        t_m = train_epoch(model, train_loader, optimizer, scheduler, device, config["grad_clip"], phys_ramp, loss_fn, config)
+        v_m = validate(model, val_loader, device, loss_fn, config)
         history["train"].append(t_m)
         history["val"].append(v_m)
         elapsed = time.time() - t0
@@ -509,12 +619,14 @@ def train(config: dict):
             f" [pde={t_m['pde_loss']:.3e} ic={t_m['ic_loss']:.3e} ramp={phys_ramp:.2f}]"
             if use_physics else ""
         )
+        utt_str = (f"  utt_med={v_m['utt_median_dx_um']:.0f}µm(n={v_m['n_utt']})"
+                   if v_m.get("n_utt", 0) >= 50 else "")
         print(
             f"[{epoch+1:3d}/{config['epochs']}]  "
             f"tr={t_m['loss']:.4f}  "
             f"median_dx={v_m['median_dx_mm']*1e3:.1f}µm  "
             f"p95_dx={v_m['p95_dx_mm']*1e3:.1f}µm  "
-            f"pos_rms={v_m['pos_rms_mm']*1e3:.1f}µm  "
+            f"pos_rms={v_m['pos_rms_mm']*1e3:.1f}µm{utt_str}  "
             f"lr={t_m['lr']:.2e}  wall={elapsed/60:.1f}m{extra}"
         )
         if mlflow_run is not None:
@@ -539,11 +651,21 @@ def train(config: dict):
                 step=epoch,
             )
 
-        sel = v_m["val_median_dx_mm"]
+        # Checkpoint selection metric (Wave-2: select on the UT->T regime when the
+        # corpus carries enough of it; else fall back to the bulk median).
+        select_metric = config.get("select_metric", "median_dx_mm")
+        if select_metric == "utt_median_dx_um" and v_m.get("n_utt", 0) >= 50:
+            sel = v_m["utt_median_dx_um"]
+        elif select_metric == "val_loss_sel":
+            sel = v_m["val_loss_sel"]
+        else:
+            sel = v_m["val_median_dx_mm"]
         if sel < best:
             best = sel
             history["best_epoch"] = epoch + 1
             history["best_val_median_dx_mm"] = best
+            history["best_select_metric"] = select_metric
+            history["best_val_full"] = v_m
             torch.save(
                 {
                     "epoch": epoch + 1,
@@ -566,7 +688,7 @@ def train(config: dict):
     # ------------------------------------------------------------------
     ckpt = torch.load(exp_dir / "best_model.pt", weights_only=False, map_location=device)
     model.load_state_dict(ckpt["model_state_dict"])
-    t_final = validate(model, test_loader, device, loss_fn)
+    t_final = validate(model, test_loader, device, loss_fn, config)
     history["test_final"] = t_final
     print("\nTest set (R1 metrics):")
     for k, v in t_final.items():
