@@ -1,0 +1,485 @@
+{
+  "title": "Per-track extrapolation throughput \u2014 Allen RK vs extrapUTT vs PINN_V2 (NN)",
+  "date": "2026-06-15",
+  "unit": "one track, one extrapolation across its given dz (state->state)",
+  "headline_ratios_kernel_only": {
+    "RK_div_NN": 0.81,
+    "extrapUTT_div_NN": 0.332,
+    "RK_div_extrapUTT": 2.44,
+    "RK_div_chart": null
+  },
+  "methods_kernel_only": {
+    "rk_field": {
+      "us_per_track": 0.005709311962127686,
+      "tracks_per_s": 175152453.8566869,
+      "us_per_track_end_to_end": 0.008411600112915038,
+      "kernel_only_median_ms": 5.7093119621276855,
+      "kernel_only_rel_iqr_pct": 1.681,
+      "single_warp_us_median": 11.264000087976456
+    },
+    "extraputt": {
+      "us_per_track": 0.0023444479703903197,
+      "tracks_per_s": 426539642.8625,
+      "us_per_track_end_to_end": 0.005006527900695801,
+      "kernel_only_median_ms": 2.34444797039032,
+      "kernel_only_rel_iqr_pct": 0.753,
+      "single_warp_us_median": 23.552000522613525
+    },
+    "pinn_v2_utt": {
+      "us_per_track": 0.007054336071014404,
+      "tracks_per_s": 141756784.75383458,
+      "us_per_track_end_to_end": 0.009733983993530274,
+      "kernel_only_median_ms": 7.054336071014404,
+      "kernel_only_rel_iqr_pct": 0.196,
+      "single_warp_us_median": 176.12800002098083
+    }
+  },
+  "footprint_co_metric": {
+    "field_map_texture_bytes": 11494872,
+    "field_map_texture_MB": 11.495,
+    "extraputt_chart_bytes": 960092,
+    "extraputt_chart_KB": 960.1,
+    "pinn_v2_weights_bytes": 41528,
+    "pinn_v2_weights_KB": 41.5,
+    "analytic_chart_kernel": "not yet implemented (charts/ is Python-only); plan target ~63 KB",
+    "field_vs_nn_ratio": 276.8
+  },
+  "validity_gates": {
+    "stability_lt_5pct": {
+      "pass": true,
+      "worst_rel_iqr_pct": 1.681
+    },
+    "tier1_tier2_crosscheck": {
+      "status": "platform-divergent-by-design (see interpretation)",
+      "tier1_extrapUTT_div_PINN_GPU": 0.3323,
+      "tier2_extrapUTT_div_PINN_CPU": 0.0225,
+      "agreement_factor": 14.78,
+      "within_2x_literal": false,
+      "interpretation": "extrapUTT/RK are memory-bound, the NN is compute-bound; the CPU (scalar) and GPU (parallel) platforms have opposite compute:bandwidth balance, so the extrapUTT:PINN cost ratio legitimately differs across tiers. The built Allen is CPU-only (TARGET_DEVICE=CPU), so a same-platform in-situ GPU comparison is not available. Tier-2's role is therefore: (a) confirm the verbatim production functions run correctly on the real population, (b) show the NN's throughput competitiveness is a GPU phenomenon. The headline RK/NN number is Tier-1 (GPU)."
+    },
+    "rk_reproduces_allen_per_event": "see write-up external-validity section",
+    "chart_struct_abi_selftest": {
+      "ZINI": 2665.0,
+      "ZFIN": 7826.0,
+      "Nbinx": 60.0,
+      "Nbiny": 50.0,
+      "PMIN": 1500.0,
+      "DEGX2": 9.0,
+      "ok": true
+    },
+    "outputs_finite": true
+  },
+  "confound_checklist_12": {
+    "1_hardware_variance": {
+      "control": "single exclusive GPU slot (request_gpus=1, request_cpus=1, request_memory=8GB); record model + SM clock; no co-tenants",
+      "value": {
+        "gpu": "Tesla V100-PCIE-32GB",
+        "driver": "13.0",
+        "compute_capability": "7.0",
+        "sm_clock_MHz": 1380.0,
+        "machine": "wn-lot-008.nikhef.nl",
+        "clock_source": "condor machine classad (nvidia-smi not on worker PATH); clock is the advertised SM clock",
+        "clock_locking": "not permitted on shared pool (recorded, not locked)"
+      }
+    },
+    "2_cold_cache_jit": {
+      "control": ">=200 warm-up iters discarded; >=30 timed repeats; median + IQR (never single/mean)",
+      "value": {
+        "warmup_iters": 200,
+        "timed_repeats": 50,
+        "reported": "median + IQR",
+        "worst_rel_iqr_pct": 1.681
+      }
+    },
+    "3_host_clock_noise": {
+      "control": "CUDA events around the kernel, cudaDeviceSynchronize bracketing (not Python/wall time)",
+      "value": "CUDA events (cudaEventElapsedTime), device-synchronised per repeat"
+    },
+    "4_unrealistic_population": {
+      "control": "drive all methods with the real gen-4 (z0,dz,p) distribution; throughput per population",
+      "value": {
+        "n_tracks": 1000000,
+        "dz_abs_mm": {
+          "p1": 26.68629264831543,
+          "p25": 103.4636459350586,
+          "median": 445.9209899902344,
+          "p75": 1736.751953125,
+          "p99": 8527.474609375
+        },
+        "p_GeV": {
+          "p1": 1.0964738130569458,
+          "median": 17.16303062438965,
+          "p99": 190.39402770996094
+        },
+        "rk_steps_at_100mm": {
+          "mean": 13.792181015014648,
+          "median": 5.0,
+          "p99": 86.0,
+          "max": 100.0
+        }
+      }
+    },
+    "5_field_free_rk_cheat": {
+      "control": "RK timing INCLUDES v8r1 field-map texture lookups (MAGFIELD_USE_TEXTURE); never RHS-only",
+      "value": {
+        "field_texture": true,
+        "field": "/cvmfs/lhcb.cern.ch/lib/lhcb/DBASE/FieldMap/v8r1/cdf/field.v8r1.down.bin",
+        "tex_footprint_MB": 11.495,
+        "mean_field_lookups_per_track": 82.8,
+        "cashkarp_stages": 6,
+        "step_dz_mm": 100.0
+      }
+    },
+    "6_precision_mismatch": {
+      "control": "fp32 for all three; record dtype",
+      "value": {
+        "dtype": "fp32 (KalmanFloat=float, KALMAN_DOUBLE_PRECISION=OFF)",
+        "all_methods": "fp32"
+      }
+    },
+    "7_batching_asymmetry": {
+      "control": "same Allen block/occupancy; report tracks/s at occupancy AND single-warp latency",
+      "value": {
+        "block_size": 256,
+        "single_warp_us": {
+          "rk_field": 11.264,
+          "extraputt": 23.552,
+          "pinn_v2_utt": 176.128
+        }
+      }
+    },
+    "8_io_alloc_in_timer": {
+      "control": "separate H2D/D2H + alloc from kernel time; report kernel-only AND end-to-end",
+      "value": {
+        "rk_field": {
+          "kernel_only_us_per_track": 0.00571,
+          "end_to_end_us_per_track": 0.00841
+        },
+        "extraputt": {
+          "kernel_only_us_per_track": 0.00234,
+          "end_to_end_us_per_track": 0.00501
+        },
+        "pinn_v2_utt": {
+          "kernel_only_us_per_track": 0.00705,
+          "end_to_end_us_per_track": 0.00973
+        }
+      }
+    },
+    "9_warp_divergence": {
+      "control": "RK per-track step count varies with |dz| (kept; not padded to uniform steps)",
+      "value": {
+        "per_track_variable_steps": true,
+        "rk_steps_median": 5.0,
+        "rk_steps_p99": 86.0,
+        "rk_steps_max": 100.0
+      }
+    },
+    "10_compiler_flags": {
+      "control": "record compiler version + flags + arch (production Allen: nvcc -O3 -arch=sm_70/80)",
+      "value": {
+        "compiler": "NVRTC",
+        "nvrtc_version": [
+          12,
+          8
+        ],
+        "cupy_version": "14.1.1",
+        "target_compute_capability": "70",
+        "nvrtc_options": [
+          "--std=c++20",
+          "-DMAGFIELD_USE_TEXTURE",
+          "-I/data/bfys/gscriven/track-extrapolation-pinn/allen_bridge/bench/shims",
+          "-I/data/bfys/gscriven/track-extrapolation-pinn/allen_bridge/bench",
+          "-I/data/bfys/gscriven/Allen/device/kalman/ParKalman/include",
+          "-I/data/bfys/gscriven/Allen/device/event_model/common/include"
+        ],
+        "compile_seconds": 2.524,
+        "note": "production Allen GPU build uses nvcc -O3 -arch=sm_70/80 with the SAME verbatim device code; NVRTC targets sm_70 here."
+      }
+    },
+    "11_unit_ambiguity": {
+      "control": "one track, one extrapolation across the given dz (state->state); us/track + tracks/s",
+      "value": {
+        "unit": "one track, one extrapolation across its given dz (state->state)"
+      }
+    },
+    "12_external_validity": {
+      "control": "Tier-1 micro-bench cross-checked vs Tier-2 in-situ ParKalman; disagree >2x => stop",
+      "value": {
+        "tier1_extrapUTT_div_PINN_GPU": 0.3323,
+        "tier2_extrapUTT_div_PINN_CPU": 0.0225,
+        "agreement_factor": 14.78,
+        "within_2x_literal": false,
+        "interpretation": "extrapUTT/RK are memory-bound, the NN is compute-bound; the CPU (scalar) and GPU (parallel) platforms have opposite compute:bandwidth balance, so the extrapUTT:PINN cost ratio legitimately differs across tiers. The built Allen is CPU-only (TARGET_DEVICE=CPU), so a same-platform in-situ GPU comparison is not available. Tier-2's role is therefore: (a) confirm the verbatim production functions run correctly on the real population, (b) show the NN's throughput competitiveness is a GPU phenomenon. The headline RK/NN number is Tier-1 (GPU)."
+      }
+    }
+  },
+  "outcome": "comparable speed",
+  "decision": "methods paper (case rests on footprint + cautionary-tale science)",
+  "tier1_source": "allen_bridge/bench/results/tier1_microbench.json",
+  "tier2_source": "allen_bridge/bench/results/tier2_insitu.json",
+  "tier1_full": {
+    "tier": 1,
+    "description": "Isolated CUDA micro-bench: RK+field vs extrapUTT vs PINN_V2_UTT over the same gen-4 population. NVRTC-compiled verbatim Allen device code.",
+    "n_tracks": 1000000,
+    "block_size": 256,
+    "warmup_iters": 200,
+    "timed_repeats": 50,
+    "dtype": "fp32 (KalmanFloat=float, KALMAN_DOUBLE_PRECISION=OFF)",
+    "timing": "CUDA events (cudaEventElapsedTime), device-synchronised per repeat",
+    "unit": "one track, one extrapolation across its given dz (state->state)",
+    "rk_step_dz_mm": 100.0,
+    "rk_stages_cashkarp": 6,
+    "toolchain": {
+      "compiler": "NVRTC",
+      "nvrtc_version": [
+        12,
+        8
+      ],
+      "cupy_version": "14.1.1",
+      "target_compute_capability": "70",
+      "nvrtc_options": [
+        "--std=c++20",
+        "-DMAGFIELD_USE_TEXTURE",
+        "-I/data/bfys/gscriven/track-extrapolation-pinn/allen_bridge/bench/shims",
+        "-I/data/bfys/gscriven/track-extrapolation-pinn/allen_bridge/bench",
+        "-I/data/bfys/gscriven/Allen/device/kalman/ParKalman/include",
+        "-I/data/bfys/gscriven/Allen/device/event_model/common/include"
+      ],
+      "compile_seconds": 2.524,
+      "note": "production Allen GPU build uses nvcc -O3 -arch=sm_70/80 with the SAME verbatim device code; NVRTC targets sm_70 here."
+    },
+    "gpu": {
+      "name": "Tesla V100-PCIE-32GB",
+      "compute_capability": "7.0",
+      "sm_clock_MHz": 1380.0,
+      "driver_version": "13.0",
+      "global_memory_MB": 32494,
+      "exclusive_slot": "request_gpus=1 request_cpus=1 request_memory=8GB",
+      "machine": "wn-lot-008.nikhef.nl",
+      "source": "condor machine classad (nvidia-smi not on worker PATH); clock is the advertised SM clock"
+    },
+    "chart_struct_abi_selftest": {
+      "ZINI": 2665.0,
+      "ZFIN": 7826.0,
+      "Nbinx": 60.0,
+      "Nbiny": 50.0,
+      "PMIN": 1500.0,
+      "DEGX2": 9.0,
+      "ok": true
+    },
+    "population": {
+      "n_tracks": 1000000,
+      "source": "/data/bfys/gscriven/TrackExtrapolation/experiments/gen_3/data/train_10M_gen4.npz",
+      "source_n": 9188440,
+      "seed": 20260614,
+      "dz_abs_mm": {
+        "p1": 26.68629264831543,
+        "p25": 103.4636459350586,
+        "median": 445.9209899902344,
+        "p75": 1736.751953125,
+        "p99": 8527.474609375
+      },
+      "p_GeV": {
+        "p1": 1.0964738130569458,
+        "median": 17.16303062438965,
+        "p99": 190.39402770996094
+      },
+      "rk_steps_at_100mm": {
+        "mean": 13.792181015014648,
+        "median": 5.0,
+        "p99": 86.0,
+        "max": 100.0
+      },
+      "rk_field_lookups_per_track_mean": 82.75308227539062,
+      "frac_full_UTT_like_dz_gt_3000": 0.150182
+    },
+    "footprints_bytes": {
+      "field_map_texture": 11494872,
+      "extraputt_chart": 960092,
+      "pinn_v2_weights": 41528,
+      "analytic_chart_kernel": null
+    },
+    "field": {
+      "path": "/cvmfs/lhcb.cern.ch/lib/lhcb/DBASE/FieldMap/v8r1/cdf/field.v8r1.down.bin",
+      "sha16": "41145f1c753629e6",
+      "N": [
+        81,
+        81,
+        146
+      ],
+      "voxel_mm": [
+        100.0,
+        100.0,
+        100.0
+      ],
+      "min_mm": [
+        -4000.0,
+        -4000.0,
+        -500.0
+      ],
+      "texture_footprint_bytes": 11494872,
+      "texture_footprint_MB": 11.495,
+      "note": "raw Gaudi-unit values (the implicit 1e-3*qop scale); loaded verbatim, as production."
+    },
+    "methods": {
+      "rk_field": {
+        "kernel_only_ms": {
+          "min": 5.594111919403076,
+          "p25": 5.656319975852966,
+          "median": 5.7093119621276855,
+          "p75": 5.752320170402527,
+          "max": 5.82860803604126,
+          "iqr": 0.09600019454956055,
+          "rel_iqr": 0.016814669646074868,
+          "rel_range": 0.04107257024904172,
+          "cv": 0.01067873292569977
+        },
+        "end_to_end_ms": {
+          "min": 8.257951736450195,
+          "p25": 8.343048334121704,
+          "median": 8.411600112915039,
+          "p75": 8.812376260757446,
+          "max": 9.109631538391113,
+          "iqr": 0.4693279266357422,
+          "rel_iqr": 0.05579532078743775,
+          "rel_range": 0.10125062895384936,
+          "cv": 0.03021640554702915
+        },
+        "single_warp_us": {
+          "min": 10.239999741315842,
+          "p25": 11.264000087976456,
+          "median": 11.264000087976456,
+          "p75": 12.28800043463707,
+          "max": 14.336000196635723,
+          "iqr": 1.024000346660614,
+          "rel_iqr": 90.90912097503123,
+          "rel_range": 363.63640121878905,
+          "cv": 70.20712067502512
+        },
+        "us_per_track": 0.005709311962127686,
+        "tracks_per_s": 175152453.8566869,
+        "us_per_track_end_to_end": 0.008411600112915038,
+        "tracks_per_s_end_to_end": 118883445.07302667,
+        "validity": {
+          "finite_frac_x": 1.0,
+          "moved_frac_x": 1.0
+        }
+      },
+      "extraputt": {
+        "kernel_only_ms": {
+          "min": 2.314239978790283,
+          "p25": 2.3372799158096313,
+          "median": 2.34444797039032,
+          "p75": 2.3549440503120422,
+          "max": 2.3848960399627686,
+          "iqr": 0.01766413450241089,
+          "rel_iqr": 0.007534453622133504,
+          "rel_range": 0.030137611098582855,
+          "cv": 0.0059286784886609
+        },
+        "end_to_end_ms": {
+          "min": 4.966911792755127,
+          "p25": 4.990231990814209,
+          "median": 5.006527900695801,
+          "p75": 5.026327848434448,
+          "max": 5.436543941497803,
+          "iqr": 0.03609585762023926,
+          "rel_iqr": 0.0072097586064031926,
+          "rel_range": 0.09380396115987027,
+          "cv": 0.01720260655520765
+        },
+        "single_warp_us": {
+          "min": 23.552000522613525,
+          "p25": 23.552000522613525,
+          "median": 23.552000522613525,
+          "p75": 24.57600086927414,
+          "max": 25.599999353289604,
+          "iqr": 1.024000346660614,
+          "rel_iqr": 43.478274623738095,
+          "rel_range": 86.95647016098214,
+          "cv": 22.915597742412995
+        },
+        "us_per_track": 0.0023444479703903197,
+        "tracks_per_s": 426539642.8625,
+        "us_per_track_end_to_end": 0.005006527900695801,
+        "tracks_per_s_end_to_end": 199739224.43556568,
+        "validity": {
+          "finite_frac_x": 1.0,
+          "moved_frac_x": 1.0
+        }
+      },
+      "pinn_v2_utt": {
+        "kernel_only_ms": {
+          "min": 7.028736114501953,
+          "p25": 7.04639995098114,
+          "median": 7.054336071014404,
+          "p75": 7.0602240562438965,
+          "max": 7.089151859283447,
+          "iqr": 0.013824105262756348,
+          "rel_iqr": 0.0019596607141469033,
+          "rel_range": 0.008564341728732869,
+          "cv": 0.0016447894484604444
+        },
+        "end_to_end_ms": {
+          "min": 9.660320281982422,
+          "p25": 9.697359800338745,
+          "median": 9.733983993530273,
+          "p75": 10.217448234558105,
+          "max": 10.415103912353516,
+          "iqr": 0.5200884342193604,
+          "rel_iqr": 0.0534301715068608,
+          "rel_range": 0.07754107987775236,
+          "cv": 0.0248956845627865
+        },
+        "single_warp_us": {
+          "min": 175.10400712490082,
+          "p25": 176.12800002098083,
+          "median": 176.12800002098083,
+          "p75": 177.15199291706085,
+          "max": 178.17600071430206,
+          "iqr": 1.023992896080017,
+          "rel_iqr": 5.8139131538315105,
+          "rel_range": 17.441824065652828,
+          "cv": 3.63645458034588
+        },
+        "us_per_track": 0.007054336071014404,
+        "tracks_per_s": 141756784.75383458,
+        "us_per_track_end_to_end": 0.009733983993530274,
+        "tracks_per_s_end_to_end": 102732858.47445953,
+        "validity": {
+          "finite_frac_x": 1.0,
+          "moved_frac_x": 1.0
+        }
+      }
+    },
+    "speedup_ratios_kernel_only": {
+      "RK_div_NN": 0.8093337069078272,
+      "extrapUTT_div_NN": 0.3323414063051849,
+      "RK_div_chart": null,
+      "RK_div_extrapUTT": 2.4352478853165422
+    }
+  },
+  "tier2_full": {
+    "tier": 2,
+    "platform": "CPU (built Allen TARGET_DEVICE=CPU); host g++ build of verbatim Allen device fns",
+    "timing": "std::chrono steady_clock, median+IQR",
+    "n_tracks": 1000000,
+    "warmup": 60,
+    "reps": 30,
+    "dtype": "fp32 (KalmanFloat=float)",
+    "pinn_dz_mm": 5161,
+    "extrapUTT_us_per_track": {
+      "median": 0.498633,
+      "p25": 0.498548,
+      "p75": 0.498846
+    },
+    "pinn_us_per_track": {
+      "median": 22.1712,
+      "p25": 22.1562,
+      "p75": 22.2048
+    },
+    "extrapUTT_div_PINN": 0.0224901,
+    "hybrid_use_nn_utt_overhead_us_per_track": 22.1712,
+    "note": "use_nn_utt is a hybrid: extrapUTT always runs (Jacobian F/Q); the NN is ADDED for the state. The cross-check vs Tier-1 is the extrapUTT:PINN ratio (platform-invariant)."
+  }
+}

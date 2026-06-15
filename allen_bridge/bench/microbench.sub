@@ -1,0 +1,19 @@
+# Tier-1 throughput micro-bench — one exclusive GPU slot.
+# Submit:  condor_submit allen_bridge/bench/microbench.sub
+universe        = vanilla
+executable      = /data/bfys/gscriven/track-extrapolation-pinn/allen_bridge/bench/run_microbench.sh
+arguments       = --warmup 200 --repeats 50 --out /data/bfys/gscriven/track-extrapolation-pinn/allen_bridge/bench/results/tier1_microbench.json
+initialdir      = /data/bfys/gscriven/track-extrapolation-pinn
+should_transfer_files = NO
+output          = allen_bridge/bench/condor_logs/microbench.$(Cluster).$(Process).out
+error           = allen_bridge/bench/condor_logs/microbench.$(Cluster).$(Process).err
+log             = allen_bridge/bench/condor_logs/microbench.$(Cluster).log
++UseOS          = "el9"
++JobCategory    = "short"
+request_gpus    = 1
+request_cpus    = 1
+request_memory  = 8 GB
+request_disk    = 4 GB
+# NB: no CUDACapability requirement — the pool advertises GPUs_Capability and the
+# bench records whatever GPU model it lands on (confound #1).
+queue 1

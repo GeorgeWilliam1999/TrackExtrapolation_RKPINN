@@ -1,0 +1,11 @@
+# local-only, regenerable, or large
+_pyenv/
+.cupy_cache/
+condor_logs/
+artifacts/
+results/
+dump_utt_params
+insitu_parkalman
+*.o
+# generated verbatim snippets (regenerate with generate_snippets.sh against read-only Allen)
+*_snippet.inc
