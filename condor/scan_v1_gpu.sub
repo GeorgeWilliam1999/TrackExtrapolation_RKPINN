@@ -1,0 +1,40 @@
+# =============================================================================
+# HTCondor GPU submit -- 2026-06-23 architecture x cost-function scan.
+#   Block A  depth {2,3} x activation {tanh,silu,gelu,sin}  (width 64, default loss)
+#   Block B  cost-function variants at [96,96] tanh  (alpha-blend, huber-delta2,
+#            inv-p tail weight, log-cosh)
+# Same GPU spec as wave-2: request_gpus=1, request_cpus=1, ~10GB, NO CUDACapability
+# requirement (pool advertises GPUs_Capability). Reuses run_train_wave2.sh worker.
+# =============================================================================
+universe        = vanilla
+executable      = /data/bfys/gscriven/track-extrapolation-pinn/condor/run_train_wave2.sh
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3
+
+should_transfer_files = NO
+output = condor/logs/$(config_tag).$(Cluster).$(Process).out
+error  = condor/logs/$(config_tag).$(Cluster).$(Process).err
+log    = condor/logs/scan_v1.$(Cluster).log
+
++UseOS        = "el9"
++JobCategory  = "long"
+
+request_gpus   = 1
+request_cpus   = 1
+request_memory = 10 GB
+request_disk   = 3 GB
+
+arguments      = $(config_file) $(config_tag)
+queue config_file, config_tag from (
+    configs/scan_v1/scanA_d2_tanh.yaml    scanA_d2_tanh
+    configs/scan_v1/scanA_d2_silu.yaml    scanA_d2_silu
+    configs/scan_v1/scanA_d2_gelu.yaml    scanA_d2_gelu
+    configs/scan_v1/scanA_d2_sin.yaml     scanA_d2_sin
+    configs/scan_v1/scanA_d3_tanh.yaml    scanA_d3_tanh
+    configs/scan_v1/scanA_d3_silu.yaml    scanA_d3_silu
+    configs/scan_v1/scanA_d3_gelu.yaml    scanA_d3_gelu
+    configs/scan_v1/scanA_d3_sin.yaml     scanA_d3_sin
+    configs/scan_v1/scanB_alpha05.yaml    scanB_alpha05
+    configs/scan_v1/scanB_delta2.yaml     scanB_delta2
+    configs/scan_v1/scanB_invp.yaml       scanB_invp
+    configs/scan_v1/scanB_logcosh.yaml    scanB_logcosh
+)

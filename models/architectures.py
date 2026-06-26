@@ -95,19 +95,58 @@ _ALLEN_KAPPA_PREFACTOR: float = 1.0e-3
 # Activation registry
 # =============================================================================
 
+class Sine(nn.Module):
+    """Sinusoidal activation ``sin(w0 * x)`` (SIREN, Sitzmann et al. 2020).
+
+    Smooth, periodic, infinitely differentiable — well suited to representing
+    smooth field-integral targets. Must be paired with SIREN initialisation
+    (see ``_siren_init_``) for stable training: the first layer uses
+    U(-1/fan_in, 1/fan_in) and hidden layers U(-sqrt(6/fan_in)/w0, +...) so
+    that pre-activations stay ~N(0,1) and sin() does not alias at init.
+    """
+
+    def __init__(self, w0: float = 30.0):
+        super().__init__()
+        self.w0 = float(w0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.sin(self.w0 * x)
+
+    def extra_repr(self) -> str:
+        return f"w0={self.w0}"
+
+
 _ACTIVATIONS: Dict[str, type] = {
     "relu": nn.ReLU,
     "tanh": nn.Tanh,
     "silu": nn.SiLU,
     "gelu": nn.GELU,
     "elu": nn.ELU,
+    "sin": Sine,
 }
 
 
-def _get_activation(name: str) -> nn.Module:
+def _get_activation(name: str, w0: float = 30.0) -> nn.Module:
     if name not in _ACTIVATIONS:
         raise ValueError(f"Unknown activation {name!r}; available {list(_ACTIVATIONS)}")
+    if name == "sin":
+        return Sine(w0)
     return _ACTIVATIONS[name]()
+
+
+def _siren_init_(linears: List[nn.Linear], w0: float = 30.0) -> None:
+    """In-place SIREN initialisation for a stack of Linear layers feeding Sine
+    activations. First layer ~ U(-1/fan_in, 1/fan_in); subsequent ~
+    U(-sqrt(6/fan_in)/w0, +sqrt(6/fan_in)/w0). Biases zeroed."""
+    for i, m in enumerate(linears):
+        fan_in = m.weight.shape[1]
+        if i == 0:
+            bound = 1.0 / fan_in
+        else:
+            bound = math.sqrt(6.0 / fan_in) / w0
+        nn.init.uniform_(m.weight, -bound, bound)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
 
 
 # =============================================================================
@@ -262,10 +301,14 @@ class PINN_v2(BaseTrackExtrapolator):
         kick_scaled_head: bool = False,
         pde_scale_mode: str = "legacy",
         pde_ref_length: float = 5213.0,
+        siren_w0: float = 30.0,
+        n_unroll: int = 1,
+        kick_order: int = 1,
     ):
         super().__init__(input_dim=7, output_dim=5)
         self.hidden_dims = list(hidden_dims)
         self.activation_name = activation
+        self.siren_w0 = float(siren_w0)
         self.dropout_rate = float(dropout)
         self.lambda_pde = float(lambda_pde)
         self.lambda_ic = float(lambda_ic)
@@ -274,6 +317,12 @@ class PINN_v2(BaseTrackExtrapolator):
         self.kick_scaled_head = bool(kick_scaled_head)   # couple correction to qop*dz magnet kick (q/p-bias fix)
         self.pde_scale_mode = str(pde_scale_mode)        # "legacy" | "fixed_L"
         self.pde_ref_length = float(pde_ref_length)      # reference length for fixed_L PDE scaling [mm]
+        self.n_unroll = int(n_unroll)                    # E1: field-free multi-step unroll of the kick head (1 = single-shot)
+        # E2: higher-order kick basis. order 1 = the linear-in-dz kick (default);
+        # order 2 adds a (kappa*dz)^2 term per channel (~kappa^2 dz^3 in position),
+        # i.e. the field-gradient-along-path correction. Still NO field lookup
+        # (Allen-faithful: extra MACs in the same kernel). Only with kick_scaled_head.
+        self.kick_order = int(kick_order) if bool(kick_scaled_head) else 1
 
         self.field = field_model if field_model is not None else get_field_torch(
             use_interpolated=True, polarity=-1
@@ -284,23 +333,27 @@ class PINN_v2(BaseTrackExtrapolator):
         prev = 6
         for dim in self.hidden_dims:
             enc_layers.append(nn.Linear(prev, dim))
-            enc_layers.append(_get_activation(activation))
+            enc_layers.append(_get_activation(activation, w0=self.siren_w0))
             if dropout > 0:
                 enc_layers.append(nn.Dropout(dropout))
             prev = dim
         self.encoder = nn.Sequential(*enc_layers)
-        self.correction_head = nn.Linear(prev, 4)
+        self.correction_head = nn.Linear(prev, 4 * self.kick_order)
         self._init_weights()
         if self.kick_scaled_head:
             # Per-channel learnable gain (init exp(0)=1) so the optimiser calibrates
             # the kick magnitude. The correction is multiplied by the qop-scaled kick
             # (kappa = qop * c, NO field lookup), so the network learns only a
             # dimensionless O(1) shape and the q/p magnitude is exact by construction.
-            self.kick_loggain = nn.Parameter(torch.zeros(4))
+            self.kick_loggain = nn.Parameter(torch.zeros(4 * self.kick_order))
 
     def _init_weights(self) -> None:
-        for m in self.encoder.modules():
-            if isinstance(m, nn.Linear):
+        enc_linears = [m for m in self.encoder.modules() if isinstance(m, nn.Linear)]
+        if self.activation_name == "sin":
+            # SIREN init: matched to sin(w0*x) so pre-activations stay ~N(0,1).
+            _siren_init_(enc_linears, w0=self.siren_w0)
+        else:
+            for m in enc_linears:
                 nn.init.xavier_uniform_(m.weight, gain=0.5)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
@@ -339,6 +392,15 @@ class PINN_v2(BaseTrackExtrapolator):
             ty_out = ty0 + zf * g[1] * kappa_dz * corr[:, 1]
             x_out  = x0p + tx0 * delta_z + g[2] * kappa_dz * delta_z * corr[:, 2]
             y_out  = y0p + ty0 * delta_z + g[3] * kappa_dz * delta_z * corr[:, 3]
+            if self.kick_order >= 2:
+                # E2: 2nd-order kick ~ (kappa*dz)^2 (the field-gradient-along-path
+                # term). Slope gets +kappa^2 dz^2, position +kappa^2 dz^2 * dz.
+                # Still field-free; IC preserved (every term carries zf via tx_out etc.).
+                kd2 = kappa_dz * kappa_dz                        # (kappa*dz)^2  [B]
+                tx_out = tx_out + zf * g[4] * kd2 * corr[:, 4]
+                ty_out = ty_out + zf * g[5] * kd2 * corr[:, 5]
+                x_out  = x_out  + g[6] * kd2 * delta_z * corr[:, 6]
+                y_out  = y_out  + g[7] * kd2 * delta_z * corr[:, 7]
         else:
             x_out  = x0p + tx0 * delta_z + corr[:, 2] * zf * dz
             y_out  = y0p + ty0 * delta_z + corr[:, 3] * zf * dz
@@ -349,9 +411,21 @@ class PINN_v2(BaseTrackExtrapolator):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x0 = x[:, :5]
         dz = x[:, 6]
+        qop = x[:, 4:5]
         z_frac = torch.ones((x.shape[0], 1), device=x.device, dtype=x.dtype)
-        y4 = self.forward_at_z(x0, z_frac, dz=dz)
-        return torch.cat([y4, x[:, 4:5]], dim=1)
+        n_unroll = int(getattr(self, "n_unroll", 1))
+        if n_unroll <= 1:
+            y4 = self.forward_at_z(x0, z_frac, dz=dz)
+            return torch.cat([y4, qop], dim=1)
+        # E1: field-free multi-step — apply the SAME kick head over N equal
+        # sub-steps (dz/N each), feeding the state forward; qop is invariant.
+        # Allen-faithful: identical to looping the deployed kernel N times.
+        dz_sub = dz / n_unroll
+        state = x0
+        for _ in range(n_unroll):
+            y4 = self.forward_at_z(state, z_frac, dz=dz_sub)
+            state = torch.cat([y4, qop], dim=1)
+        return torch.cat([state[:, :4], qop], dim=1)
 
     def compute_physics_loss(
         self, x: torch.Tensor, y_pred: torch.Tensor,
@@ -449,11 +523,14 @@ class PINN_v2(BaseTrackExtrapolator):
             "model_type": "PINN_v2",
             "hidden_dims": self.hidden_dims,
             "activation": self.activation_name,
+            "siren_w0": self.siren_w0,
             "dropout": self.dropout_rate,
             "lambda_pde": self.lambda_pde,
             "lambda_ic": self.lambda_ic,
             "n_collocation": self.n_collocation,
             "kick_scaled_head": self.kick_scaled_head,
+            "kick_order": self.kick_order,
+            "n_unroll": self.n_unroll,
             "pde_scale_mode": self.pde_scale_mode,
             "pde_ref_length": self.pde_ref_length,
             "fixes_applied": ["A_jvp", "B_stochastic_colloc", "C_z_dependent_trunk", "H_z_start"]

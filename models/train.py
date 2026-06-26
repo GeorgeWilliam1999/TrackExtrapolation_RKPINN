@@ -298,6 +298,7 @@ def _huber(z: torch.Tensor, delta: float) -> torch.Tensor:
 def residual_rel_loss(
     x: torch.Tensor, y_pred: torch.Tensor, y_true: torch.Tensor,
     scales: torch.Tensor, alpha: float, delta: float,
+    weight_mode: str = "none",
 ) -> torch.Tensor:
     """Range-aware HUBER on the residual (Wave-2 default).
 
@@ -319,7 +320,17 @@ def residual_rel_loss(
         scale = torch.sqrt(scales.unsqueeze(0) ** 2 + (alpha * bend) ** 2)
     else:
         scale = scales.unsqueeze(0)
-    return torch.mean(_huber(err / scale, delta))
+    h = _huber(err / scale, delta)
+    if weight_mode == "inv_p":
+        # Up-weight the low-p (Kalman-critical) tail where the residual lives.
+        # 1/p ∝ |qop| (p = c/|qop|); normalise to mean-1 so the loss scale and LR
+        # are preserved -- only the *relative* track weighting changes.
+        qop = x[:, 4].abs()
+        w = qop / (qop.mean() + 1e-12)
+        return torch.mean(w * h.mean(dim=1))
+    if weight_mode not in ("none", ""):
+        raise ValueError(f"Unknown resid_weight_mode {weight_mode!r}")
+    return torch.mean(h)
 
 
 def _resid_scales(model, config: dict) -> torch.Tensor:
@@ -346,7 +357,8 @@ def _data_loss(
         cfg = config or {}
         return residual_rel_loss(x, y_pred, y_true, _resid_scales(model, cfg),
                                  float(cfg.get("resid_alpha", 0.0)),
-                                 float(cfg.get("resid_huber_delta", 8.0)))
+                                 float(cfg.get("resid_huber_delta", 8.0)),
+                                 str(cfg.get("resid_weight_mode", "none")))
     scale = model.output_std[:4]
     if loss_fn == "mse":
         inv = 1.0 / scale
@@ -376,6 +388,9 @@ def _build_model(config: dict):
             kick_scaled_head=config.get("kick_scaled_head", False),
             pde_scale_mode=config.get("pde_scale_mode", "legacy"),
             pde_ref_length=config.get("pde_ref_length", 5213.0),
+            siren_w0=config.get("siren_w0", 30.0),
+            n_unroll=config.get("n_unroll", 1),
+            kick_order=config.get("kick_order", 1),
         )
     if mt == "neural_rk4":
         return create_model(
@@ -384,6 +399,7 @@ def _build_model(config: dict):
             activation=config["activation"],
             n_rk_steps=config["n_rk_steps"],
             correction_scale_init=config["correction_scale_init"],
+            disable_correction=config.get("disable_correction", False),
         )
     raise ValueError(f"Unknown model_type {mt!r}")
 

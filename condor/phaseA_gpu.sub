@@ -1,0 +1,33 @@
+# =============================================================================
+# HTCondor GPU submit -- Phase A of the 'Break the ~3 mm floor' program (2026-06-25).
+#   E1  field-free multi-step unroll of the deployable kick head (pinn_v2, [96,96],
+#       kick_scaled_head) over N in {2,4,8}.
+#   E5  multi-step hybrid integrator (neural_rk4, RK4+learned RHS) on the real gen-4
+#       field, n_rk_steps in {2,4} -- sets the field-access accuracy bar.
+# Same GPU spec + worker as the arch x cost scan (scan_v1_gpu.sub).
+# =============================================================================
+universe        = vanilla
+executable      = /data/bfys/gscriven/track-extrapolation-pinn/condor/run_train_wave2.sh
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3
+
+should_transfer_files = NO
+output = condor/logs/$(config_tag).$(Cluster).$(Process).out
+error  = condor/logs/$(config_tag).$(Cluster).$(Process).err
+log    = condor/logs/phaseA.$(Cluster).log
+
++UseOS        = "el9"
++JobCategory  = "long"
+
+request_gpus   = 1
+request_cpus   = 1
+request_memory = 10 GB
+request_disk   = 3 GB
+
+arguments      = $(config_file) $(config_tag)
+queue config_file, config_tag from (
+    configs/phaseA/e1_unroll2.yaml    e1_unroll2
+    configs/phaseA/e1_unroll4.yaml    e1_unroll4
+    configs/phaseA/e1_unroll8.yaml    e1_unroll8
+    configs/phaseA/e5_hybrid_n2.yaml  e5_hybrid_n2
+    configs/phaseA/e5_hybrid_n4.yaml  e5_hybrid_n4
+)

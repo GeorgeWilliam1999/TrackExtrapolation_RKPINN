@@ -36,3 +36,7 @@ venv/
 For_Allen/exercise_pr/standalone_test_nrk
 *.o
 run_extrapolators
+
+# === extrapUTT bake-off build outputs (regenerate via allen_bridge/build_extraputt.sh against Allen) ===
+allen_bridge/extraputt_baseline
+allen_bridge/extraputt_snippet.inc

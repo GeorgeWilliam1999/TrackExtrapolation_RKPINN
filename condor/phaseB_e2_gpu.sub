@@ -1,0 +1,30 @@
+# =============================================================================
+# HTCondor GPU submit -- Phase B / E2 (2026-06-26): higher-order kick basis.
+#   The deployable kick head gains a 2nd-order (kappa*dz)^2 term (architectures.py
+#   kick_order=2, field-free, Allen-faithful), stacked on the multi-step unroll.
+#   Matched ablations vs the E1 runs at the same epoch budget:
+#     e2_order2_unroll16 vs e1_unroll16 ;  e2_order2_unroll8 vs e1_unroll8_long
+# Same GPU spec + worker as phaseA2_gpu.sub.
+# =============================================================================
+universe        = vanilla
+executable      = /data/bfys/gscriven/track-extrapolation-pinn/condor/run_train_wave2.sh
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3
+
+should_transfer_files = NO
+output = condor/logs/$(config_tag).$(Cluster).$(Process).out
+error  = condor/logs/$(config_tag).$(Cluster).$(Process).err
+log    = condor/logs/phaseB_e2.$(Cluster).log
+
++UseOS        = "el9"
++JobCategory  = "long"
+
+request_gpus   = 1
+request_cpus   = 1
+request_memory = 10 GB
+request_disk   = 3 GB
+
+arguments      = $(config_file) $(config_tag)
+queue config_file, config_tag from (
+    configs/phaseA/e2_order2_unroll16.yaml  e2_order2_unroll16
+    configs/phaseA/e2_order2_unroll8.yaml   e2_order2_unroll8
+)

@@ -1,0 +1,28 @@
+# =============================================================================
+# HTCondor GPU submit -- Phase A FOLLOW-UP (2026-06-25): push E1 toward 1 mm.
+#   e1_unroll8_long (8 steps, 250 ep)  e1_unroll16 (16, 250)  e1_unroll32 (32, 200)
+# Same GPU spec + worker as scan_v1_gpu.sub / phaseA_gpu.sub.
+# =============================================================================
+universe        = vanilla
+executable      = /data/bfys/gscriven/track-extrapolation-pinn/condor/run_train_wave2.sh
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3
+
+should_transfer_files = NO
+output = condor/logs/$(config_tag).$(Cluster).$(Process).out
+error  = condor/logs/$(config_tag).$(Cluster).$(Process).err
+log    = condor/logs/phaseA2.$(Cluster).log
+
++UseOS        = "el9"
++JobCategory  = "long"
+
+request_gpus   = 1
+request_cpus   = 1
+request_memory = 10 GB
+request_disk   = 3 GB
+
+arguments      = $(config_file) $(config_tag)
+queue config_file, config_tag from (
+    configs/phaseA/e1_unroll8_long.yaml  e1_unroll8_long
+    configs/phaseA/e1_unroll16.yaml      e1_unroll16
+    configs/phaseA/e1_unroll32.yaml      e1_unroll32
+)
