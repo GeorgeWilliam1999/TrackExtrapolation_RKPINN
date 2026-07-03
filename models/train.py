@@ -122,6 +122,19 @@ DEFAULTS: dict = {
     # checkpoint selection metric: "median_dx_mm" (legacy, bulk-dominated),
     #   "utt_median_dx_um" (the UT->T regime we are judged on), or "val_loss_sel".
     "select_metric": "median_dx_mm",
+    # --- P3 (2026-07-03) Jacobian supervision (vertex-fit line) ---
+    # lambda_jac > 0 trains the model's own forward-mode Jacobian d(out 0..3)/
+    #   d(state 0..4) against exact labels (spec: PLAN 3915d544-b9d9-81b7,
+    #   phase P3 / tier 2). data_path_J must be row-aligned with data_path.
+    #   Elements are normalised by their per-element train-split std before
+    #   the Huber, so mm-scale entries (dx/dtx ~ dz) and rad-scale entries
+    #   weigh equally; row 4 (qop) is identity on both sides and skipped.
+    "lambda_jac": 0.0,
+    "jac_frac": 1.0,        # row fraction within a J batch
+    "jac_every": 4,         # apply the J term on every k-th batch (functorch
+                            # per-call overhead is large for tiny nets, so fewer
+                            # bigger JVP calls beat a slice of every batch)
+    "data_path_J": None,
 }
 
 
@@ -216,9 +229,14 @@ def stratified_split(
 # =============================================================================
 
 def _make_loader(
-    X: np.ndarray, Y: np.ndarray, batch_size: int, shuffle: bool, config: dict
+    X: np.ndarray, Y: np.ndarray, batch_size: int, shuffle: bool, config: dict,
+    J: np.ndarray | None = None,
 ) -> DataLoader:
-    ds = TensorDataset(torch.from_numpy(X), torch.from_numpy(Y))
+    if J is not None:
+        ds = TensorDataset(torch.from_numpy(X), torch.from_numpy(Y),
+                           torch.from_numpy(J.reshape(len(J), -1).copy()))
+    else:
+        ds = TensorDataset(torch.from_numpy(X), torch.from_numpy(Y))
     return DataLoader(
         ds,
         batch_size=batch_size,
@@ -366,6 +384,36 @@ def _data_loss(
     return log_cosh_loss(y_pred, y_true, scale)
 
 
+def _model_state_jacobian(model, x: torch.Tensor) -> torch.Tensor:
+    """Forward-mode Jacobian of outputs 0..3 w.r.t. state inputs 0..4.
+
+    One batched JVP sweep: the batch is replicated 5x, each replica carrying a
+    different unit tangent (same trick as the datagen reference path). Output
+    [b, 4, 5]. Differentiable w.r.t. the model parameters (forward-over-reverse
+    — the established pattern of compute_physics_loss).
+    """
+    b = x.shape[0]
+    s0 = x[:, :5]
+    rest = x[:, 5:]
+    s_rep = s0.repeat(5, 1)
+    rest_rep = rest.repeat(5, 1)
+    tang = torch.eye(5, device=x.device, dtype=x.dtype).repeat_interleave(b, dim=0)
+
+    def f(s: torch.Tensor) -> torch.Tensor:
+        return model(torch.cat([s, rest_rep], dim=1))[:, :4]
+
+    _, jv = torch.func.jvp(f, (s_rep,), (tang,))
+    return jv.reshape(5, b, 4).permute(1, 2, 0)  # [b, 4, 5]
+
+
+def _jac_loss(model, x: torch.Tensor, j_label_flat: torch.Tensor,
+              j_scale: torch.Tensor, delta: float = 8.0) -> torch.Tensor:
+    """Huber on the per-element std-normalised (J_model - J_label), rows 0..3."""
+    j_lab = j_label_flat.reshape(-1, 5, 5)[:, :4, :]
+    j_pred = _model_state_jacobian(model, x)
+    return _huber((j_pred - j_lab) / j_scale, delta).mean()
+
+
 def _build_model(config: dict):
     mt = config["model_type"]
     if mt == "mlp":
@@ -404,9 +452,10 @@ def _build_model(config: dict):
     raise ValueError(f"Unknown model_type {mt!r}")
 
 
-def train_epoch(model, loader, optim_, scheduler, device, grad_clip, phys_ramp, loss_fn="log_cosh", config=None):
+def train_epoch(model, loader, optim_, scheduler, device, grad_clip, phys_ramp,
+                loss_fn="log_cosh", config=None, j_scale=None):
     model.train()
-    tot = 0.0; tot_data = 0.0; tot_pde = 0.0; tot_ic = 0.0
+    tot = 0.0; tot_data = 0.0; tot_pde = 0.0; tot_ic = 0.0; tot_jac = 0.0
     n = 0
     skipped = 0
     # lambda_pde = lambda_ic = 0 is a pure-data ablation: skip the (expensive)
@@ -414,20 +463,31 @@ def train_epoch(model, loader, optim_, scheduler, device, grad_clip, phys_ramp, 
     use_physics = hasattr(model, "compute_physics_loss") and (
         getattr(model, "lambda_pde", 0.0) > 0.0 or getattr(model, "lambda_ic", 0.0) > 0.0
     )
-    for x, y in loader:
-        x = x.to(device); y = y.to(device)
+    lambda_jac = float((config or {}).get("lambda_jac", 0.0) or 0.0)
+    jac_frac = float((config or {}).get("jac_frac", 1.0))
+    jac_every = max(1, int((config or {}).get("jac_every", 4)))
+    n_jac = 0
+    for i_batch, batch in enumerate(loader):
+        x = batch[0].to(device); y = batch[1].to(device)
+        j_lab = batch[2].to(device) if len(batch) > 2 else None
         optim_.zero_grad(set_to_none=True)
         y_pred = model(x)
         data_loss = _data_loss(model, x, y_pred, y, loss_fn, config)
+        loss = data_loss
+        if lambda_jac > 0.0 and j_lab is not None and i_batch % jac_every == 0:
+            # loader shuffles, so the leading slice is an unbiased subsample;
+            # the k-batch cadence amortises the functorch JVP call overhead.
+            nj = max(1, int(x.shape[0] * jac_frac))
+            jac_loss = _jac_loss(model, x[:nj], j_lab[:nj], j_scale)
+            loss = loss + lambda_jac * jac_loss
+            tot_jac += float(jac_loss.item()); n_jac += 1
         if use_physics:
             phys = model.compute_physics_loss(x, y_pred)
             pde_loss = phys.get("pde", torch.zeros((), device=device))
             ic_loss = phys.get("ic", torch.zeros((), device=device))
-            loss = data_loss + phys_ramp * (pde_loss + ic_loss)
+            loss = loss + phys_ramp * (pde_loss + ic_loss)
             tot_pde += float(pde_loss.item())
             tot_ic += float(ic_loss.item())
-        else:
-            loss = data_loss
         if not torch.isfinite(loss):
             skipped += 1
             continue
@@ -445,6 +505,7 @@ def train_epoch(model, loader, optim_, scheduler, device, grad_clip, phys_ramp, 
         "data_loss": tot_data / max(1, n),
         "pde_loss": tot_pde / max(1, n),
         "ic_loss": tot_ic / max(1, n),
+        "jac_loss": tot_jac / max(1, n_jac),
         "skipped": skipped,
         "lr": optim_.param_groups[0]["lr"],
     }
@@ -564,9 +625,28 @@ def train(config: dict):
     n_params = model.count_parameters()
     print(f"Model: {config['model_type']}  params={n_params:,}")
 
+    # Optional Jacobian labels (P3): row-aligned with data_path; only the
+    # train loader carries them (val/test J fidelity is a post-hoc gate).
+    lambda_jac = float(config.get("lambda_jac", 0.0) or 0.0)
+    J_train, j_scale = None, None
+    if lambda_jac > 0.0:
+        j_path = config["data_path_J"]
+        J_all = np.load(j_path).astype(np.float32)
+        assert J_all.shape == (X.shape[0], 5, 5), \
+            f"J labels {J_all.shape} not aligned with X {X.shape}"
+        J_train = J_all[splits["train"][3]]
+        j_scale = torch.from_numpy(
+            np.maximum(J_train[:, :4, :].std(axis=0), 1e-6)
+        ).to(device)
+        config["jac_scale_per_element"] = j_scale.cpu().numpy().tolist()
+        print(f"Jacobian supervision ON: lambda_jac={lambda_jac}  "
+              f"jac_frac={config.get('jac_frac', 0.25)}  labels={j_path}")
+        del J_all
+
     # Loaders
     train_loader = _make_loader(
-        splits["train"][0], splits["train"][1], config["batch_size"], True, config
+        splits["train"][0], splits["train"][1], config["batch_size"], True, config,
+        J=J_train,
     )
     val_loader = _make_loader(
         splits["val"][0], splits["val"][1], config["batch_size"], False, config
@@ -626,7 +706,7 @@ def train(config: dict):
         phys_ramp = (
             float(min(1.0, (epoch + 1) / phys_warm)) if phys_warm > 0 else 1.0
         )
-        t_m = train_epoch(model, train_loader, optimizer, scheduler, device, config["grad_clip"], phys_ramp, loss_fn, config)
+        t_m = train_epoch(model, train_loader, optimizer, scheduler, device, config["grad_clip"], phys_ramp, loss_fn, config, j_scale=j_scale)
         v_m = validate(model, val_loader, device, loss_fn, config)
         history["train"].append(t_m)
         history["val"].append(v_m)
@@ -635,6 +715,8 @@ def train(config: dict):
             f" [pde={t_m['pde_loss']:.3e} ic={t_m['ic_loss']:.3e} ramp={phys_ramp:.2f}]"
             if use_physics else ""
         )
+        if t_m.get("jac_loss", 0.0) > 0.0:
+            extra += f" [jac={t_m['jac_loss']:.4f}]"
         utt_str = (f"  utt_med={v_m['utt_median_dx_um']:.0f}µm(n={v_m['n_utt']})"
                    if v_m.get("n_utt", 0) >= 50 else "")
         print(
