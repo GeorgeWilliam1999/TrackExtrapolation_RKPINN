@@ -40,3 +40,6 @@ run_extrapolators
 # === extrapUTT bake-off build outputs (regenerate via allen_bridge/build_extraputt.sh against Allen) ===
 allen_bridge/extraputt_baseline
 allen_bridge/extraputt_snippet.inc
+
+# === Compiled datagen engine (rebuilt automatically by generate_vertexfit_v1.py) ===
+datagen/*.so
