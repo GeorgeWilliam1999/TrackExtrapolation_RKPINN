@@ -219,6 +219,8 @@ def main():
         for a in arms:
             f = fit_vertex(a, tracks, v_seed)
             res[a.name].append({"dv": (f["v"] - v_true), "chi2": f["chi2"],
+                                "sx": float(np.sqrt(f["cov"][0, 0])),
+                                "sy": float(np.sqrt(f["cov"][1, 1])),
                                 "sz": float(np.sqrt(f["cov"][2, 2])),
                                 "n_outer": f["n_outer"], "n_fetch": f["n_fetch"],
                                 "conv": f["converged"]})
@@ -228,10 +230,14 @@ def main():
     ref = None
     for a in arms:
         dv = np.array([r["dv"] for r in res[a.name]])
+        sx = np.array([r["sx"] for r in res[a.name]])
+        sy = np.array([r["sy"] for r in res[a.name]])
         sz = np.array([r["sz"] for r in res[a.name]])
         stats = {
             "bias_mm": [float(np.median(dv[:, k])) for k in range(3)],
             "res_mm": [robust_sigma(dv[:, k]) for k in range(3)],
+            "pull_x_width": robust_sigma(dv[:, 0] / sx),
+            "pull_y_width": robust_sigma(dv[:, 1] / sy),
             "pull_z_width": robust_sigma(dv[:, 2] / sz),
             "chi2_median": float(np.median([r["chi2"] for r in res[a.name]])),
             "outer_mean": float(np.mean([r["n_outer"] for r in res[a.name]])),
@@ -272,6 +278,17 @@ def main():
     p = LAB / "results" / f"VF_p4_fit_{datetime.now():%Y%m%d}.json"
     json.dump(out, open(p, "w"), indent=1)
     print(f"\nwrote {p}")
+
+    # per-toy dump for distribution-level figures (same seed -> same numbers)
+    dump = {"v_true": np.array([t[0] for t in toys])}
+    for a in arms:
+        for key, cast in [("dv", None), ("chi2", float), ("sx", float),
+                          ("sy", float), ("sz", float), ("n_outer", int),
+                          ("n_fetch", int)]:
+            dump[f"{a.name}_{key}"] = np.array([r[key] for r in res[a.name]])
+    pn = LAB / "results" / f"VF_p4_fit_toys_{datetime.now():%Y%m%d}.npz"
+    np.savez_compressed(pn, **dump)
+    print(f"wrote {pn}")
 
 
 if __name__ == "__main__":
