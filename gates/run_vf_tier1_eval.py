@@ -40,10 +40,13 @@ CORPUS = LAB / "data" / "vf_corpus_10M.npz"
 sys.path.insert(0, str(REPO / "models"))
 sys.path.insert(0, str(REPO / "core"))
 
-from train import _build_model  # noqa: E402
+from train import _build_model, _model_state_jacobian  # noqa: E402
 
 LEG_NAMES = {0: "A UT->vtx", 1: "B T->vtx", 2: "C VELO", 3: "D intra"}
 BARS_A = {"med_dx_um": 100.0, "p95_dx_um": 1000.0, "med_slope_urad": 50.0}
+J_LABELS = LAB / "data" / "vf_corpus_10M_J.npy"
+TIER2_N = 200_000        # test-split subsample for the J-fidelity read-out
+TIER2_BAR_RELF = 0.01    # spec tier 2: median rel Frobenius <= 0.01
 
 
 def _q(a: np.ndarray, q: float) -> float:
@@ -72,7 +75,53 @@ def _predict(model, X: np.ndarray, batch: int = 65536) -> np.ndarray:
     return np.concatenate(outs)
 
 
-def eval_experiment(exp_dir: Path, X: np.ndarray, Y: np.ndarray, LEG: np.ndarray) -> dict:
+def _tier2_jac(model, Xt: np.ndarray, Jt: np.ndarray, Lt: np.ndarray) -> dict:
+    """Tier-2 J-fidelity: model forward-mode J (rows 0..3) vs exact labels.
+
+    Per-track relative Frobenius ||J_model - J_label|| / ||J_label|| on a
+    fixed-seed test subsample, per leg, with the straight-line transport
+    Jacobian (I + dz at (0,2),(1,3)) as the context baseline. Spec bar
+    (PLAN section 6 tier 2): median relF <= 0.01.
+    """
+    rng = np.random.default_rng(7)
+    n = min(TIER2_N, Xt.shape[0])
+    sel = rng.choice(Xt.shape[0], n, replace=False)
+    Xs, Jl4, Ls = Xt[sel], Jt[sel, :4, :].astype(np.float64), Lt[sel]
+    relf = np.empty(n)
+    relf_sl = np.empty(n)
+    for i in range(0, n, 8192):
+        xb = torch.from_numpy(Xs[i : i + 8192])
+        Jm = _model_state_jacobian(model, xb).detach().numpy().astype(np.float64)
+        Jlab = Jl4[i : i + 8192]
+        den = np.linalg.norm(Jlab.reshape(len(Jlab), -1), axis=1)
+        relf[i : i + 8192] = np.linalg.norm(
+            (Jm - Jlab).reshape(len(Jlab), -1), axis=1) / den
+        Jsl = np.zeros_like(Jlab)
+        for d in range(4):
+            Jsl[:, d, d] = 1.0
+        dz = Xs[i : i + 8192, 6].astype(np.float64)
+        Jsl[:, 0, 2] = dz
+        Jsl[:, 1, 3] = dz
+        relf_sl[i : i + 8192] = np.linalg.norm(
+            (Jsl - Jlab).reshape(len(Jlab), -1), axis=1) / den
+    out = {"n": int(n),
+           "overall": {"med_relF": _q(relf, 0.5), "p95_relF": _q(relf, 0.95)},
+           "straight_overall_med_relF": _q(relf_sl, 0.5), "legs": {}}
+    for code, name in LEG_NAMES.items():
+        m = Ls == code
+        if m.sum() == 0:
+            continue
+        out["legs"][name] = {"med_relF": _q(relf[m], 0.5),
+                             "p95_relF": _q(relf[m], 0.95),
+                             "straight_med_relF": _q(relf_sl[m], 0.5)}
+    out["bar_med_relF"] = {"value": out["overall"]["med_relF"],
+                           "bar": TIER2_BAR_RELF,
+                           "pass": out["overall"]["med_relF"] <= TIER2_BAR_RELF}
+    return out
+
+
+def eval_experiment(exp_dir: Path, X: np.ndarray, Y: np.ndarray, LEG: np.ndarray,
+                    J_all: np.ndarray | None = None) -> dict:
     ckpt = torch.load(exp_dir / "best_model.pt", weights_only=False, map_location="cpu")
     config = ckpt["config"]
     model = _build_model(config)
@@ -137,6 +186,9 @@ def eval_experiment(exp_dir: Path, X: np.ndarray, Y: np.ndarray, LEG: np.ndarray
                            "pass": max(a["med_dtx_urad"], a["med_dty_urad"]) <= BARS_A["med_slope_urad"]},
     }
     out["stop_rule_triggered"] = bool(a["med_dx_um"] > 1000.0)  # leg-A median >> 1 mm
+
+    if J_all is not None:
+        out["tier2"] = _tier2_jac(model, Xt, J_all[idx], Lt)
     return out
 
 
@@ -145,13 +197,16 @@ def main() -> None:
         X = d["X"].astype(np.float32)
         Y = d["Y"].astype(np.float32)
         LEG = d["LEG"]
+    J_all = np.load(J_LABELS) if J_LABELS.exists() else None
+    if J_all is None:
+        print("NOTE: no J label file found — tier-2 skipped")
 
     results = []
     for exp_dir in sorted((LAB / "trained_models").iterdir()):
         if not (exp_dir / "best_model.pt").exists():
             continue
         print(f"\n=== {exp_dir.name} ===")
-        r = eval_experiment(exp_dir, X, Y, LEG)
+        r = eval_experiment(exp_dir, X, Y, LEG, J_all=J_all)
         results.append(r)
         hdr = f"{'leg':>10s} {'n':>7s} | {'med|dx|':>9s} {'p95|dx|':>9s} {'med|dy|':>9s} | {'med|dtx|':>9s} {'med|dty|':>9s} |  straight med|dx|"
         print(hdr)
@@ -164,6 +219,15 @@ def main() -> None:
             print(f"  bar leg-A {k}: {v['value']:.1f} vs {v['bar']:.0f}  ->  {'PASS' if v['pass'] else 'FAIL'}")
         if r["stop_rule_triggered"]:
             print("  *** STOP-RULE TRIGGERED: leg-A median |dx| > 1 mm ***")
+        if "tier2" in r:
+            t2 = r["tier2"]
+            print(f"  tier-2 J-fidelity (n={t2['n']:,}): overall med relF "
+                  f"{t2['overall']['med_relF']:.2e} (p95 {t2['overall']['p95_relF']:.2e}) "
+                  f"| straight-line {t2['straight_overall_med_relF']:.2e} "
+                  f"| bar {TIER2_BAR_RELF} -> {'PASS' if t2['bar_med_relF']['pass'] else 'FAIL'}")
+            for name, s in t2["legs"].items():
+                print(f"    {name:>10s}: med relF {s['med_relF']:.2e}  "
+                      f"p95 {s['p95_relF']:.2e}  (straight {s['straight_med_relF']:.2e})")
 
     (LAB / "results").mkdir(exist_ok=True)
     out_path = LAB / "results" / f"VF_tier1_{datetime.now():%Y%m%d}.json"
