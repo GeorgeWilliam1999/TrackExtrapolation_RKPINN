@@ -43,3 +43,6 @@ allen_bridge/extraputt_snippet.inc
 
 # === Compiled datagen engine (rebuilt automatically by generate_vertexfit_v1.py) ===
 datagen/*.so
+
+# === Condor scratch logs ===
+condor/logs/

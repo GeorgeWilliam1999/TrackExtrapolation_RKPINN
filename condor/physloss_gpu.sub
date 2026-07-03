@@ -1,0 +1,37 @@
+# =============================================================================
+# HTCondor GPU submit -- Physics-loss vs best-case Cash-Karp study (2026-07-01).
+#   Controlled 3x2 matched-pair factorial at physical kappa (gen-4 corpus):
+#     architecture {single-kick n_unroll=1, multi-step unroll n_unroll=16}
+#       x  lambda_pde {0.0, 0.03, 0.1}   (lambda_ic=0; only the PDE term varies)
+#   Everything else fixed vs configs/phaseA/e1_unroll16.yaml
+#   ([96,96] tanh kick_scaled_head, fixed_L pde_scale, physics_warmup=15,
+#    residual_rel loss, 250 epochs, seed-42 splits, gen-4 train_wave2_deploy.npz).
+#   Reference bar = CORRECTED (best-case) Cash-Karp ~3.8um (buggy arm excluded).
+#   Worker: run_train_wave2.sh -> REPO models/train.py; checkpoints in gen_3/trained_models.
+# =============================================================================
+universe        = vanilla
+executable      = /data/bfys/gscriven/track-extrapolation-pinn/condor/run_train_wave2.sh
+initialdir      = /data/bfys/gscriven/TrackExtrapolation/experiments/gen_3
+
+should_transfer_files = NO
+output = /data/bfys/gscriven/track-extrapolation-pinn/condor/logs/$(config_tag).$(Cluster).$(Process).out
+error  = /data/bfys/gscriven/track-extrapolation-pinn/condor/logs/$(config_tag).$(Cluster).$(Process).err
+log    = /data/bfys/gscriven/track-extrapolation-pinn/condor/logs/physloss.$(Cluster).log
+
++UseOS        = "el9"
++JobCategory  = "long"
+
+request_gpus   = 1
+request_cpus   = 1
+request_memory = 10 GB
+request_disk   = 3 GB
+
+arguments      = $(config_file) $(config_tag)
+queue config_file, config_tag from (
+    configs/physloss/physloss_kick_lpde0.yaml         physloss_kick_lpde0
+    configs/physloss/physloss_kick_lpde0p03.yaml      physloss_kick_lpde0p03
+    configs/physloss/physloss_kick_lpde0p1.yaml       physloss_kick_lpde0p1
+    configs/physloss/physloss_unroll16_lpde0.yaml     physloss_unroll16_lpde0
+    configs/physloss/physloss_unroll16_lpde0p03.yaml  physloss_unroll16_lpde0p03
+    configs/physloss/physloss_unroll16_lpde0p1.yaml   physloss_unroll16_lpde0p1
+)
