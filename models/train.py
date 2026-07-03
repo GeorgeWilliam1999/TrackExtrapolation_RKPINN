@@ -407,10 +407,22 @@ def _model_state_jacobian(model, x: torch.Tensor) -> torch.Tensor:
 
 
 def _jac_loss(model, x: torch.Tensor, j_label_flat: torch.Tensor,
-              j_scale: torch.Tensor, delta: float = 8.0) -> torch.Tensor:
-    """Huber on the per-element std-normalised (J_model - J_label), rows 0..3."""
+              j_scale: torch.Tensor, delta: float = 8.0,
+              norm: str = "std") -> torch.Tensor:
+    """Huber on normalised (J_model - J_label), rows 0..3.
+
+    norm="std": per-element train-split std (P3 v1). Global stds are dominated
+      by leg-B magnitudes, so leg-B rows dominate the loss tail — observed to
+      cost the leg-B ENDPOINT 3.3x (read-out 2026-07-03 evening).
+    norm="row": per-row scale ||J_label||_F / sqrt(20) — a relative-Frobenius
+      flavour that makes every leg contribute O(1), decoupling the J term's
+      leg weighting from the label magnitudes.
+    """
     j_lab = j_label_flat.reshape(-1, 5, 5)[:, :4, :]
     j_pred = _model_state_jacobian(model, x)
+    if norm == "row":
+        s = (j_lab.reshape(len(j_lab), -1).norm(dim=1) / (20.0 ** 0.5)).clamp(min=1e-3)
+        return _huber((j_pred - j_lab) / s[:, None, None], delta).mean()
     return _huber((j_pred - j_lab) / j_scale, delta).mean()
 
 
@@ -439,6 +451,7 @@ def _build_model(config: dict):
             siren_w0=config.get("siren_w0", 30.0),
             n_unroll=config.get("n_unroll", 1),
             kick_order=config.get("kick_order", 1),
+            z_features=config.get("z_features", False),
         )
     if mt == "neural_rk4":
         return create_model(
@@ -478,7 +491,8 @@ def train_epoch(model, loader, optim_, scheduler, device, grad_clip, phys_ramp,
             # loader shuffles, so the leading slice is an unbiased subsample;
             # the k-batch cadence amortises the functorch JVP call overhead.
             nj = max(1, int(x.shape[0] * jac_frac))
-            jac_loss = _jac_loss(model, x[:nj], j_lab[:nj], j_scale)
+            jac_loss = _jac_loss(model, x[:nj], j_lab[:nj], j_scale,
+                                 norm=str((config or {}).get("jac_norm", "std")))
             loss = loss + lambda_jac * jac_loss
             tot_jac += float(jac_loss.item()); n_jac += 1
         if use_physics:

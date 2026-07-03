@@ -304,6 +304,7 @@ class PINN_v2(BaseTrackExtrapolator):
         siren_w0: float = 30.0,
         n_unroll: int = 1,
         kick_order: int = 1,
+        z_features: bool = False,
     ):
         super().__init__(input_dim=7, output_dim=5)
         self.hidden_dims = list(hidden_dims)
@@ -318,6 +319,12 @@ class PINN_v2(BaseTrackExtrapolator):
         self.pde_scale_mode = str(pde_scale_mode)        # "legacy" | "fixed_L"
         self.pde_ref_length = float(pde_ref_length)      # reference length for fixed_L PDE scaling [mm]
         self.n_unroll = int(n_unroll)                    # E1: field-free multi-step unroll of the kick head (1 = single-shot)
+        # P3b (2026-07-03, vertex-fit line): feed normalised (z_start, dz) to
+        # the encoder. Without them the correction SHAPE is blind to where the
+        # leg lives — it cannot distinguish a VELO leg (no field) from a
+        # UT->vertex leg (fringe crossing), which is the diagnosed cause of
+        # the leg-C/D correction-noise regression. Default off = legacy.
+        self.z_features = bool(z_features)
         # E2: higher-order kick basis. order 1 = the linear-in-dz kick (default);
         # order 2 adds a (kappa*dz)^2 term per channel (~kappa^2 dz^3 in position),
         # i.e. the field-gradient-along-path correction. Still NO field lookup
@@ -328,9 +335,9 @@ class PINN_v2(BaseTrackExtrapolator):
             use_interpolated=True, polarity=-1
         )
 
-        # Encoder input: 5 state features + 1 z_frac  =>  6-dim.
+        # Encoder input: 5 state features + 1 z_frac (+ z0, dz if z_features).
         enc_layers: List[nn.Module] = []
-        prev = 6
+        prev = 8 if self.z_features else 6
         for dim in self.hidden_dims:
             enc_layers.append(nn.Linear(prev, dim))
             enc_layers.append(_get_activation(activation, w0=self.siren_w0))
@@ -362,6 +369,7 @@ class PINN_v2(BaseTrackExtrapolator):
 
     def forward_at_z(
         self, x0: torch.Tensor, z_frac: torch.Tensor, dz: torch.Tensor,
+        z0: torch.Tensor | None = None,
     ) -> torch.Tensor:
         B = x0.shape[0]
         if z_frac.dim() == 0:
@@ -373,6 +381,12 @@ class PINN_v2(BaseTrackExtrapolator):
 
         x0_norm = (x0 - self.input_mean[:5]) / self.input_std[:5]
         enc_in = torch.cat([x0_norm, z_frac], dim=1)
+        if self.z_features:
+            if z0 is None:
+                raise ValueError("z_features=True requires z0 in forward_at_z")
+            z0n = ((z0 - self.input_mean[5]) / self.input_std[5]).reshape(B, 1)
+            dzn = ((dz - self.input_mean[6]) / self.input_std[6]).reshape(B, 1)
+            enc_in = torch.cat([enc_in, z0n, dzn], dim=1)
         features = self.encoder(enc_in)
         corr = self.correction_head(features)
 
@@ -413,17 +427,18 @@ class PINN_v2(BaseTrackExtrapolator):
         dz = x[:, 6]
         qop = x[:, 4:5]
         z_frac = torch.ones((x.shape[0], 1), device=x.device, dtype=x.dtype)
+        z_start = x[:, 5]
         n_unroll = int(getattr(self, "n_unroll", 1))
         if n_unroll <= 1:
-            y4 = self.forward_at_z(x0, z_frac, dz=dz)
+            y4 = self.forward_at_z(x0, z_frac, dz=dz, z0=z_start)
             return torch.cat([y4, qop], dim=1)
         # E1: field-free multi-step — apply the SAME kick head over N equal
         # sub-steps (dz/N each), feeding the state forward; qop is invariant.
         # Allen-faithful: identical to looping the deployed kernel N times.
         dz_sub = dz / n_unroll
         state = x0
-        for _ in range(n_unroll):
-            y4 = self.forward_at_z(state, z_frac, dz=dz_sub)
+        for i in range(n_unroll):
+            y4 = self.forward_at_z(state, z_frac, dz=dz_sub, z0=z_start + i * dz_sub)
             state = torch.cat([y4, qop], dim=1)
         return torch.cat([state[:, :4], qop], dim=1)
 
@@ -443,7 +458,7 @@ class PINN_v2(BaseTrackExtrapolator):
 
         # IC loss (identically zero by envelope; kept as a sanity term).
         z_zero = torch.zeros((B, 1), device=device, dtype=dtype)
-        y_at_z0 = self.forward_at_z(x0, z_zero, dz=dz)
+        y_at_z0 = self.forward_at_z(x0, z_zero, dz=dz, z0=z_start)
         ic_loss = ((y_at_z0 - initial_state) * inv_output_std).pow(2).mean()
 
         n_mc = max(1, self.n_collocation)
@@ -459,7 +474,7 @@ class PINN_v2(BaseTrackExtrapolator):
         z_flat = torch.rand(n_total, 1, device=device, dtype=dtype)
 
         def _fwd(z: torch.Tensor) -> torch.Tensor:
-            return self.forward_at_z(x0_rep, z, dz=dz_rep)
+            return self.forward_at_z(x0_rep, z, dz=dz_rep, z0=zst_rep)
 
         tangent = torch.ones_like(z_flat)
         try:
@@ -531,6 +546,7 @@ class PINN_v2(BaseTrackExtrapolator):
             "kick_scaled_head": self.kick_scaled_head,
             "kick_order": self.kick_order,
             "n_unroll": self.n_unroll,
+            "z_features": self.z_features,
             "pde_scale_mode": self.pde_scale_mode,
             "pde_ref_length": self.pde_ref_length,
             "fixes_applied": ["A_jvp", "B_stochastic_colloc", "C_z_dependent_trunk", "H_z_start"]
