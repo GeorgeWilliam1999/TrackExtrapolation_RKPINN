@@ -201,9 +201,12 @@ def main() -> None:
     if J_all is None:
         print("NOTE: no J label file found — tier-2 skipped")
 
+    only = set(sys.argv[1:])          # optional: evaluate just the named experiments
     results = []
     for exp_dir in sorted((LAB / "trained_models").iterdir()):
         if not (exp_dir / "best_model.pt").exists():
+            continue
+        if only and exp_dir.name not in only:
             continue
         print(f"\n=== {exp_dir.name} ===")
         r = eval_experiment(exp_dir, X, Y, LEG, J_all=J_all)
@@ -230,7 +233,8 @@ def main() -> None:
                       f"p95 {s['p95_relF']:.2e}  (straight {s['straight_med_relF']:.2e})")
 
     (LAB / "results").mkdir(exist_ok=True)
-    out_path = LAB / "results" / f"VF_tier1_{datetime.now():%Y%m%d}.json"
+    tag = ("_" + "_".join(sorted(only))) if only else ""
+    out_path = LAB / "results" / f"VF_tier1_{datetime.now():%Y%m%d}{tag}.json"
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nwrote {out_path}")

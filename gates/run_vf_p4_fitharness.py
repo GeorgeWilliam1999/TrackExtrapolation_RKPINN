@@ -95,9 +95,14 @@ class LinArm:
 
 
 class NNArm:
-    name = "NN"
+    """jmode="exact": forward-mode autodiff J (the tier-2 object).
+    jmode="head": the zero-cost head-only J — straight-line transport matrix
+    plus the momentum column recovered from the forward outputs themselves
+    (the kick head is linear in kappa = 1e-3*qop, so d(out)/d(qop) =
+    correction/qop exactly, at no extra inference cost). Tier-2 relF of this
+    J is 9.7e-4 overall on vf_zfeat_h96 — indistinguishable from exact."""
 
-    def __init__(self, exp_dir: Path):
+    def __init__(self, exp_dir: Path, jmode: str = "exact"):
         import torch as t
         ckpt = t.load(exp_dir / "best_model.pt", weights_only=False, map_location="cpu")
         self.model = _build_model(ckpt["config"])
@@ -105,17 +110,30 @@ class NNArm:
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.model.eval()
         self.exp = exp_dir.name
+        self.jmode = jmode
+        self.name = "NN" if jmode == "exact" else "NNH"
 
     def fetch(self, S, z_ref, z_fetch):
-        x = torch.tensor(np.concatenate([S, [z_ref, z_fetch - z_ref]]),
+        dz = z_fetch - z_ref
+        x = torch.tensor(np.concatenate([S, [z_ref, dz]]),
                          dtype=torch.float32)[None, :]
         with torch.no_grad():
             Y = self.model(x)[0].numpy().astype(np.float64)
-        # forward-mode J of outputs 0..3 wrt state 0..4 (same pattern as tier-2)
-        from train import _model_state_jacobian
-        Jm = _model_state_jacobian(self.model, x)[0].detach().numpy().astype(np.float64)
         J = np.zeros((5, 5))
-        J[:4, :] = Jm
+        if self.jmode == "exact":
+            from train import _model_state_jacobian
+            Jm = _model_state_jacobian(self.model, x)[0].detach().numpy().astype(np.float64)
+            J[:4, :] = Jm
+        else:
+            for k in range(4):
+                J[k, k] = 1.0
+            J[0, 2] = dz
+            J[1, 3] = dz
+            qop = S[4]
+            J[0, 4] = (Y[0] - S[0] - S[2] * dz) / qop
+            J[1, 4] = (Y[1] - S[1] - S[3] * dz) / qop
+            J[2, 4] = (Y[2] - S[2]) / qop
+            J[3, 4] = (Y[3] - S[3]) / qop
         J[4, 4] = 1.0
         return Y, J
 
@@ -189,9 +207,11 @@ def robust_sigma(a):
 def main():
     rng = np.random.default_rng(SEED)
     eng = CppEngine()
-    arms = [RKArm(eng), NNArm(LAB / "trained_models" / sys.argv[1] if len(sys.argv) > 1
-                              else LAB / "trained_models" / "vf_jac_h96"), LinArm()]
-    print(f"arms: RK | NN={arms[1].exp} | LIN;  {N_TOYS} toys, seed {SEED}")
+    exp_dir = (LAB / "trained_models" / sys.argv[1] if len(sys.argv) > 1
+               else LAB / "trained_models" / "vf_jac_h96")
+    arms = [RKArm(eng), NNArm(exp_dir, "exact"), NNArm(exp_dir, "head"), LinArm()]
+    print(f"arms: RK | NN={arms[1].exp} (exact J) | NNH (head-only J) | LIN;  "
+          f"{N_TOYS} toys, seed {SEED}")
 
     toys = []
     for _ in range(N_TOYS):
@@ -254,28 +274,32 @@ def main():
               f"  outer = {stats['outer_mean']:.2f}  fetches = {stats['fetches_mean']:.1f}"
               f"  conv = {stats['conv_rate']*100:.1f}%")
 
-    # per-toy NN-RK deltas + tier-3 bar
+    # per-toy NN-RK deltas + tier-3 bars (both J modes)
     dnn = np.array([r["dv"] for r in res["NN"]])
     drk = np.array([r["dv"] for r in res["RK"]])
     d = dnn - drk
     out["nn_minus_rk"] = {"median_mm": [float(np.median(d[:, k])) for k in range(3)],
                           "spread_mm": [robust_sigma(d[:, k]) for k in range(3)]}
-    bars = []
-    for k, cname in enumerate("xyz"):
-        db = abs(out["arms"]["NN"]["bias_mm"][k] - out["arms"]["RK"]["bias_mm"][k])
-        bar = 0.1 * out["arms"]["RK"]["res_mm"][k]
-        bars.append({"coord": cname, "delta_bias_mm": db, "bar_mm": bar,
-                     "pass": db <= bar})
-    out["tier3_bars"] = bars
-    print("\ntier-3 (|bias_NN - bias_RK| < 10% of RK resolution):")
-    for b in bars:
-        print(f"  {b['coord']}: {b['delta_bias_mm']*1e3:.1f} um vs bar "
-              f"{b['bar_mm']*1e3:.1f} um -> {'PASS' if b['pass'] else 'FAIL'}")
+    for arm_name in ["NN", "NNH"]:
+        if arm_name not in out["arms"]:
+            continue
+        bars = []
+        for k, cname in enumerate("xyz"):
+            db = abs(out["arms"][arm_name]["bias_mm"][k] - out["arms"]["RK"]["bias_mm"][k])
+            bar = 0.1 * out["arms"]["RK"]["res_mm"][k]
+            bars.append({"coord": cname, "delta_bias_mm": db, "bar_mm": bar,
+                         "pass": db <= bar})
+        out["tier3_bars" if arm_name == "NN" else "tier3_bars_headJ"] = bars
+        print(f"\ntier-3 {arm_name} (|bias - bias_RK| < 10% of RK resolution):")
+        for b in bars:
+            print(f"  {b['coord']}: {b['delta_bias_mm']*1e3:.1f} um vs bar "
+                  f"{b['bar_mm']*1e3:.1f} um -> {'PASS' if b['pass'] else 'FAIL'}")
     print("\nper-toy NN-RK vertex delta (median):",
           ", ".join(f"{m*1e3:+.1f}" for m in out["nn_minus_rk"]["median_mm"]), "um")
 
     (LAB / "results").mkdir(exist_ok=True)
-    p = LAB / "results" / f"VF_p4_fit_{datetime.now():%Y%m%d}.json"
+    tag = f"_{arms[1].exp}" if arms[1].exp != "vf_jac_h96" else ""
+    p = LAB / "results" / f"VF_p4_fit_{datetime.now():%Y%m%d}{tag}.json"
     json.dump(out, open(p, "w"), indent=1)
     print(f"\nwrote {p}")
 
@@ -286,7 +310,7 @@ def main():
                           ("sy", float), ("sz", float), ("n_outer", int),
                           ("n_fetch", int)]:
             dump[f"{a.name}_{key}"] = np.array([r[key] for r in res[a.name]])
-    pn = LAB / "results" / f"VF_p4_fit_toys_{datetime.now():%Y%m%d}.npz"
+    pn = LAB / "results" / f"VF_p4_fit_toys_{datetime.now():%Y%m%d}{tag}.npz"
     np.savez_compressed(pn, **dump)
     print(f"wrote {pn}")
 
