@@ -121,7 +121,7 @@ namespace {
   /// the training-domain test: the four vertex-fit leg classes (MagDown).
   /// Besides the (z0, z1, p) boxes, legs A/C/D require POINTING CONSISTENCY:
   /// the straight-line position at the target plane must lie near the beam
-  /// axis, as every vertex-fit fetch does (corpus maximum 76 mm; cut 150 mm).
+  /// axis, as every vertex-fit fetch does (corpus maximum 76 mm; cut 100 mm).
   /// The corpus is sampled on that physical manifold, and off it the network
   /// extrapolates poorly (found by the uniform-grid in-stack test, where
   /// x = tx*z rows point up to 360 mm off-axis at the target and the model
@@ -138,7 +138,7 @@ namespace {
     if ( !( legA || legC || legD ) ) return false;
     const double xAt = s[0] + s[2] * dz;
     const double yAt = s[1] + s[3] * dz;
-    return ( xAt * xAt + yAt * yAt ) < 150. * 150.;
+    return ( xAt * xAt + yAt * yAt ) < 100. * 100.;
   }
 
 } // namespace
