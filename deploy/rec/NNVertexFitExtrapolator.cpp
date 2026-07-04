@@ -10,8 +10,10 @@
 \*****************************************************************************/
 #include "Event/TrackParameters.h"
 #include "GaudiKernel/ToolHandle.h"
+#include "NNVertexFitWeights.h"
 #include "TrackExtrapolator.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -87,6 +89,22 @@ namespace {
              vblock( W3, size_t( 4 ) * H ) && vblock( b3, 4 ) && vblock( g4, 4 );
     }
 
+    /// the compiled-in weights (NNVertexFitWeights.h, generated from the
+    /// locked checkpoint by deploy/vf_export_header.py)
+    void loadBuiltin() {
+      namespace w = NNVertexFitWeights;
+      H = w::H;
+      std::copy( std::begin( w::MEAN ), std::end( w::MEAN ), mean.begin() );
+      std::copy( std::begin( w::STD ), std::end( w::STD ), std.begin() );
+      W1.assign( std::begin( w::W1 ), std::end( w::W1 ) );
+      b1.assign( std::begin( w::B1 ), std::end( w::B1 ) );
+      W2.assign( std::begin( w::W2 ), std::end( w::W2 ) );
+      b2.assign( std::begin( w::B2 ), std::end( w::B2 ) );
+      W3.assign( std::begin( w::W3 ), std::end( w::W3 ) );
+      b3.assign( std::begin( w::B3 ), std::end( w::B3 ) );
+      g4.assign( std::begin( w::GAIN ), std::end( w::GAIN ) );
+    }
+
     /// forward pass; in = (x, y, tx, ty, qhat, z0, dz); out4 = corrections
     /// applied on top of the straight line by the caller via c[]
     void corrections( const double* in7, float c[4] ) const {
@@ -150,12 +168,17 @@ struct NNVertexFitExtrapolator : TrackExtrapolator {
 
   StatusCode initialize() override {
     return TrackExtrapolator::initialize().andThen( [&]() -> StatusCode {
-      if ( !m_kernel.load( m_weightsFile.value() ) ) {
-        error() << "failed to load VFK1 weights blob '" << m_weightsFile.value() << "'" << endmsg;
-        return StatusCode::FAILURE;
+      if ( m_weightsFile.value().empty() ) {
+        m_kernel.loadBuiltin();
+        info() << "using compiled-in vertex-fit surrogate weights (H=" << m_kernel.H << ")" << endmsg;
+      } else {
+        if ( !m_kernel.load( m_weightsFile.value() ) ) {
+          error() << "failed to load VFK1 weights blob '" << m_weightsFile.value() << "'" << endmsg;
+          return StatusCode::FAILURE;
+        }
+        info() << "loaded vertex-fit surrogate weights (H=" << m_kernel.H << ") from " << m_weightsFile.value()
+               << endmsg;
       }
-      info() << "loaded vertex-fit surrogate weights (H=" << m_kernel.H << ") from " << m_weightsFile.value()
-             << endmsg;
       return m_fallback.retrieve();
     } );
   }
@@ -167,9 +190,9 @@ struct NNVertexFitExtrapolator : TrackExtrapolator {
                         const LHCb::Magnet::MagneticFieldGrid* grid = nullptr ) const override;
 
 private:
-  Gaudi::Property<std::string> m_weightsFile{ this, "WeightsFile",
-                                              "/data/bfys/gscriven/TrackExtrapolation/experiments/vertexfit/results/"
-                                              "vf_kernel_vf_zfeat_jacrow_h96.blob" };
+  /// empty (default) = the compiled-in weights of NNVertexFitWeights.h;
+  /// set to a VFK1 blob path to override for model studies
+  Gaudi::Property<std::string> m_weightsFile{ this, "WeightsFile", "" };
   ToolHandle<ITrackExtrapolator> m_fallback{ this, "FallbackExtrapolator", "TrackRungeKuttaExtrapolator" };
 
   VfKernel m_kernel;
